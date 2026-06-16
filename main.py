@@ -100,13 +100,23 @@ def _download_image(url: str) -> tuple[bytes, str] | tuple[None, None]:
 # --------------------------------------------------------------------------- #
 # Async processing of one Messenger message
 # --------------------------------------------------------------------------- #
-def _ack_message(trip: TripRequest) -> str:
-    """Customer-facing acknowledgment: ask the single most relevant next question."""
-    question = trip.next_question()
-    if question:
-        return "Merci ! 🌴 " + question
-    return ("Merci ! 🌴 On a tout ce qu'il faut — on regarde ton forfait et on te "
-            "revient bientôt par courriel avec ton rabais. 👍")
+# When this many fields are still unknown and no screenshot has arrived, asking
+# for a screenshot is the highest-leverage move (it fills several fields at once).
+SCREENSHOT_FIRST_THRESHOLD = 5
+
+
+def _ack_message(trip: TripRequest, has_screenshot: bool = False) -> str:
+    """Customer-facing acknowledgment: one relevant next step at a time."""
+    rem = trip.remaining_fields()
+    if not rem:
+        return ("Merci ! 🌴 On a tout ce qu'il faut — on regarde ton forfait et on te "
+                "revient bientôt par courriel avec ton rabais. 👍")
+    # Screenshot-first: when lots is still missing and we have no image yet.
+    if not has_screenshot and len(rem) >= SCREENSHOT_FIRST_THRESHOLD:
+        return ("Merci ! 🌴 Le plus rapide : envoie-moi une capture d'écran du forfait "
+                "que t'as trouvé 📸 — ça me donne presque tout d'un coup. Sinon, "
+                "dis-moi juste la destination qui t'intéresse.")
+    return "Merci ! 🌴 " + trip.next_question()
 
 
 def process_messenger_message(sender: str | None, text: str, image_urls: list[str]) -> None:
@@ -146,6 +156,7 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
             existing.status = "needs_info" if trip.needs_clarification else "new"
             if shots:                                   # accumulate screenshots
                 existing.screenshots = (existing.screenshots or []) + shots
+            has_screenshot = bool(existing.screenshots)
             db.commit()
             log.info("Merged message into case #%s (sender %s, +%d shots)",
                      existing.id, sender, len(shots))
@@ -157,6 +168,7 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                     new_trip.customer_name = name
             trip = new_trip
             rem = new_trip.remaining_fields()
+            has_screenshot = bool(shots)
             case = Case(
                 channel="messenger",
                 status="needs_info" if rem else "new",
@@ -176,7 +188,7 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
     # Acknowledge the customer (keeps us inside Meta's 24h window). Optional:
     # only fires if a page token is set, and can never break this flow.
     if sender and settings.FB_PAGE_TOKEN:
-        sent = send_text(sender, _ack_message(trip), settings.FB_PAGE_TOKEN,
+        sent = send_text(sender, _ack_message(trip, has_screenshot), settings.FB_PAGE_TOKEN,
                          settings.FB_GRAPH_VERSION)
         log.info("Ack reply to %s: %s", sender, "sent" if sent else "not sent")
 
