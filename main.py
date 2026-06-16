@@ -68,15 +68,16 @@ app.add_middleware(
 # --------------------------------------------------------------------------- #
 def store_case(channel: str, trip: TripRequest, sender_ref: str | None = None) -> int:
     with SessionLocal() as db:
+        rem = trip.remaining_fields()
         case = Case(
             channel=channel,
-            status="needs_info" if trip.needs_clarification else "new",
+            status="needs_info" if rem else "new",
             sender_ref=sender_ref,
             customer_email=trip.customer_email,
             parse_confidence=trip.parse_confidence,
             raw_message=trip.raw_message,
             trip=trip.model_dump(),
-            needs_clarification=trip.needs_clarification or trip.missing_core_fields(),
+            needs_clarification=rem,
         )
         db.add(case)
         db.commit()
@@ -100,13 +101,12 @@ def _download_image(url: str) -> tuple[bytes, str] | tuple[None, None]:
 # Async processing of one Messenger message
 # --------------------------------------------------------------------------- #
 def _ack_message(trip: TripRequest) -> str:
-    """Customer-facing acknowledgment. Only ever asks for clean, core fields."""
-    missing = trip.missing_core_fields()
-    if missing:
-        return ("Merci! On a bien reçu ton message. 🌴 Pour te trouver le meilleur "
-                "rabais, peux-tu me confirmer : " + ", ".join(missing) + "?")
-    return ("Merci! On a bien reçu ton forfait. 🌴 On regarde ça et on te revient "
-            "par courriel avec ton rabais. 👍")
+    """Customer-facing acknowledgment: ask the single most relevant next question."""
+    question = trip.next_question()
+    if question:
+        return "Merci ! 🌴 " + question
+    return ("Merci ! 🌴 On a tout ce qu'il faut — on regarde ton forfait et on te "
+            "revient bientôt par courriel avec ton rabais. 👍")
 
 
 def process_messenger_message(sender: str | None, text: str, image_urls: list[str]) -> None:
@@ -156,15 +156,16 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                 if name:
                     new_trip.customer_name = name
             trip = new_trip
+            rem = new_trip.remaining_fields()
             case = Case(
                 channel="messenger",
-                status="needs_info" if new_trip.needs_clarification else "new",
+                status="needs_info" if rem else "new",
                 sender_ref=sender,
                 customer_email=new_trip.customer_email,
                 parse_confidence=new_trip.parse_confidence,
                 raw_message=new_trip.raw_message,
                 trip=new_trip.model_dump(),
-                needs_clarification=new_trip.needs_clarification or new_trip.missing_core_fields(),
+                needs_clarification=rem,
                 screenshots=shots,
             )
             db.add(case)
@@ -227,7 +228,7 @@ def intake_form(trip: TripRequest):
     case_id = store_case("form", trip)
     return {"ok": True, "case_id": case_id,
             "searchable": trip.is_searchable(),
-            "needs": trip.missing_core_fields()}
+            "needs": trip.remaining_fields()}
 
 
 # --------------------------------------------------------------------------- #

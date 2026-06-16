@@ -196,6 +196,55 @@ class TripRequest(BaseModel):
             missing.append("nombre et âge des voyageurs")
         return missing
 
+    def remaining_fields(self) -> List[str]:
+        """Everything still needed to produce a rebate quote, in priority order.
+
+        Goes beyond the 4 core fields: a real quote also needs the price the
+        customer found, whether it's per-person or total, the operator, the
+        children's ages, and an email to send the rebate to.
+        """
+        rem: List[str] = []
+        if not (self.origin_airport_iata or self.origin_city):
+            rem.append("aéroport de départ")
+        if not (self.hotel_name_raw or self.destination):
+            rem.append("hôtel ou destination")
+        if not (self.departure_date or self.dates_raw):
+            rem.append("dates de voyage")
+        if not (self.passengers or self.num_adults):
+            rem.append("nombre de voyageurs")
+        # Children's ages matter for pricing — only ask if there ARE children.
+        if (self.num_children or 0) > 0 and not any(p.age is not None for p in self.passengers):
+            rem.append("âge des enfants")
+        # Price is the heart of the rebate.
+        if not (self.price_seen and self.price_seen.amount is not None):
+            rem.append("prix trouvé")
+        elif self.price_seen.basis == PriceBasis.unknown:
+            rem.append("prix par personne ou total")
+        if not self.operator:
+            rem.append("voyagiste / site du forfait")
+        if not self.customer_email:
+            rem.append("courriel pour le rabais")
+        return rem
+
+    def next_question(self) -> Optional[str]:
+        """The single most relevant question to ask next, or None when ready."""
+        rem = self.remaining_fields()
+        return _NEXT_QUESTIONS.get(rem[0]) if rem else None
+
+
+# One natural question per checklist item (customer-facing, in order of priority).
+_NEXT_QUESTIONS = {
+    "aéroport de départ": "De quel aéroport aimerais-tu partir (Montréal, Québec…) ?",
+    "hôtel ou destination": "Quelle destination ou quel hôtel t'intéresse ?",
+    "dates de voyage": "Pour quelles dates penses-tu partir (départ et retour) ?",
+    "nombre de voyageurs": "Vous voyagez combien de personnes en tout (adultes et enfants) ?",
+    "âge des enfants": "Quel sera l'âge des enfants au moment du voyage ?",
+    "prix trouvé": "Quel prix as-tu vu pour ce forfait ?",
+    "prix par personne ou total": "Ce prix-là, c'est par personne ou pour tout le groupe ?",
+    "voyagiste / site du forfait": "Sur quel site ou voyagiste as-tu trouvé ce prix (Transat, Sunwing…) ?",
+    "courriel pour le rabais": "À quel courriel veux-tu recevoir ton rabais ?",
+}
+
 
 def merge_trip_requests(old: "TripRequest", new: "TripRequest") -> "TripRequest":
     """
@@ -232,6 +281,7 @@ def merge_trip_requests(old: "TripRequest", new: "TripRequest") -> "TripRequest"
     raws = [r for r in (old.raw_message, new.raw_message) if r]
     merged.raw_message = "\n---\n".join(raws) if raws else None
 
-    # Recompute what's still missing — this shrinks as the customer answers.
-    merged.needs_clarification = merged.missing_core_fields()
+    # Recompute what's still needed — this shrinks as the customer answers,
+    # and covers everything required to actually quote a rebate.
+    merged.needs_clarification = merged.remaining_fields()
     return merged
