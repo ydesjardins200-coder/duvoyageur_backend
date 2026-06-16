@@ -44,6 +44,14 @@ class BoardType(str, Enum):
     unknown = "unknown"
 
 
+class ContactChannel(str, Enum):
+    """How the customer wants to receive their offer."""
+    messenger = "messenger"
+    email = "email"
+    sms = "sms"
+    unknown = "unknown"
+
+
 # --------------------------------------------------------------------------- #
 # Sub-objects
 # --------------------------------------------------------------------------- #
@@ -153,6 +161,13 @@ class TripRequest(BaseModel):
     # --- contact ---
     customer_email: Optional[str] = Field(None, description="Email if provided.")
     customer_name: Optional[str] = Field(None, description="Name if provided.")
+    customer_phone: Optional[str] = Field(
+        None, description="Phone number if the customer provides one (e.g. for SMS).")
+    preferred_channel: ContactChannel = Field(
+        ContactChannel.unknown,
+        description="How the customer wants to receive their offer: messenger, "
+        "email, or sms. Set it when they say so (« par SMS », « sur Messenger », "
+        "« par courriel »).")
 
     # --- parser meta (drives the human gate) ---
     parse_confidence: float = Field(
@@ -225,8 +240,14 @@ class TripRequest(BaseModel):
             rem.append("prix par personne ou total")
         if not self.operator:
             rem.append("voyagiste / site du forfait")
-        if not self.customer_email:
+        # LAST: how the customer wants to receive the offer, then the matching
+        # contact detail (email or phone). Messenger needs no extra contact.
+        if self.preferred_channel in (None, ContactChannel.unknown):
+            rem.append("mode de réception de l'offre")
+        elif self.preferred_channel == ContactChannel.email and not self.customer_email:
             rem.append("courriel pour le rabais")
+        elif self.preferred_channel == ContactChannel.sms and not self.customer_phone:
+            rem.append("téléphone pour le SMS")
         return rem
 
     def next_question(self) -> Optional[str]:
@@ -246,7 +267,9 @@ _NEXT_QUESTIONS = {
     "prix trouvé": "Quel prix as-tu vu pour ce forfait ?",
     "prix par personne ou total": "Ce prix-là, c'est par personne ou pour tout le groupe ?",
     "voyagiste / site du forfait": "Sur quel site ou voyagiste as-tu trouvé ce prix (Transat, Sunwing…) ?",
-    "courriel pour le rabais": "À quel courriel veux-tu recevoir ton rabais ?",
+    "mode de réception de l'offre": "Comment préfères-tu recevoir ton offre : par Messenger, par courriel ou par SMS ?",
+    "courriel pour le rabais": "À quel courriel veux-tu recevoir ton offre ?",
+    "téléphone pour le SMS": "À quel numéro de téléphone veux-tu recevoir ton offre par SMS ?",
 }
 
 
@@ -262,7 +285,7 @@ def merge_trip_requests(old: "TripRequest", new: "TripRequest") -> "TripRequest"
 
     # Fields handled explicitly below; everything else uses the simple rule.
     EXPLICIT = {"raw_message", "needs_clarification", "parse_confidence",
-                "agent_notes", "passengers", "price_seen", "board"}
+                "agent_notes", "passengers", "price_seen", "board", "preferred_channel"}
     for field in TripRequest.model_fields:
         if field in EXPLICIT:
             continue
@@ -276,6 +299,8 @@ def merge_trip_requests(old: "TripRequest", new: "TripRequest") -> "TripRequest"
         merged.price_seen = new.price_seen.model_copy(deep=True)
     if new.board and new.board != BoardType.unknown:
         merged.board = new.board
+    if new.preferred_channel and new.preferred_channel != ContactChannel.unknown:
+        merged.preferred_channel = new.preferred_channel
 
     merged.parse_confidence = max(old.parse_confidence, new.parse_confidence)
 

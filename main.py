@@ -43,7 +43,7 @@ from config import settings
 from db import STATUSES, Case, SessionLocal, engine, find_open_case_for_sender, init_db
 from facebook import extract_messages, get_user_name, send_text, valid_signature, verify_challenge
 from parser import parse_trip
-from trip_schema import TripRequest, merge_trip_requests
+from trip_schema import ContactChannel, TripRequest, merge_trip_requests
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("duvoyageur")
@@ -75,6 +75,7 @@ def store_case(channel: str, trip: TripRequest, sender_ref: str | None = None) -
             status="needs_info" if rem else "new",
             sender_ref=sender_ref,
             customer_email=trip.customer_email,
+            customer_phone=trip.customer_phone,
             parse_confidence=trip.parse_confidence,
             raw_message=trip.raw_message,
             trip=trip.model_dump(),
@@ -177,6 +178,7 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
             existing.parse_confidence = trip.parse_confidence
             existing.raw_message = trip.raw_message
             existing.customer_email = trip.customer_email or existing.customer_email
+            existing.customer_phone = trip.customer_phone or existing.customer_phone
             existing.status = "needs_info" if trip.needs_clarification else "new"
             if shots:                                   # accumulate screenshots
                 existing.screenshots = (existing.screenshots or []) + shots
@@ -196,6 +198,7 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                 status="needs_info" if rem else "new",
                 sender_ref=sender,
                 customer_email=new_trip.customer_email,
+                customer_phone=new_trip.customer_phone,
                 parse_confidence=new_trip.parse_confidence,
                 raw_message=new_trip.raw_message,
                 trip=new_trip.model_dump(),
@@ -260,6 +263,9 @@ def intake_form(trip: TripRequest):
     trip.source = trip.source or "form"
     if trip.parse_confidence == 0.0:
         trip.parse_confidence = 1.0  # human-entered data is trusted
+    # Web-form customers gave their email and aren't on Messenger -> default to email.
+    if trip.preferred_channel == ContactChannel.unknown and trip.customer_email:
+        trip.preferred_channel = ContactChannel.email
     case_id = store_case("form", trip)
     return {"ok": True, "case_id": case_id,
             "searchable": trip.is_searchable(),
@@ -352,6 +358,7 @@ def admin_case_detail(case_id: int):
                 "half_board": "Demi-pension", "full_board": "Pension complète",
                 "room_only": "Chambre seulement", "other": "Autre", "unknown": None}
     BASIS_FR = {"per_person": "par personne", "total": "pour le groupe", "unknown": None}
+    CHANNEL_FR = {"messenger": "Messenger", "email": "Courriel", "sms": "SMS", "unknown": None}
 
     def val(x):
         """Render a value, or a muted dash when empty."""
@@ -416,6 +423,8 @@ def admin_case_detail(case_id: int):
             card("Client",
                  kv("Nom", val(t.get("customer_name"))),
                  kv("Courriel", val(t.get("customer_email"))),
+                 kv("Téléphone", val(t.get("customer_phone"))),
+                 kv("Reçoit l'offre par", val(CHANNEL_FR.get(t.get("preferred_channel")))),
                  kv("Canal", val(c.channel)),
                  kv("Reçu", c.created_at.strftime("%Y-%m-%d %H:%M"))) +
             card("Voyage",
@@ -476,6 +485,22 @@ def admin_case_detail(case_id: int):
             "<button>Mettre à jour</button></form>"
         )
 
+        # Manual reply panel — send a personalized message (e.g. the offer)
+        # straight to the Messenger customer, bypassing the bot.
+        if c.channel == "messenger" and c.sender_ref:
+            send_panel = (
+                "<div class='card full'><h3>Réponse manuelle (sans le bot)</h3>"
+                f"<form method='post' action='/admin/cases/{c.id}/send'>"
+                "<textarea name='message' rows='3' placeholder='Écris ton message ou ton offre au client…' "
+                "style='width:100%;font-family:inherit;font-size:14px;padding:10px;border-radius:10px;"
+                "border:1px solid #2c3340;background:#0f1115;color:#e6e6e6'></textarea>"
+                "<button style='margin-top:10px'>Envoyer au client sur Messenger</button></form>"
+                "<p class='sub'>Envoi direct via Messenger, sans déclencher le bot. "
+                "Fonctionne dans la fenêtre de 24 h après le dernier message du client.</p></div>"
+            )
+        else:
+            send_panel = ""
+
         raw = (
             "<details><summary>Voir les données brutes (TripRequest)</summary>"
             f"<pre>{escape(_json.dumps(t, indent=2, ensure_ascii=False))}</pre></details>"
@@ -484,7 +509,7 @@ def admin_case_detail(case_id: int):
         body = (
             "<p><a href='/admin/cases'>&larr; Tous les dossiers</a></p>"
             f"<h2>#{c.id} · {name} <span class='tag {c.status}'>{c.status}</span></h2>"
-            f"<div class='grid2'>{cards}{screenshot_card}{profil}{convo}</div>"
+            f"<div class='grid2'>{cards}{screenshot_card}{profil}{send_panel}{convo}</div>"
             f"{actions}{raw}"
         )
     return _PAGE.format(body=body)
@@ -515,6 +540,20 @@ def admin_case_screenshot(case_id: int, idx: int):
     except Exception:  # noqa: BLE001
         raise HTTPException(status_code=404, detail="Capture illisible")
     return Response(content=data, media_type=shot.get("media_type", "image/png"))
+
+
+@app.post("/admin/cases/{case_id}/send", dependencies=[Depends(require_admin)])
+async def admin_case_send(case_id: int, request: Request):
+    """Agent sends a personalized message straight to the Messenger customer."""
+    form = await request.form()
+    message = (form.get("message") or "").strip()
+    with SessionLocal() as db:
+        c = db.get(Case, case_id)
+        sender = c.sender_ref if c else None
+    if sender and message and settings.FB_PAGE_TOKEN:
+        ok = send_text(sender, message, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+        log.info("Manual reply to case #%s: %s", case_id, "sent" if ok else "failed")
+    return RedirectResponse(f"/admin/cases/{case_id}", status_code=303)
 
 
 @app.post("/admin/reset", dependencies=[Depends(require_admin)])

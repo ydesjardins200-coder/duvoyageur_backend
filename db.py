@@ -50,6 +50,7 @@ class Case(Base):
     status: Mapped[str] = mapped_column(String(20), default="new")
     sender_ref: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     customer_email: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    customer_phone: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     parse_confidence: Mapped[float] = mapped_column(Float, default=0.0)
     raw_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -73,10 +74,15 @@ def _ensure_columns() -> None:
             conn.execute(text(
                 "ALTER TABLE cases ADD COLUMN IF NOT EXISTS screenshots JSONB DEFAULT '[]'::jsonb"
             ))
+            conn.execute(text(
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS customer_phone VARCHAR(40)"
+            ))
         elif engine.dialect.name == "sqlite":
             cols = [r[1] for r in conn.execute(text("PRAGMA table_info(cases)"))]
             if "screenshots" not in cols:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN screenshots JSON"))
+            if "customer_phone" not in cols:
+                conn.execute(text("ALTER TABLE cases ADD COLUMN customer_phone VARCHAR(40)"))
 
 
 # Statuses that mean "this request is still in progress" — new messages from the

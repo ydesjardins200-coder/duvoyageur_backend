@@ -45,6 +45,9 @@ RÈGLES STRICTES
 7. TRANSPORTEUR : si le voyagiste est visible (Transat, Sunwing, Vacances Air
    Canada, WestJet Vacations…), mets-le dans `operator`. C'est essentiel pour
    matcher le bon produit.
+7b. CANAL : si le client dit comment il veut recevoir son offre (« par SMS »,
+   « sur Messenger », « par courriel »), mets-le dans `preferred_channel`. S'il
+   donne un numéro de téléphone, mets-le dans `customer_phone`.
 8. DATES : si tu as des dates claires, remplis departure_date / return_date au
    format ISO (YYYY-MM-DD) et calcule `nights`. Garde toujours le texte original
    dans dates_raw. Pour l'année : si non précisée, choisis la prochaine
