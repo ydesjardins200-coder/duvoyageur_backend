@@ -32,5 +32,9 @@ class Settings:
     # Comma-separated, e.g. "https://duvoyageur.netlify.app,https://duvoyageur.ca"
     ALLOWED_ORIGINS: list[str] = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 
+    # Testing only: when truthy, enables POST /admin/reset to wipe all cases.
+    # Leave UNSET in production so the wipe is fully disabled.
+    ALLOW_RESET: str = os.getenv("ALLOW_RESET", "")
+
 
 settings = Settings()

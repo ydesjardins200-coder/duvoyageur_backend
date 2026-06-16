@@ -30,13 +30,14 @@ import urllib.request
 from contextlib import asynccontextmanager
 from html import escape
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from sqlalchemy import text
 
 from auth import require_admin
 from config import settings
-from db import STATUSES, Case, SessionLocal, find_open_case_for_sender, init_db
+from db import STATUSES, Case, SessionLocal, engine, find_open_case_for_sender, init_db
 from facebook import extract_messages, get_user_name, send_text, valid_signature, verify_challenge
 from parser import parse_trip
 from trip_schema import TripRequest, merge_trip_requests
@@ -263,6 +264,13 @@ def admin_cases():
         + ("".join(rows) or "<tr><td colspan='8' class='muted'>Aucun dossier.</td></tr>")
         + "</table>"
     )
+    if settings.ALLOW_RESET:
+        body += (
+            "<form method='post' action='/admin/reset' style='margin-top:24px' "
+            "onsubmit=\"return confirm('Effacer TOUS les dossiers ? Action irréversible.')\">"
+            "<button style='background:#5f1d1d;color:#fff;border:0;padding:8px 14px;"
+            "border-radius:8px;cursor:pointer'>Vider tous les dossiers (test)</button></form>"
+        )
     return _PAGE.format(body=body)
 
 
@@ -305,3 +313,19 @@ async def admin_update_status(case_id: int, request: Request):
             c.status = new_status
             db.commit()
     return RedirectResponse(f"/admin/cases/{case_id}", status_code=303)
+
+
+@app.post("/admin/reset", dependencies=[Depends(require_admin)])
+def admin_reset():
+    """Wipe ALL cases. Disabled unless ALLOW_RESET is set (testing only)."""
+    if not settings.ALLOW_RESET:
+        raise HTTPException(status_code=403,
+                            detail="Reset désactivé. Mettre ALLOW_RESET=1 pour activer.")
+    with SessionLocal() as db:
+        if engine.dialect.name == "postgresql":
+            db.execute(text("TRUNCATE TABLE cases RESTART IDENTITY"))
+        else:
+            db.query(Case).delete()
+        db.commit()
+    log.info("All cases wiped via /admin/reset")
+    return RedirectResponse("/admin/cases", status_code=303)
