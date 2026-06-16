@@ -12,7 +12,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
+import logging
+import urllib.parse
+import urllib.request
 from typing import Optional
+
+log = logging.getLogger("duvoyageur.facebook")
 
 
 def verify_challenge(mode: Optional[str], token: Optional[str], challenge: Optional[str],
@@ -55,3 +61,34 @@ def extract_messages(payload: dict) -> list[tuple[Optional[str], str, list[str]]
             ]
             results.append((sender, text, image_urls))
     return results
+
+
+def send_text(recipient_id: Optional[str], text: str, page_token: str,
+              graph_version: str = "v21.0", timeout: int = 8) -> bool:
+    """
+    Send a plain-text reply to a user via the Send API.
+
+    Built to NEVER raise: on any problem it logs and returns False, so a failed
+    reply can never break webhook processing or cause Meta to retry the event.
+    Only fires inside the 24-hour window (messaging_type RESPONSE).
+    """
+    if not (page_token and recipient_id and text):
+        return False
+    url = (
+        f"https://graph.facebook.com/{graph_version}/me/messages"
+        f"?access_token={urllib.parse.quote(page_token)}"
+    )
+    body = json.dumps({
+        "recipient": {"id": recipient_id},
+        "messaging_type": "RESPONSE",
+        "message": {"text": text},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return 200 <= resp.status < 300
+    except Exception as e:  # noqa: BLE001
+        log.warning("Send API reply failed: %s", e)
+        return False

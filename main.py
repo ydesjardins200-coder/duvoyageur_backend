@@ -37,7 +37,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from auth import require_admin
 from config import settings
 from db import STATUSES, Case, SessionLocal, init_db
-from facebook import extract_messages, valid_signature, verify_challenge
+from facebook import extract_messages, send_text, valid_signature, verify_challenge
 from parser import parse_trip
 from trip_schema import TripRequest
 
@@ -96,6 +96,16 @@ def _download_image(url: str) -> tuple[bytes, str] | tuple[None, None]:
 # --------------------------------------------------------------------------- #
 # Async processing of one Messenger message
 # --------------------------------------------------------------------------- #
+def _ack_message(trip: TripRequest) -> str:
+    """Customer-facing acknowledgment. Only ever asks for clean, core fields."""
+    missing = trip.missing_core_fields()
+    if missing:
+        return ("Merci! On a bien reçu ton message. 🌴 Pour te trouver le meilleur "
+                "rabais, peux-tu me confirmer : " + ", ".join(missing) + "?")
+    return ("Merci! On a bien reçu ton forfait. 🌴 On regarde ça et on te revient "
+            "par courriel avec ton rabais. 👍")
+
+
 def process_messenger_message(sender: str | None, text: str, image_urls: list[str]) -> None:
     image_bytes, media_type = (None, "image/png")
     if image_urls:
@@ -110,6 +120,13 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                            agent_notes=f"Parsing automatique échoué: {e}",
                            needs_clarification=["à traiter manuellement"])
     store_case("messenger", trip, sender_ref=sender)
+
+    # Acknowledge the customer (keeps us inside Meta's 24h window). Optional:
+    # only fires if a page token is set, and can never break this flow.
+    if sender and settings.FB_PAGE_TOKEN:
+        sent = send_text(sender, _ack_message(trip), settings.FB_PAGE_TOKEN,
+                         settings.FB_GRAPH_VERSION)
+        log.info("Ack reply to %s: %s", sender, "sent" if sent else "not sent")
 
 
 # --------------------------------------------------------------------------- #
@@ -140,6 +157,9 @@ async def webhook_receive(request: Request, background: BackgroundTasks):
         return PlainTextResponse("Bad signature", status_code=403)
 
     payload = await request.json()
+    # Messenger events have object == "page"; ignore anything else but still 200.
+    if payload.get("object") != "page":
+        return PlainTextResponse("EVENT_RECEIVED")
     for sender, text, image_urls in extract_messages(payload):
         background.add_task(process_messenger_message, sender, text, image_urls)
 

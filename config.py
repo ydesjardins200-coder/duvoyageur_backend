@@ -22,6 +22,7 @@ class Settings:
     FB_VERIFY_TOKEN: str = os.getenv("FB_VERIFY_TOKEN", "set-a-random-verify-token")
     FB_APP_SECRET: str = os.getenv("FB_APP_SECRET", "")   # used to verify payloads
     FB_PAGE_TOKEN: str = os.getenv("FB_PAGE_TOKEN", "")   # used later to send replies
+    FB_GRAPH_VERSION: str = os.getenv("FB_GRAPH_VERSION", "v21.0")  # Send API version
 
     # --- admin panel auth ---
     ADMIN_USER: str = os.getenv("ADMIN_USER", "admin")
