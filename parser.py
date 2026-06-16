@@ -26,20 +26,24 @@ TRIP_TOOL = {
 
 def parse_trip(
     message_text: str,
-    image_bytes: Optional[bytes] = None,
-    image_media_type: str = "image/png",
+    images: Optional[list] = None,
     client: Optional[anthropic.Anthropic] = None,
 ) -> TripRequest:
+    """Parse a message + optional screenshots into a TripRequest.
+
+    `images` is a list of (bytes, media_type) tuples — a deal is sometimes split
+    across several screenshots (flight + hotel), so we pass them all to the model.
+    """
     client = client or anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
     content: list = []
-    if image_bytes:
+    for img_bytes, media_type in (images or []):
         content.append({
             "type": "image",
             "source": {
                 "type": "base64",
-                "media_type": image_media_type,
-                "data": base64.standard_b64encode(image_bytes).decode("utf-8"),
+                "media_type": media_type or "image/png",
+                "data": base64.standard_b64encode(img_bytes).decode("utf-8"),
             },
         })
     content.append({"type": "text", "text": message_text or "(capture d'écran jointe)"})

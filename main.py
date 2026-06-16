@@ -25,12 +25,14 @@ Key design choices (carried from our strategy):
 """
 from __future__ import annotations
 
+import base64
 import logging
 import urllib.request
 from contextlib import asynccontextmanager
+from datetime import datetime
 from html import escape
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from sqlalchemy import text
@@ -108,18 +110,28 @@ def _ack_message(trip: TripRequest) -> str:
 
 
 def process_messenger_message(sender: str | None, text: str, image_urls: list[str]) -> None:
-    image_bytes, media_type = (None, "image/png")
-    if image_urls:
-        image_bytes, mt = _download_image(image_urls[0])
-        media_type = mt or "image/png"
+    # Download every screenshot attached to this message.
+    downloaded: list[tuple[bytes, str]] = []
+    for url in (image_urls or []):
+        b, mt = _download_image(url)
+        if b:
+            downloaded.append((b, mt or "image/png"))
+
     try:
-        new_trip = parse_trip(text, image_bytes=image_bytes, image_media_type=media_type)
+        new_trip = parse_trip(text, images=downloaded)
     except Exception as e:  # noqa: BLE001
         # Never drop a customer message — store a fallback the agent can rescue.
         log.exception("Parse failed; storing fallback case: %s", e)
-        new_trip = TripRequest(raw_message=text, source="messenger",
+        new_trip = TripRequest(raw_message=text or "(capture d'écran)", source="messenger",
                                agent_notes=f"Parsing automatique échoué: {e}",
                                needs_clarification=["à traiter manuellement"])
+
+    # Persistable screenshot records (base64 so they survive Facebook's expiring URLs).
+    shots = [{
+        "media_type": mt,
+        "b64": base64.b64encode(b).decode("ascii"),
+        "received_at": datetime.utcnow().isoformat(timespec="seconds"),
+    } for (b, mt) in downloaded]
 
     # Find-or-merge: keep one evolving case per customer (progressive profiling).
     with SessionLocal() as db:
@@ -132,8 +144,11 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
             existing.raw_message = trip.raw_message
             existing.customer_email = trip.customer_email or existing.customer_email
             existing.status = "needs_info" if trip.needs_clarification else "new"
+            if shots:                                   # accumulate screenshots
+                existing.screenshots = (existing.screenshots or []) + shots
             db.commit()
-            log.info("Merged message into case #%s (sender %s)", existing.id, sender)
+            log.info("Merged message into case #%s (sender %s, +%d shots)",
+                     existing.id, sender, len(shots))
         else:
             # Resolve the customer's Facebook name once, when the case is created.
             if sender and settings.FB_PAGE_TOKEN and not new_trip.customer_name:
@@ -150,11 +165,12 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                 raw_message=new_trip.raw_message,
                 trip=new_trip.model_dump(),
                 needs_clarification=new_trip.needs_clarification or new_trip.missing_core_fields(),
+                screenshots=shots,
             )
             db.add(case)
             db.commit()
             db.refresh(case)
-            log.info("New case #%s (sender %s)", case.id, sender)
+            log.info("New case #%s (sender %s, %d shots)", case.id, sender, len(shots))
 
     # Acknowledge the customer (keeps us inside Meta's 24h window). Optional:
     # only fires if a page token is set, and can never break this flow.
@@ -404,6 +420,20 @@ def admin_case_detail(case_id: int):
             f"<pre>{escape(c.raw_message or '—')}</pre></div>"
         )
 
+        shots = c.screenshots or []
+        if shots:
+            imgs = "".join(
+                f"<a href='/admin/cases/{c.id}/screenshot/{i}' target='_blank'>"
+                f"<img src='/admin/cases/{c.id}/screenshot/{i}' alt='capture {i+1}' "
+                f"style='max-width:100%;border-radius:10px;border:1px solid #262b35;margin-bottom:10px'></a>"
+                for i in range(len(shots))
+            )
+            screenshot_card = (
+                f"<div class='card full'><h3>Capture(s) d'écran · {len(shots)}</h3>{imgs}</div>"
+            )
+        else:
+            screenshot_card = ""
+
         actions = (
             "<form method='post' action='/admin/cases/" + str(c.id) + "/status' style='margin-top:18px'>"
             f"<label class='muted'>Statut : </label><select name='status'>{opts}</select> "
@@ -418,7 +448,7 @@ def admin_case_detail(case_id: int):
         body = (
             "<p><a href='/admin/cases'>&larr; Tous les dossiers</a></p>"
             f"<h2>#{c.id} · {name} <span class='tag {c.status}'>{c.status}</span></h2>"
-            f"<div class='grid2'>{cards}{profil}{convo}</div>"
+            f"<div class='grid2'>{cards}{screenshot_card}{profil}{convo}</div>"
             f"{actions}{raw}"
         )
     return _PAGE.format(body=body)
@@ -434,6 +464,21 @@ async def admin_update_status(case_id: int, request: Request):
             c.status = new_status
             db.commit()
     return RedirectResponse(f"/admin/cases/{case_id}", status_code=303)
+
+
+@app.get("/admin/cases/{case_id}/screenshot/{idx}", dependencies=[Depends(require_admin)])
+def admin_case_screenshot(case_id: int, idx: int):
+    with SessionLocal() as db:
+        c = db.get(Case, case_id)
+        shots = (c.screenshots if c else None) or []
+        if not c or idx < 0 or idx >= len(shots):
+            raise HTTPException(status_code=404, detail="Capture introuvable")
+        shot = shots[idx]
+    try:
+        data = base64.b64decode(shot["b64"])
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=404, detail="Capture illisible")
+    return Response(content=data, media_type=shot.get("media_type", "image/png"))
 
 
 @app.post("/admin/reset", dependencies=[Depends(require_admin)])

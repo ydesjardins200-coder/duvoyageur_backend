@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import JSON, DateTime, Float, String, Text, create_engine
+from sqlalchemy import JSON, DateTime, Float, String, Text, create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from config import settings
@@ -57,10 +57,26 @@ class Case(Base):
     trip: Mapped[dict] = mapped_column(JSON, default=dict)
     # Promoted so the admin can see "what to ask the customer" at a glance.
     needs_clarification: Mapped[list] = mapped_column(JSON, default=list)
+    # Screenshots the customer sent: list of {media_type, b64, received_at}.
+    screenshots: Mapped[list] = mapped_column(JSON, default=list)
 
 
 def init_db() -> None:
     Base.metadata.create_all(engine)
+    _ensure_columns()
+
+
+def _ensure_columns() -> None:
+    """Add columns introduced after first deploy, without a manual migration."""
+    with engine.begin() as conn:
+        if engine.dialect.name == "postgresql":
+            conn.execute(text(
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS screenshots JSONB DEFAULT '[]'::jsonb"
+            ))
+        elif engine.dialect.name == "sqlite":
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(cases)"))]
+            if "screenshots" not in cols:
+                conn.execute(text("ALTER TABLE cases ADD COLUMN screenshots JSON"))
 
 
 # Statuses that mean "this request is still in progress" — new messages from the
