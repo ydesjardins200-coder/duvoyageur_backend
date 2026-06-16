@@ -92,3 +92,30 @@ def send_text(recipient_id: Optional[str], text: str, page_token: str,
     except Exception as e:  # noqa: BLE001
         log.warning("Send API reply failed: %s", e)
         return False
+
+
+def get_user_name(psid: Optional[str], page_token: str,
+                  graph_version: str = "v21.0", timeout: int = 8) -> Optional[str]:
+    """
+    Look up a customer's display name from their page-scoped ID via the
+    User Profile API. Returns "First Last", or None if unavailable.
+
+    Never raises. Note: full name access can require the pages_user_profile
+    permission / app review for production; in dev/sandbox it works for testers.
+    """
+    if not (psid and page_token):
+        return None
+    url = (
+        f"https://graph.facebook.com/{graph_version}/{urllib.parse.quote(psid)}"
+        f"?fields=first_name,last_name&access_token={urllib.parse.quote(page_token)}"
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            if not (200 <= resp.status < 300):
+                return None
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:  # noqa: BLE001
+        log.warning("User Profile lookup failed: %s", e)
+        return None
+    name = " ".join(p for p in (data.get("first_name"), data.get("last_name")) if p).strip()
+    return name or None

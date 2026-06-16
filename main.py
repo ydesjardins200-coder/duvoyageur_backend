@@ -37,7 +37,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from auth import require_admin
 from config import settings
 from db import STATUSES, Case, SessionLocal, find_open_case_for_sender, init_db
-from facebook import extract_messages, send_text, valid_signature, verify_challenge
+from facebook import extract_messages, get_user_name, send_text, valid_signature, verify_challenge
 from parser import parse_trip
 from trip_schema import TripRequest, merge_trip_requests
 
@@ -134,6 +134,11 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
             db.commit()
             log.info("Merged message into case #%s (sender %s)", existing.id, sender)
         else:
+            # Resolve the customer's Facebook name once, when the case is created.
+            if sender and settings.FB_PAGE_TOKEN and not new_trip.customer_name:
+                name = get_user_name(sender, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+                if name:
+                    new_trip.customer_name = name
             trip = new_trip
             case = Case(
                 channel="messenger",
@@ -239,10 +244,12 @@ def admin_cases():
     rows = []
     for c in cases:
         t = c.trip or {}
+        name = escape(str(t.get("customer_name") or "Client inconnu"))
         where = escape(str(t.get("hotel_name_raw") or t.get("destination") or "—"))
         needs = ", ".join(c.needs_clarification or []) or "—"
         rows.append(
             f"<tr><td><a href='/admin/cases/{c.id}'>#{c.id}</a></td>"
+            f"<td><b>{name}</b></td>"
             f"<td><span class='tag {c.status}'>{c.status}</span></td>"
             f"<td>{escape(c.channel)}</td>"
             f"<td>{where}</td>"
@@ -251,9 +258,9 @@ def admin_cases():
             f"<td class='muted'>{c.created_at:%Y-%m-%d %H:%M}</td></tr>"
         )
     body = (
-        "<table><tr><th>#</th><th>Statut</th><th>Canal</th><th>Hôtel / Dest.</th>"
+        "<table><tr><th>#</th><th>Client</th><th>Statut</th><th>Canal</th><th>Hôtel / Dest.</th>"
         "<th>Conf.</th><th>À demander</th><th>Reçu</th></tr>"
-        + ("".join(rows) or "<tr><td colspan='7' class='muted'>Aucun dossier.</td></tr>")
+        + ("".join(rows) or "<tr><td colspan='8' class='muted'>Aucun dossier.</td></tr>")
         + "</table>"
     )
     return _PAGE.format(body=body)
@@ -274,7 +281,8 @@ def admin_case_detail(case_id: int):
         )
         body = (
             f"<p><a href='/admin/cases'>&larr; Tous les dossiers</a></p>"
-            f"<h2>Dossier #{c.id} <span class='tag {c.status}'>{c.status}</span></h2>"
+            f"<h2>#{c.id} · {escape(str(t.get('customer_name') or 'Client inconnu'))} "
+            f"<span class='tag {c.status}'>{c.status}</span></h2>"
             f"<p class='muted'>{escape(c.channel)} · {c.created_at:%Y-%m-%d %H:%M} · "
             f"confiance {c.parse_confidence:.2f}</p>"
             f"<p><b>Message original:</b><br><code>{escape(c.raw_message or '—')}</code></p>"
