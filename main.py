@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import time
 import urllib.request
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -104,6 +105,24 @@ def _download_image(url: str) -> tuple[bytes, str] | tuple[None, None]:
 # for a screenshot is the highest-leverage move (it fills several fields at once).
 SCREENSHOT_FIRST_THRESHOLD = 5
 
+# Per-sender timestamp of the latest inbound message, used to debounce replies so
+# a burst (text + screenshot as separate events) gets ONE reply on merged state.
+_last_msg_at: dict[str, float] = {}
+
+
+def _send_debounced_ack(sender: str, my_stamp: float) -> bool:
+    """Send the acknowledgment only if no newer message has arrived since."""
+    if _last_msg_at.get(sender) != my_stamp:
+        return False  # a newer message superseded this one; it will reply
+    with SessionLocal() as db:
+        case = find_open_case_for_sender(db, sender)
+        if not case:
+            return False
+        final_trip = TripRequest.model_validate(case.trip)
+        has_shot = bool(case.screenshots)
+    return bool(send_text(sender, _ack_message(final_trip, has_shot),
+                          settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION))
+
 
 def _ack_message(trip: TripRequest, has_screenshot: bool = False) -> str:
     """Customer-facing acknowledgment: one relevant next step at a time."""
@@ -120,6 +139,11 @@ def _ack_message(trip: TripRequest, has_screenshot: bool = False) -> str:
 
 
 def process_messenger_message(sender: str | None, text: str, image_urls: list[str]) -> None:
+    # Mark this as the latest message from this sender (for reply debouncing).
+    my_stamp = time.monotonic()
+    if sender:
+        _last_msg_at[sender] = my_stamp
+
     # Download every screenshot attached to this message.
     downloaded: list[tuple[bytes, str]] = []
     for url in (image_urls or []):
@@ -156,7 +180,6 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
             existing.status = "needs_info" if trip.needs_clarification else "new"
             if shots:                                   # accumulate screenshots
                 existing.screenshots = (existing.screenshots or []) + shots
-            has_screenshot = bool(existing.screenshots)
             db.commit()
             log.info("Merged message into case #%s (sender %s, +%d shots)",
                      existing.id, sender, len(shots))
@@ -168,7 +191,6 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                     new_trip.customer_name = name
             trip = new_trip
             rem = new_trip.remaining_fields()
-            has_screenshot = bool(shots)
             case = Case(
                 channel="messenger",
                 status="needs_info" if rem else "new",
@@ -185,12 +207,13 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
             db.refresh(case)
             log.info("New case #%s (sender %s, %d shots)", case.id, sender, len(shots))
 
-    # Acknowledge the customer (keeps us inside Meta's 24h window). Optional:
-    # only fires if a page token is set, and can never break this flow.
+    # Debounced acknowledgment: wait briefly so a burst (text + screenshot as
+    # separate events) produces ONE reply built on the final merged state. Only
+    # the last message in the burst actually replies. Never breaks processing.
     if sender and settings.FB_PAGE_TOKEN:
-        sent = send_text(sender, _ack_message(trip, has_screenshot), settings.FB_PAGE_TOKEN,
-                         settings.FB_GRAPH_VERSION)
-        log.info("Ack reply to %s: %s", sender, "sent" if sent else "not sent")
+        time.sleep(settings.ACK_DEBOUNCE_SECONDS)
+        sent = _send_debounced_ack(sender, my_stamp)
+        log.info("Ack to %s: %s", sender, "sent" if sent else "skipped (superseded)")
 
 
 # --------------------------------------------------------------------------- #

@@ -31,6 +31,10 @@ RÈGLES STRICTES
    dans `passengers` avec son âge. Si on dit « 2 adultes » sans âge, mets
    num_adults = 2 mais NE crée pas de passagers inventés avec un âge. Si on dit
    « 2 ados de 14 et 16 ans », crée deux passagers avec ces âges.
+4b. OCCUPANCY depuis une capture de forfait : si le prix est affiché « par
+   adulte » et que le total = 2 × ce prix, déduis num_adults = 2. Si la capture
+   d'un forfait ne montre aucun enfant, tu peux mettre num_children = 0. Capture
+   aussi le type de chambre (room_type) et, si visible, le nombre de chambres.
 5. AÉROPORT : déduis l'IATA seulement si tu es certain —
    Montréal = YUL, Québec = YQB, Ottawa = YOW, Toronto = YYZ, Bagotville = YBG,
    Mont-Tremblant = YTM. Sinon laisse origin_airport_iata à null et garde juste
