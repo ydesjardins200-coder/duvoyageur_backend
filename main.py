@@ -229,7 +229,24 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  th{{color:#9aa4b2;font-weight:600}} a{{color:#7db4ff;text-decoration:none}}
  .tag{{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;background:#262b35}}
  .new{{background:#1d3a5f}} .needs_info{{background:#5f491d}} .booked{{background:#1d5f33}}
+ .quoted{{background:#3a1d5f}} .closed{{background:#33383f}}
  .muted{{color:#9aa4b2}} code{{background:#171a21;padding:1px 5px;border-radius:4px}}
+ .grid2{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin:18px 0}}
+ .card{{background:#171a21;border:1px solid #262b35;border-radius:14px;padding:16px 18px}}
+ .card h3{{margin:0 0 12px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#7db4ff}}
+ .kv{{display:flex;justify-content:space-between;gap:14px;padding:6px 0;border-bottom:1px solid #20242e}}
+ .kv:last-child{{border-bottom:0}} .kv .k{{color:#9aa4b2}} .kv .v{{text-align:right;font-weight:500}}
+ .sub{{font-size:12px;color:#9aa4b2;font-weight:400}}
+ .chips{{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}}
+ .chip{{background:#5f491d;color:#ffd9a8;padding:3px 10px;border-radius:999px;font-size:13px}}
+ .ok{{color:#7be0a0;font-weight:600}}
+ .meter{{height:10px;background:#20242e;border-radius:999px;overflow:hidden;margin:8px 0}}
+ .meter > i{{display:block;height:100%;border-radius:999px}}
+ .full{{grid-column:1 / -1}}
+ select,button{{font-size:14px;padding:7px 10px;border-radius:8px;border:1px solid #2c3340;background:#0f1115;color:#e6e6e6}}
+ button{{cursor:pointer;background:#1d3a5f;border-color:#274a73}}
+ details summary{{cursor:pointer;color:#9aa4b2;margin-top:18px}}
+ pre{{background:#0f1115;border:1px solid #262b35;border-radius:10px;padding:12px;overflow:auto}}
 </style></head><body><header><h1>Du Voyageur — Dossiers</h1></header><main>{body}</main></body></html>"""
 
 
@@ -277,28 +294,132 @@ def admin_cases():
 @app.get("/admin/cases/{case_id}", response_class=HTMLResponse,
          dependencies=[Depends(require_admin)])
 def admin_case_detail(case_id: int):
+    import json as _json
+
+    BOARD_FR = {"all_inclusive": "Tout inclus", "breakfast": "Petit-déjeuner",
+                "half_board": "Demi-pension", "full_board": "Pension complète",
+                "room_only": "Chambre seulement", "other": "Autre", "unknown": None}
+    BASIS_FR = {"per_person": "par personne", "total": "pour le groupe", "unknown": None}
+
+    def val(x):
+        """Render a value, or a muted dash when empty."""
+        if x in (None, "", [], "unknown"):
+            return "<span class='muted'>—</span>"
+        return escape(str(x))
+
+    def kv(label, value, sub=None):
+        sub_html = f"<div class='sub'>{escape(sub)}</div>" if sub else ""
+        return f"<div class='kv'><span class='k'>{label}</span><span class='v'>{value}{sub_html}</span></div>"
+
+    def card(title, *rows):
+        return f"<div class='card'><h3>{title}</h3>{''.join(rows)}</div>"
+
     with SessionLocal() as db:
         c = db.get(Case, case_id)
         if not c:
             return HTMLResponse(_PAGE.format(body="<p>Introuvable.</p>"), status_code=404)
         t = c.trip or {}
-        import json as _json
+
+        # --- derived display values ---
+        name = escape(str(t.get("customer_name") or "Client inconnu"))
+        # origin
+        city, iata = t.get("origin_city"), t.get("origin_airport_iata")
+        origin = f"{city} ({iata})" if city and iata else (city or iata)
+        # dates
+        dep, ret, nights = t.get("departure_date"), t.get("return_date"), t.get("nights")
+        if dep or ret:
+            dates = f"{dep or '?'} → {ret or '?'}" + (f" · {nights} nuits" if nights else "")
+        else:
+            dates = t.get("dates_raw")
+        # hotel + normalized subtext
+        hotel = t.get("hotel_name_raw")
+        norm = t.get("hotel_name_normalized")
+        hotel_sub = norm if norm and norm != hotel else None
+        # passengers ages
+        ages = [str(p.get("age")) for p in (t.get("passengers") or []) if p.get("age") is not None]
+        ages_str = ", ".join(ages) if ages else None
+        # price
+        ps = t.get("price_seen") or {}
+        price_amt = f"{ps.get('amount')} {ps.get('currency', 'CAD')}" if ps.get("amount") is not None else None
+        taxes = ps.get("taxes_included")
+        taxes_str = "Oui" if taxes is True else ("Non" if taxes is False else None)
+
+        # confidence meter
+        conf = float(c.parse_confidence or 0)
+        conf_color = "#e0675b" if conf < 0.4 else ("#e0b35b" if conf < 0.7 else "#7be0a0")
+
+        # missing info
+        missing = c.needs_clarification or []
+        if missing:
+            missing_html = "<div class='chips'>" + "".join(
+                f"<span class='chip'>{escape(m)}</span>" for m in missing) + "</div>"
+        else:
+            missing_html = "<div class='ok'>✓ Profil complet — prêt à coter</div>"
+
         opts = "".join(
             f"<option value='{s}'{' selected' if s == c.status else ''}>{s}</option>"
-            for s in STATUSES
+            for s in STATUSES)
+
+        cards = (
+            card("Client",
+                 kv("Nom", val(t.get("customer_name"))),
+                 kv("Courriel", val(t.get("customer_email"))),
+                 kv("Canal", val(c.channel)),
+                 kv("Reçu", c.created_at.strftime("%Y-%m-%d %H:%M"))) +
+            card("Voyage",
+                 kv("Destination", val(t.get("destination"))),
+                 kv("Hôtel", val(hotel), sub=hotel_sub),
+                 kv("Départ", val(origin)),
+                 kv("Dates", val(dates)),
+                 kv("Forfait", val(BOARD_FR.get(t.get("board")))),
+                 kv("Transporteur", val(t.get("operator")))) +
+            card("Voyageurs",
+                 kv("Adultes", val(t.get("num_adults"))),
+                 kv("Enfants", val(t.get("num_children"))),
+                 kv("Âges", val(ages_str)),
+                 kv("Chambres", val(t.get("num_rooms"))),
+                 kv("Type de chambre", val(t.get("room_type")))) +
+            card("Prix trouvé",
+                 kv("Montant", val(price_amt)),
+                 kv("Base", val(BASIS_FR.get(ps.get("basis")))),
+                 kv("Taxes incluses", val(taxes_str)),
+                 kv("Source", val(t.get("source"))),
+                 kv("Texte original", val(ps.get("raw"))))
         )
+
+        profil = (
+            "<div class='card full'><h3>Profilage</h3>"
+            f"<div class='kv'><span class='k'>Confiance</span>"
+            f"<span class='v'>{conf:.0%}</span></div>"
+            f"<div class='meter'><i style='width:{conf*100:.0f}%;background:{conf_color}'></i></div>"
+            "<div class='kv'><span class='k'>Infos à demander au client</span></div>"
+            f"{missing_html}"
+            + (f"<div class='kv'><span class='k'>Notes</span><span class='v'>{val(t.get('agent_notes'))}</span></div>"
+               if t.get("agent_notes") else "")
+            + "</div>"
+        )
+
+        convo = (
+            "<div class='card full'><h3>Conversation</h3>"
+            f"<pre>{escape(c.raw_message or '—')}</pre></div>"
+        )
+
+        actions = (
+            "<form method='post' action='/admin/cases/" + str(c.id) + "/status' style='margin-top:18px'>"
+            f"<label class='muted'>Statut : </label><select name='status'>{opts}</select> "
+            "<button>Mettre à jour</button></form>"
+        )
+
+        raw = (
+            "<details><summary>Voir les données brutes (TripRequest)</summary>"
+            f"<pre>{escape(_json.dumps(t, indent=2, ensure_ascii=False))}</pre></details>"
+        )
+
         body = (
-            f"<p><a href='/admin/cases'>&larr; Tous les dossiers</a></p>"
-            f"<h2>#{c.id} · {escape(str(t.get('customer_name') or 'Client inconnu'))} "
-            f"<span class='tag {c.status}'>{c.status}</span></h2>"
-            f"<p class='muted'>{escape(c.channel)} · {c.created_at:%Y-%m-%d %H:%M} · "
-            f"confiance {c.parse_confidence:.2f}</p>"
-            f"<p><b>Message original:</b><br><code>{escape(c.raw_message or '—')}</code></p>"
-            f"<p><b>À demander au client:</b> {escape(', '.join(c.needs_clarification or []) or '—')}</p>"
-            f"<form method='post' action='/admin/cases/{c.id}/status'>"
-            f"<label>Statut: <select name='status'>{opts}</select></label> "
-            f"<button>Mettre à jour</button></form>"
-            f"<h3>TripRequest</h3><pre><code>{escape(_json.dumps(t, indent=2, ensure_ascii=False))}</code></pre>"
+            "<p><a href='/admin/cases'>&larr; Tous les dossiers</a></p>"
+            f"<h2>#{c.id} · {name} <span class='tag {c.status}'>{c.status}</span></h2>"
+            f"<div class='grid2'>{cards}{profil}{convo}</div>"
+            f"{actions}{raw}"
         )
     return _PAGE.format(body=body)
 
