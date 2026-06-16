@@ -215,6 +215,9 @@ class TripRequest(BaseModel):
         # Children's ages matter for pricing — only ask if there ARE children.
         if (self.num_children or 0) > 0 and not any(p.age is not None for p in self.passengers):
             rem.append("âge des enfants")
+        # Rooms: number (and type) — a single question covers both.
+        if not self.num_rooms:
+            rem.append("nombre et type de chambre")
         # Price is the heart of the rebate.
         if not (self.price_seen and self.price_seen.amount is not None):
             rem.append("prix trouvé")
@@ -239,6 +242,7 @@ _NEXT_QUESTIONS = {
     "dates de voyage": "Pour quelles dates penses-tu partir (départ et retour) ?",
     "nombre de voyageurs": "Vous voyagez combien de personnes en tout (adultes et enfants) ?",
     "âge des enfants": "Quel sera l'âge des enfants au moment du voyage ?",
+    "nombre et type de chambre": "Combien de chambres te faut-il, et un type de chambre en particulier ?",
     "prix trouvé": "Quel prix as-tu vu pour ce forfait ?",
     "prix par personne ou total": "Ce prix-là, c'est par personne ou pour tout le groupe ?",
     "voyagiste / site du forfait": "Sur quel site ou voyagiste as-tu trouvé ce prix (Transat, Sunwing…) ?",
