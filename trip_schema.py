@@ -195,3 +195,43 @@ class TripRequest(BaseModel):
         if not (self.passengers or self.num_adults):
             missing.append("nombre et âge des voyageurs")
         return missing
+
+
+def merge_trip_requests(old: "TripRequest", new: "TripRequest") -> "TripRequest":
+    """
+    Additive merge for progressive profiling across a conversation.
+
+    Rule: a new NON-EMPTY value overwrites (people correct themselves), but a new
+    EMPTY value NEVER erases data the customer already gave. So a follow-up like
+    "départ Montréal" fills the origin without wiping the adults/dates from before.
+    """
+    merged = old.model_copy(deep=True)
+
+    # Fields handled explicitly below; everything else uses the simple rule.
+    EXPLICIT = {"raw_message", "needs_clarification", "parse_confidence",
+                "agent_notes", "passengers", "price_seen", "board"}
+    for field in TripRequest.model_fields:
+        if field in EXPLICIT:
+            continue
+        nv = getattr(new, field)
+        if nv not in (None, "", []):          # new value present -> overwrite
+            setattr(merged, field, nv)
+
+    if new.passengers:                          # only replace if new actually lists them
+        merged.passengers = [p.model_copy(deep=True) for p in new.passengers]
+    if new.price_seen is not None:
+        merged.price_seen = new.price_seen.model_copy(deep=True)
+    if new.board and new.board != BoardType.unknown:
+        merged.board = new.board
+
+    merged.parse_confidence = max(old.parse_confidence, new.parse_confidence)
+
+    notes = [n for n in (old.agent_notes, new.agent_notes) if n]
+    merged.agent_notes = " · ".join(notes) if notes else None
+
+    raws = [r for r in (old.raw_message, new.raw_message) if r]
+    merged.raw_message = "\n---\n".join(raws) if raws else None
+
+    # Recompute what's still missing — this shrinks as the customer answers.
+    merged.needs_clarification = merged.missing_core_fields()
+    return merged

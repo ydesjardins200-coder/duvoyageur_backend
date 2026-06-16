@@ -13,7 +13,7 @@ entirely by DATABASE_URL.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import JSON, DateTime, Float, String, Text, create_engine
@@ -61,3 +61,27 @@ class Case(Base):
 
 def init_db() -> None:
     Base.metadata.create_all(engine)
+
+
+# Statuses that mean "this request is still in progress" — new messages from the
+# same sender merge into it. Once quoted/booked/closed, the next message is a
+# fresh trip request.
+OPEN_STATUSES = ("new", "needs_info")
+
+
+def find_open_case_for_sender(db, sender_ref: Optional[str], within_days: int = 30):
+    """Most recent open Messenger case for this sender, within the merge window."""
+    if not sender_ref:
+        return None
+    cutoff = datetime.utcnow() - timedelta(days=within_days)
+    return (
+        db.query(Case)
+        .filter(
+            Case.sender_ref == sender_ref,
+            Case.channel == "messenger",
+            Case.status.in_(OPEN_STATUSES),
+            Case.created_at >= cutoff,
+        )
+        .order_by(Case.created_at.desc())
+        .first()
+    )

@@ -36,10 +36,10 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
 from auth import require_admin
 from config import settings
-from db import STATUSES, Case, SessionLocal, init_db
+from db import STATUSES, Case, SessionLocal, find_open_case_for_sender, init_db
 from facebook import extract_messages, send_text, valid_signature, verify_challenge
 from parser import parse_trip
-from trip_schema import TripRequest
+from trip_schema import TripRequest, merge_trip_requests
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("duvoyageur")
@@ -112,14 +112,43 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
         image_bytes, mt = _download_image(image_urls[0])
         media_type = mt or "image/png"
     try:
-        trip = parse_trip(text, image_bytes=image_bytes, image_media_type=media_type)
+        new_trip = parse_trip(text, image_bytes=image_bytes, image_media_type=media_type)
     except Exception as e:  # noqa: BLE001
         # Never drop a customer message — store a fallback the agent can rescue.
         log.exception("Parse failed; storing fallback case: %s", e)
-        trip = TripRequest(raw_message=text, source="messenger",
-                           agent_notes=f"Parsing automatique échoué: {e}",
-                           needs_clarification=["à traiter manuellement"])
-    store_case("messenger", trip, sender_ref=sender)
+        new_trip = TripRequest(raw_message=text, source="messenger",
+                               agent_notes=f"Parsing automatique échoué: {e}",
+                               needs_clarification=["à traiter manuellement"])
+
+    # Find-or-merge: keep one evolving case per customer (progressive profiling).
+    with SessionLocal() as db:
+        existing = find_open_case_for_sender(db, sender)
+        if existing:
+            trip = merge_trip_requests(TripRequest.model_validate(existing.trip), new_trip)
+            existing.trip = trip.model_dump()
+            existing.needs_clarification = trip.needs_clarification
+            existing.parse_confidence = trip.parse_confidence
+            existing.raw_message = trip.raw_message
+            existing.customer_email = trip.customer_email or existing.customer_email
+            existing.status = "needs_info" if trip.needs_clarification else "new"
+            db.commit()
+            log.info("Merged message into case #%s (sender %s)", existing.id, sender)
+        else:
+            trip = new_trip
+            case = Case(
+                channel="messenger",
+                status="needs_info" if new_trip.needs_clarification else "new",
+                sender_ref=sender,
+                customer_email=new_trip.customer_email,
+                parse_confidence=new_trip.parse_confidence,
+                raw_message=new_trip.raw_message,
+                trip=new_trip.model_dump(),
+                needs_clarification=new_trip.needs_clarification or new_trip.missing_core_fields(),
+            )
+            db.add(case)
+            db.commit()
+            db.refresh(case)
+            log.info("New case #%s (sender %s)", case.id, sender)
 
     # Acknowledge the customer (keeps us inside Meta's 24h window). Optional:
     # only fires if a page token is set, and can never break this flow.
