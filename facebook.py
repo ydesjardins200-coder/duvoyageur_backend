@@ -63,6 +63,23 @@ def extract_messages(payload: dict) -> list[tuple[Optional[str], str, list[str]]
     return results
 
 
+def extract_postbacks(payload: dict) -> list[tuple[Optional[str], str]]:
+    """Return one (sender_id, payload_string) tuple per postback event.
+
+    Postbacks fire when a user taps the "Get Started" button or a structured
+    button — distinct from normal text/image messages.
+    """
+    results: list[tuple[Optional[str], str]] = []
+    for entry in payload.get("entry", []):
+        for event in entry.get("messaging", []):
+            pb = event.get("postback")
+            if not pb:
+                continue
+            sender = event.get("sender", {}).get("id")
+            results.append((sender, pb.get("payload", "") or ""))
+    return results
+
+
 def send_text(recipient_id: Optional[str], text: str, page_token: str,
               graph_version: str = "v21.0", timeout: int = 8) -> bool:
     """
@@ -119,3 +136,42 @@ def get_user_name(psid: Optional[str], page_token: str,
         return None
     name = " ".join(p for p in (data.get("first_name"), data.get("last_name")) if p).strip()
     return name or None
+
+
+def set_messenger_profile(page_token: str, greeting_text: str,
+                          get_started_payload: str = "GET_STARTED",
+                          graph_version: str = "v21.0", timeout: int = 8) -> tuple[bool, str]:
+    """
+    Configure the page's Messenger welcome screen, one time, via the Messenger
+    Profile API: the static greeting text (shown before the user types) and the
+    "Get Started" button (taps fire a GET_STARTED postback to our webhook).
+
+    Returns (ok, detail) — detail carries Meta's response/error for diagnostics.
+    The greeting may contain {{user_first_name}}, which Messenger auto-fills.
+    """
+    if not page_token:
+        return False, "Aucun FB_PAGE_TOKEN configuré."
+    url = (
+        f"https://graph.facebook.com/{graph_version}/me/messenger_profile"
+        f"?access_token={urllib.parse.quote(page_token)}"
+    )
+    body = json.dumps({
+        "greeting": [{"locale": "default", "text": greeting_text}],
+        "get_started": {"payload": get_started_payload},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            detail = resp.read().decode("utf-8")
+            return (200 <= resp.status < 300), detail
+    except Exception as e:  # noqa: BLE001 — surface Meta's error body when present
+        detail = str(e)
+        if hasattr(e, "read"):
+            try:
+                detail = e.read().decode("utf-8")
+            except Exception:  # noqa: BLE001
+                pass
+        log.warning("set_messenger_profile failed: %s", detail)
+        return False, detail

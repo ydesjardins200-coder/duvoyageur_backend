@@ -41,7 +41,8 @@ from sqlalchemy import text
 from auth import require_admin
 from config import settings
 from db import STATUSES, Case, SessionLocal, engine, find_open_case_for_sender, init_db
-from facebook import extract_messages, get_user_name, send_text, valid_signature, verify_challenge
+from facebook import (extract_messages, extract_postbacks, get_user_name,
+                      send_text, set_messenger_profile, valid_signature, verify_challenge)
 from parser import parse_trip
 from trip_schema import ContactChannel, TripRequest, merge_trip_requests
 
@@ -227,6 +228,36 @@ def health():
     return {"ok": True, "service": "duvoyageur-backend"}
 
 
+# --------------------------------------------------------------------------- #
+# Messenger welcome screen
+# --------------------------------------------------------------------------- #
+GET_STARTED_PAYLOAD = "GET_STARTED"
+
+# Static text shown on the welcome screen BEFORE the user types. Messenger
+# auto-fills {{user_first_name}}.
+GREETING_TEXT = (
+    "Salut {{user_first_name}} ! 🌴 Trouve ton forfait tout inclus, envoie-nous "
+    "une capture d'écran, et on te trouve le même voyage avec un rabais. 💸"
+)
+
+
+def process_postback(sender: str | None, payload: str) -> None:
+    """Handle button taps. On Get Started, fire the screenshot-first welcome."""
+    if not (sender and settings.FB_PAGE_TOKEN) or payload != GET_STARTED_PAYLOAD:
+        return
+    first = ""
+    name = get_user_name(sender, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+    if name:
+        first = " " + name.split()[0]
+    greeting = (
+        f"Salut{first} ! 🌴 Bienvenue chez Du Voyageur. Trouve ton forfait tout "
+        "inclus et envoie-moi une capture d'écran 📸 — je te trouve le même voyage "
+        "avec un rabais. Tu peux m'envoyer ta capture tout de suite !"
+    )
+    sent = send_text(sender, greeting, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+    log.info("Get Started greeting to %s: %s", sender, "sent" if sent else "failed")
+
+
 @app.get("/webhook")
 def webhook_verify(request: Request):
     p = request.query_params
@@ -252,6 +283,8 @@ async def webhook_receive(request: Request, background: BackgroundTasks):
         return PlainTextResponse("EVENT_RECEIVED")
     for sender, text, image_urls in extract_messages(payload):
         background.add_task(process_messenger_message, sender, text, image_urls)
+    for sender, pb_payload in extract_postbacks(payload):
+        background.add_task(process_postback, sender, pb_payload)
 
     # ACK immediately; parsing happens after the response is sent.
     return PlainTextResponse("EVENT_RECEIVED")
@@ -338,6 +371,12 @@ def admin_cases():
         "<th>Conf.</th><th>À demander</th><th>Reçu</th></tr>"
         + ("".join(rows) or "<tr><td colspan='8' class='muted'>Aucun dossier.</td></tr>")
         + "</table>"
+    )
+    body += (
+        "<form method='post' action='/admin/setup-greeting' style='margin-top:24px;display:inline-block'>"
+        "<button style='background:#1d3a5f;color:#fff;border:0;padding:8px 14px;"
+        "border-radius:8px;cursor:pointer'>Configurer l'accueil Messenger</button></form>"
+        "<p class='sub'>Définit la salutation + le bouton « Get Started » de ta page (une seule fois).</p>"
     )
     if settings.ALLOW_RESET:
         body += (
@@ -540,6 +579,24 @@ def admin_case_screenshot(case_id: int, idx: int):
     except Exception:  # noqa: BLE001
         raise HTTPException(status_code=404, detail="Capture illisible")
     return Response(content=data, media_type=shot.get("media_type", "image/png"))
+
+
+@app.post("/admin/setup-greeting", dependencies=[Depends(require_admin)])
+def admin_setup_greeting():
+    """One-time: set the page's greeting text + Get Started button on Meta."""
+    ok, detail = set_messenger_profile(
+        settings.FB_PAGE_TOKEN, GREETING_TEXT, GET_STARTED_PAYLOAD,
+        settings.FB_GRAPH_VERSION)
+    title = "✅ Accueil Messenger configuré" if ok else "❌ Échec de la configuration"
+    body = (
+        "<p><a href='/admin/cases'>&larr; Retour aux dossiers</a></p>"
+        f"<h2>{title}</h2>"
+        "<p class='sub'>Salutation d'accueil + bouton « Get Started » envoyés à Meta. "
+        "Ouvre la conversation avec ta page pour voir l'écran d'accueil, puis tape "
+        "« Démarrer » pour déclencher le message de bienvenue.</p>"
+        f"<pre>{escape(detail)}</pre>"
+    )
+    return _PAGE.format(body=body)
 
 
 @app.post("/admin/cases/{case_id}/send", dependencies=[Depends(require_admin)])
