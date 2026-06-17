@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import time
 import urllib.request
 from contextlib import asynccontextmanager
@@ -37,6 +38,7 @@ from fastapi import (BackgroundTasks, Depends, FastAPI, File, Form, HTTPExceptio
                      Request, Response, UploadFile)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -82,6 +84,12 @@ app.add_middleware(
 async def _redirect_to_login(request: Request, exc: NotAuthenticated):
     """Protected pages bounce unauthenticated visitors to the login form."""
     return RedirectResponse("/admin/login", status_code=303)
+
+
+# Public static assets (login background, logo). Absolute path so it resolves
+# regardless of the working directory Railway starts the process from.
+_STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
 
 # --------------------------------------------------------------------------- #
@@ -513,25 +521,50 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
 _LOGIN_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Du Voyageur — Connexion</title>
+<link rel="icon" type="image/png" href="/static/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500&display=swap" rel="stylesheet">
 <style>
+ :root{{
+   --abyss:#03121b;--deep:#0a3346;--pacific:#19d3e6;--lagoon:#3df0c5;
+   --surf:#9bf6ec;--gold:#ffd23f;--foam:#eafcff;--mist:#94b8c6;
+   --line:rgba(155,246,236,.16);--glow:rgba(25,211,230,.55);
+ }}
  *{{box-sizing:border-box}}
- body{{font:15px/1.5 system-ui,sans-serif;margin:0;min-height:100vh;display:flex;
-   align-items:center;justify-content:center;background:#0f1115;color:#e6e6e6;padding:20px}}
- .card{{width:100%;max-width:360px;background:#171a21;border:1px solid #262b35;
-   border-radius:16px;padding:28px 26px}}
- h1{{font-size:19px;margin:0 0 4px}}
- .sub{{color:#9aa4b2;font-size:13px;margin:0 0 22px}}
- label{{display:block;font-size:13px;color:#9aa4b2;margin:14px 0 6px}}
- input{{width:100%;font-size:15px;padding:11px 12px;border-radius:10px;
-   border:1px solid #2c3340;background:#0f1115;color:#e6e6e6}}
- input:focus{{outline:none;border-color:#3a6ea5}}
- button{{width:100%;margin-top:22px;font-size:15px;font-weight:600;padding:12px;
-   border-radius:10px;border:0;background:#1d3a5f;color:#fff;cursor:pointer}}
- button:hover{{background:#274a73}}
- .err{{background:#3a1d1d;border:1px solid #5f2b2b;color:#ffb4b4;font-size:13px;
-   padding:10px 12px;border-radius:10px;margin-bottom:18px}}
+ body{{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+   padding:24px;font-family:"Inter",system-ui,sans-serif;color:var(--foam);
+   background:
+     radial-gradient(80% 55% at 80% -5%, rgba(25,211,230,.18), transparent 60%),
+     linear-gradient(180deg, rgba(3,18,27,.78), rgba(3,18,27,.88)),
+     url("/static/login-bg.webp") center/cover fixed no-repeat;}}
+ .card{{width:100%;max-width:380px;text-align:center;
+   background:linear-gradient(180deg, rgba(20,62,82,.55), rgba(8,33,47,.66));
+   border:1px solid var(--line);border-radius:22px;padding:34px 30px 30px;
+   box-shadow:0 30px 70px -24px rgba(0,0,0,.8),0 0 40px -12px var(--glow);
+   backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}}
+ .logo{{width:96px;height:96px;border-radius:50%;display:block;margin:0 auto 14px;
+   box-shadow:0 0 0 1px var(--line),0 10px 30px -8px rgba(0,0,0,.7)}}
+ h1{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:24px;
+   letter-spacing:-.02em;margin:0}}
+ .sub{{font-family:"Space Grotesk",monospace;text-transform:uppercase;letter-spacing:.22em;
+   font-size:11px;color:var(--pacific);margin:6px 0 22px}}
+ label{{display:block;text-align:left;font-size:12px;color:var(--mist);margin:14px 0 6px}}
+ input{{width:100%;font-size:15px;padding:12px 13px;border-radius:12px;color:var(--foam);
+   border:1px solid var(--line);background:rgba(3,18,27,.55)}}
+ input::placeholder{{color:#6f93a3}}
+ input:focus{{outline:none;border-color:var(--pacific);box-shadow:0 0 0 3px rgba(25,211,230,.18)}}
+ button{{width:100%;margin-top:24px;font-family:"Bricolage Grotesque",sans-serif;font-weight:700;
+   font-size:15px;padding:13px;border-radius:999px;border:0;cursor:pointer;color:#02161c;
+   background:linear-gradient(120deg,var(--pacific),var(--lagoon));
+   box-shadow:0 12px 30px -10px var(--glow);transition:transform .15s,box-shadow .15s}}
+ button:hover{{transform:translateY(-2px);box-shadow:0 18px 40px -10px var(--glow)}}
+ .err{{background:rgba(95,29,29,.5);border:1px solid rgba(255,120,120,.4);color:#ffc1c1;
+   font-size:13px;padding:10px 12px;border-radius:12px;margin-bottom:16px}}
+ .foot{{margin-top:20px;font-size:11px;color:var(--mist);opacity:.8}}
 </style></head><body>
  <form class="card" method="post" action="/admin/login">
+   <img class="logo" src="/static/logo.png" alt="Du Voyageur">
    <h1>Du Voyageur</h1>
    <p class="sub">Espace administrateur</p>
    {error}
@@ -540,6 +573,7 @@ _LOGIN_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
    <label for="p">Mot de passe</label>
    <input id="p" name="password" type="password" autocomplete="current-password" required>
    <button type="submit">Se connecter</button>
+   <p class="foot">Permis d'agence 700495</p>
  </form>
 </body></html>"""
 
