@@ -44,7 +44,9 @@ RÈGLES STRICTES
    faciliter le matching plus tard — mais seulement si tu es raisonnablement sûr.
 7. TRANSPORTEUR : si le voyagiste est visible (Transat, Sunwing, Vacances Air
    Canada, WestJet Vacations…), mets-le dans `operator`. C'est essentiel pour
-   matcher le bon produit.
+   matcher le bon produit. Si le client nomme plutôt le SITE ou l'AGENCE où il a
+   trouvé le prix (itravel2000, Costco Voyages, Expedia, Sélection Vacances,
+   Voyages à rabais…), mets ce nom dans `source`.
 7b. CANAL : si le client dit comment il veut recevoir son offre (« par SMS »,
    « sur Messenger », « par courriel »), mets-le dans `preferred_channel`. S'il
    donne un numéro de téléphone, mets-le dans `customer_phone`.

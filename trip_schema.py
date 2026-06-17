@@ -25,6 +25,18 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
+# Source values that are generic plumbing, not a real retailer/site the customer
+# named — these should NOT satisfy the "where did you find it" question.
+_GENERIC_SOURCES = {"messenger", "screenshot", "form", "capture", "capture d'écran",
+                    "sms", "email", "courriel", "facebook", "fb"}
+
+
+def _meaningful_source(s: Optional[str]) -> bool:
+    """True if `source` names a real site/retailer (e.g. itravel2000), not just
+    the channel it came through."""
+    return bool(s) and s.strip().lower() not in _GENERIC_SOURCES
+
+
 # --------------------------------------------------------------------------- #
 # Enums
 # --------------------------------------------------------------------------- #
@@ -238,7 +250,7 @@ class TripRequest(BaseModel):
             rem.append("prix trouvé")
         elif self.price_seen.basis == PriceBasis.unknown:
             rem.append("prix par personne ou total")
-        if not self.operator:
+        if not self.operator and not _meaningful_source(self.source):
             rem.append("voyagiste / site du forfait")
         # LAST: how the customer wants to receive the offer, then the matching
         # contact detail (email or phone). Messenger needs no extra contact.

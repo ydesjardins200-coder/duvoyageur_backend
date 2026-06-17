@@ -313,7 +313,8 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                 advanced = False
             else:
                 trip = merge_trip_requests(before_trip, new_trip)
-                advanced = _trip_changed(before_trip, trip)
+                advanced = (_trip_changed(before_trip, trip)
+                            or len(trip.remaining_fields()) < len(before_trip.remaining_fields()))
                 existing.trip = trip.model_dump()
                 existing.needs_clarification = trip.needs_clarification
                 existing.parse_confidence = trip.parse_confidence
