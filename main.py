@@ -45,9 +45,9 @@ from starlette.middleware.sessions import SessionMiddleware
 from auth import NotAuthenticated, check_credentials, require_admin
 from concierge import concierge_reply
 from config import settings
-from db import (STATUSES, Case, Client, SessionLocal, engine, find_open_case_for_sender,
-                find_open_request_for_client, init_db, log_activity,
-                resolve_or_create_client)
+from db import (STATUSES, Case, Client, SessionLocal, engine, find_duplicate_groups,
+                find_open_case_for_sender, find_open_request_for_client, init_db,
+                log_activity, merge_clients, resolve_or_create_client)
 from facebook import (extract_messages, extract_postbacks, get_user_name,
                       send_text, set_messenger_profile, valid_signature, verify_challenge)
 from parser import parse_trip
@@ -809,10 +809,45 @@ def admin_clients():
                 f"<td>{last_status}</td>"
                 f"<td class='muted'>{lastc}</td></tr>"
             )
+
+        # Suggested duplicates (clients sharing a name): offer a quick merge.
+        dup_html = ""
+        groups = find_duplicate_groups(db)
+        if groups:
+            cards = []
+            for g in groups:
+                ids = ",".join(str(c.id) for c in g)
+                lines = "".join(
+                    f"<div class='kv'><span class='k'>"
+                    f"<a href='/admin/clients/{c.id}'>{escape(c.display_name or 'Client')}</a></span>"
+                    f"<span class='v muted'>{escape(c.primary_email or c.primary_phone or '—')} · "
+                    f"{len(c.requests)} demande(s)</span></div>"
+                    for c in g
+                )
+                opts = "".join(
+                    f"<option value='{c.id}'>{escape(c.display_name or 'Client')} "
+                    f"(#{c.id}, {len(c.requests)} dem.)</option>" for c in g
+                )
+                cards.append(
+                    f"<div class='dupgrp'>{lines}"
+                    f"<form method='post' action='/admin/clients/merge' "
+                    "onsubmit=\"return confirm('Fusionner ces fiches ? Action irréversible.')\" "
+                    "style='margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap'>"
+                    f"<input type='hidden' name='drop' value='{ids}'>"
+                    f"<label class='sub'>Conserver :</label><select name='keep'>{opts}</select>"
+                    "<button>Fusionner</button></form></div>"
+                )
+            dup_html = (
+                "<div class='card' style='margin-bottom:18px'>"
+                "<h3>Doublons possibles</h3>"
+                "<p class='sub'>Mêmes noms détectés. Vérifie puis fusionne si c'est la même personne.</p>"
+                + "".join(cards) + "</div>"
+            )
     empty = "<tr><td colspan='6' class='muted'>Aucun client pour l'instant.</td></tr>"
     body = (
         "<h2>Clients</h2>"
-        "<table><tr><th>Client</th><th>Contact</th><th>Demandes</th><th>Réservées</th>"
+        + dup_html
+        + "<table><tr><th>Client</th><th>Contact</th><th>Demandes</th><th>Réservées</th>"
         "<th>Dernier statut</th><th>Dernier contact</th></tr>"
         + ("".join(rows) or empty)
         + "</table>"
@@ -881,6 +916,26 @@ def admin_client_detail(client_id: int):
         id_rows = "".join(kv(KIND_FR.get(i.kind, i.kind), escape(i.value)) for i in idents)
         ident_card = f"<div class='card'><h3>Identités</h3>{id_rows or '<div class=muted>Aucune.</div>'}</div>"
 
+        others = (db.query(Client).filter(Client.id != cl.id)
+                  .order_by(func.coalesce(Client.display_name, "")).limit(500).all())
+        if others:
+            opts = "".join(
+                f"<option value='{o.id}'>{escape(o.display_name or 'Client')} (#{o.id})</option>"
+                for o in others)
+            merge_card = (
+                "<div class='card'><h3>Fusion</h3>"
+                "<form method='post' action='/admin/clients/merge' "
+                "onsubmit=\"return confirm('Fusionner cette fiche dans la fiche choisie ? Action irréversible.')\">"
+                f"<input type='hidden' name='drop' value='{cl.id}'>"
+                "<label class='flbl'>Fusionner cette fiche dans :</label>"
+                f"<select name='keep'>{opts}</select>"
+                "<button class='btn-danger' style='margin-top:12px'>Fusionner</button></form>"
+                "<p class='sub'>Déplace les demandes, identités et l'activité vers la fiche "
+                "choisie, puis supprime celle-ci.</p></div>"
+            )
+        else:
+            merge_card = ""
+
         rrows = []
         for r in reqs:
             t = r.trip or {}
@@ -933,7 +988,7 @@ def admin_client_detail(client_id: int):
             "<p><a href='/admin/clients'>&larr; Tous les clients</a></p>"
             f"<h2>{name}</h2>"
             f"{stats}"
-            f"<div class='grid2'>{info}{ident_card}{hist}{activity}</div>"
+            f"<div class='grid2'>{info}{ident_card}{merge_card}{hist}{activity}</div>"
         )
     return _PAGE.format(body=body)
 
@@ -953,6 +1008,24 @@ async def admin_client_update(client_id: int, request: Request):
             log_activity(db, cl.id, "note", "Fiche client modifiée")
             db.commit()
     return RedirectResponse(f"/admin/clients/{client_id}", status_code=303)
+
+
+@app.post("/admin/clients/merge", dependencies=[Depends(require_admin)])
+async def admin_clients_merge(request: Request):
+    form = await request.form()
+    try:
+        keep = int(form.get("keep") or 0)
+    except ValueError:
+        keep = 0
+    drops = [int(x) for x in (form.get("drop") or "").split(",") if x.strip().isdigit()]
+    if keep:
+        with SessionLocal() as db:
+            for src in drops:
+                if src and src != keep:
+                    merge_clients(db, src, keep)
+            db.commit()
+        return RedirectResponse(f"/admin/clients/{keep}", status_code=303)
+    return RedirectResponse("/admin/clients", status_code=303)
 
 
 @app.get("/admin/cases/{case_id}", response_class=HTMLResponse,

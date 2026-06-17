@@ -340,3 +340,80 @@ def _backfill_clients() -> None:
             )
             c.client_id = client.id
         db.commit()
+
+
+# --------------------------------------------------------------------------- #
+# Duplicate detection + manual merge
+# --------------------------------------------------------------------------- #
+import unicodedata as _ud
+
+
+def _norm_name(name: Optional[str]) -> Optional[str]:
+    if not name:
+        return None
+    n = _ud.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+    n = " ".join(n.split())
+    return n or None
+
+
+def find_duplicate_groups(db) -> list[list["Client"]]:
+    """Clients that likely are the same person. Identities are globally unique,
+    so true duplicates share NO identifier — the practical signal is a matching
+    (accent/case-insensitive) name. Returns groups of 2+ clients."""
+    groups: dict[str, list] = {}
+    for cl in db.query(Client).all():
+        key = _norm_name(cl.display_name)
+        if key:
+            groups.setdefault(key, []).append(cl)
+    return [g for g in groups.values() if len(g) > 1]
+
+
+def merge_clients(db, src_id: int, target_id: int) -> bool:
+    """Merge client `src` INTO `target`: move all requests, identities and
+    activity to target, fold in any fields target is missing, then delete src.
+    Irreversible. Returns True on success."""
+    if not src_id or not target_id or src_id == target_id:
+        return False
+    src = db.get(Client, src_id)
+    target = db.get(Client, target_id)
+    if not src or not target:
+        return False
+
+    label = src.display_name or src.primary_email or src.primary_phone or f"#{src_id}"
+
+    # Reassign everything that points at src. (kind, value) is globally unique,
+    # so identities can never collide between two real clients.
+    db.query(Case).filter(Case.client_id == src_id).update(
+        {"client_id": target_id}, synchronize_session=False)
+    db.query(ClientIdentity).filter(ClientIdentity.client_id == src_id).update(
+        {"client_id": target_id}, synchronize_session=False)
+    db.query(Interaction).filter(Interaction.client_id == src_id).update(
+        {"client_id": target_id}, synchronize_session=False)
+
+    # Fold src's fields into any blanks on target.
+    if not target.display_name and src.display_name:
+        target.display_name = src.display_name
+    if not target.primary_email and src.primary_email:
+        target.primary_email = src.primary_email
+    if not target.primary_phone and src.primary_phone:
+        target.primary_phone = src.primary_phone
+    if not target.preferred_channel and src.preferred_channel:
+        target.preferred_channel = src.preferred_channel
+    if src.notes:
+        target.notes = (target.notes + "\n" + src.notes) if target.notes else src.notes
+    if src.tags:
+        target.tags = list(dict.fromkeys((target.tags or []) + list(src.tags)))
+    if src.last_contact_at and (not target.last_contact_at
+                                or src.last_contact_at > target.last_contact_at):
+        target.last_contact_at = src.last_contact_at
+
+    db.add(Interaction(client_id=target_id, kind="merge",
+                       summary=f"Fiche fusionnée : {label} (#{src_id}) → ce client"))
+
+    # Expire src so its (now-empty) relationships reload before the cascade delete,
+    # otherwise delete-orphan could remove the rows we just repointed.
+    db.flush()
+    db.expire(src)
+    db.delete(src)
+    db.flush()
+    return True
