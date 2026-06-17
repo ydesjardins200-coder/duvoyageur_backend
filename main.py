@@ -45,9 +45,9 @@ from starlette.middleware.sessions import SessionMiddleware
 from auth import NotAuthenticated, check_credentials, require_admin
 from concierge import concierge_reply
 from config import settings
-from db import (STATUSES, Case, Client, SessionLocal, engine, find_duplicate_groups,
-                find_open_case_for_sender, find_open_request_for_client, init_db,
-                log_activity, merge_clients, resolve_or_create_client)
+from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLocal, engine,
+                find_duplicate_groups, find_open_case_for_sender, find_open_request_for_client,
+                init_db, log_activity, merge_clients, resolve_or_create_client)
 from facebook import (extract_messages, extract_postbacks, get_user_name,
                       send_text, set_messenger_profile, valid_signature, verify_challenge)
 from parser import parse_trip
@@ -537,9 +537,32 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
      var(--abyss);
    background-attachment:fixed;-webkit-font-smoothing:antialiased}}
  a{{color:var(--surf);text-decoration:none}} a:hover{{text-decoration:underline}}
- header{{position:sticky;top:0;z-index:10;display:flex;justify-content:space-between;align-items:center;
-   gap:12px;padding:14px 22px;background:rgba(6,33,47,.72);backdrop-filter:blur(12px);
+ header{{position:sticky;top:0;z-index:10;background:rgba(6,33,47,.82);backdrop-filter:blur(12px);
    -webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}}
+ .topbar{{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;padding:11px 20px}}
+ .actions{{display:flex;align-items:center;gap:9px;flex-wrap:wrap}}
+ .iform{{margin:0;display:inline}}
+ .act{{display:inline-flex;align-items:center;gap:6px;font-family:"Space Grotesk",monospace;font-size:12.5px;
+   font-weight:600;padding:7px 12px;border-radius:10px;border:1px solid var(--line);background:rgba(3,18,27,.4);
+   color:var(--foam);cursor:pointer;box-shadow:none;transition:border-color .15s,background .15s}}
+ .act:hover{{text-decoration:none;background:rgba(25,211,230,.09);transform:none;box-shadow:none}}
+ .act-frontend{{border-color:rgba(61,240,197,.45);color:#a9f7e2}}
+ .act-client{{border-color:rgba(167,139,250,.45);color:#d6c9ff}}
+ .act-danger{{border-color:rgba(224,103,91,.5);color:#ffb3aa}} .act-danger:hover{{background:rgba(224,103,91,.13)}}
+ .searchbox{{margin:0}}
+ .searchbox input{{width:230px;max-width:42vw;padding:7px 12px;font-size:13px;border-radius:10px}}
+ .searchbox input::placeholder{{color:var(--mist)}}
+ .navrow{{display:flex;gap:2px;flex-wrap:wrap;padding:0 14px;border-top:1px solid var(--line)}}
+ .navtab{{display:inline-flex;align-items:center;gap:7px;padding:12px 14px;color:var(--mist);font-size:13.5px;
+   font-weight:600;border-bottom:2px solid transparent}}
+ .navtab:hover{{color:var(--foam);text-decoration:none}}
+ .navtab.active{{color:var(--foam);border-bottom-color:var(--pacific)}}
+ .navtab .n{{font-family:"Space Grotesk",monospace;font-size:11px;padding:1px 7px;border-radius:999px;
+   background:rgba(25,211,230,.18);color:var(--surf)}}
+ .btn-ghost{{background:rgba(3,18,27,.4);border:1px solid var(--line);color:var(--foam);box-shadow:none;
+   font-family:"Space Grotesk",monospace;font-size:13px;font-weight:600;padding:8px 14px}}
+ .btn-ghost:hover{{background:rgba(25,211,230,.1);transform:none;box-shadow:none}}
+ .pagehdr{{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap}}
  .brand{{display:flex;align-items:center;gap:11px}}
  .brand img{{width:34px;height:34px;border-radius:50%;box-shadow:0 0 0 1px var(--line)}}
  h1{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:18px;letter-spacing:-.02em;margin:0}}
@@ -632,7 +655,25 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .stat-n{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:1.6rem;color:var(--foam);line-height:1}}
  .stat-l{{font-family:"Space Grotesk",monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-top:5px}}
 </style></head><body>
-<header><span class="brand"><img src="/static/logo.png" alt=""><h1>Du Voyageur</h1></span><nav class="topnav"><a href="/admin/cases">Demandes</a><a href="/admin/clients">Clients</a></nav><span class="hdr-right">{bell}<a class="logout" href="/admin/logout">Déconnexion</a></span></header>
+<header>
+ <div class="topbar">
+  <span class="brand"><img src="/static/logo.png" alt=""><h1>Du Voyageur</h1></span>
+  <div class="actions">
+   <a class="act act-frontend" href="https://duvoyageur.netlify.app" target="_blank" rel="noopener">🌐 Frontend</a>
+   <a class="act act-client" href="/admin/espace-client">👤 Espace client</a>
+   <form class="searchbox" method="get" action="/admin/search" role="search">
+    <input name="q" placeholder="Rechercher client, réf, courriel…" autocomplete="off">
+   </form>
+   <form method="post" action="/admin/reset" class="iform"
+         onsubmit="return confirm('Vider TOUS les dossiers (clients, demandes, historique) ? Action irréversible.')">
+    <button class="act act-danger" type="submit">🗑 Vider les dossiers</button>
+   </form>
+   {bell}
+   <a class="logout" href="/admin/logout">Déconnexion</a>
+  </div>
+ </div>
+ <nav class="navrow">{nav}</nav>
+</header>
 <main>{body}</main>
 <script>
 document.addEventListener('click',function(e){{
@@ -684,9 +725,39 @@ def _bell_html() -> str:
     )
 
 
-def render_page(body: str) -> str:
-    """Render an admin page in the shell, with the live notification bell."""
-    return _PAGE.format(body=body, bell=_bell_html())
+def _nav_html(active: str = "") -> str:
+    """Top navigation row, travel-domain sections, with a live count on the
+    new-requests queue."""
+    with SessionLocal() as db:
+        n_new = db.query(Case).filter(Case.status == "new").count()
+    items = [
+        ("queue", "Nouvelle demande", "/admin/cases?status=new", n_new),
+        ("cases", "Demandes", "/admin/cases", None),
+        ("clients", "Clients", "/admin/clients", None),
+        ("traveling", "Clients en voyage", "/admin/cases?status=booked", None),
+        ("completed", "Voyages complétés", "/admin/cases?status=closed", None),
+        ("health", "System Health", "/admin/system", None),
+        ("config", "System Config", "/admin/config", None),
+        ("reports", "Reports", "/admin/reports", None),
+    ]
+    out = []
+    for key, label, href, badge in items:
+        cls = "navtab active" if key == active else "navtab"
+        b = f"<span class='n'>{badge}</span>" if badge is not None else ""
+        out.append(f"<a class='{cls}' href='{href}'>{label}{b}</a>")
+    return "".join(out)
+
+
+def page_header(title: str, refresh_url: str | None = None) -> str:
+    """A page title row, optionally with a Refresh button (à la System Health)."""
+    btn = (f"<a class='btn-ghost' href='{refresh_url}'>&#8635; Rafraîchir</a>"
+           if refresh_url else "")
+    return f"<div class='pagehdr'><h2>{escape(title)}</h2>{btn}</div>"
+
+
+def render_page(body: str, active: str = "") -> str:
+    """Render an admin page in the shell (top nav + notification bell)."""
+    return _PAGE.format(body=body, bell=_bell_html(), nav=_nav_html(active))
 
 
 _LOGIN_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
@@ -782,9 +853,13 @@ def admin_logout(request: Request):
 
 @app.get("/admin/cases", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 def admin_cases(status: str = "all"):
-    # Tabs (left→right). "all" shows everything (incl. closed); the rest filter.
-    TABS = [("all", "Tous"), ("new", "Nouveau"), ("needs_info", "À compléter"),
-            ("quoted", "Coté"), ("booked", "Réservé")]
+    # Top-nav sections that are really status filters of this same list.
+    SECTION = {"new": "queue", "booked": "traveling", "closed": "completed"}
+    SEC_TITLE = {"queue": "Nouvelle demande", "traveling": "Clients en voyage",
+                 "completed": "Voyages complétés"}
+    nav_active = SECTION.get(status, "cases")
+    # In-page sub-tabs only cover statuses NOT promoted to the top nav.
+    TABS = [("all", "Tous"), ("needs_info", "À compléter"), ("quoted", "Coté")]
     active = status if status in STATUSES else "all"
 
     def next_step(c) -> str:
@@ -803,12 +878,6 @@ def admin_cases(status: str = "all"):
         counts = dict(db.query(Case.status, func.count(Case.id)).group_by(Case.status).all())
     total = sum(counts.values())
 
-    tabs = "".join(
-        f"<a class='tab{' active' if active == key else ''}' href='/admin/cases?status={key}'>"
-        f"{label}<span class='tab-n'>{total if key == 'all' else counts.get(key, 0)}</span></a>"
-        for key, label in TABS
-    )
-
     rows = []
     for c in cases:
         t = c.trip or {}
@@ -825,26 +894,29 @@ def admin_cases(status: str = "all"):
             f"<td class='muted'>{escape(next_step(c))}</td>"
             f"<td class='muted'>{c.created_at:%Y-%m-%d %H:%M}</td></tr>"
         )
-    empty = "<tr><td colspan='8' class='muted'>Aucun dossier dans cet onglet.</td></tr>"
-    body = (
-        f"<div class='tabs'>{tabs}</div>"
+    empty = "<tr><td colspan='8' class='muted'>Aucun dossier ici.</td></tr>"
+    table = (
         "<table><tr><th>#</th><th>Client</th><th>Statut</th><th>Canal</th><th>Hôtel / Dest.</th>"
         "<th>Conf.</th><th>Prochaine étape</th><th>Reçu</th></tr>"
         + ("".join(rows) or empty)
         + "</table>"
     )
-    body += (
-        "<form method='post' action='/admin/setup-greeting' style='margin-top:24px;display:inline-block'>"
-        "<button>Configurer l'accueil Messenger</button></form>"
-        "<p class='sub'>Définit la salutation + le bouton « Get Started » de ta page (une seule fois).</p>"
-    )
-    if settings.ALLOW_RESET:
-        body += (
-            "<form method='post' action='/admin/reset' style='margin-top:24px' "
-            "onsubmit=\"return confirm('Effacer TOUS les dossiers ? Action irréversible.')\">"
-            "<button class='btn-danger'>Vider tous les dossiers (test)</button></form>"
+
+    if nav_active == "cases":
+        tabs = "".join(
+            f"<a class='tab{' active' if active == key else ''}' href='/admin/cases?status={key}'>"
+            f"{label}<span class='tab-n'>{total if key == 'all' else counts.get(key, 0)}</span></a>"
+            for key, label in TABS
         )
-    return render_page(body)
+        body = f"<h2>Demandes</h2><div class='tabs'>{tabs}</div>" + table
+        body += (
+            "<form method='post' action='/admin/setup-greeting' style='margin-top:24px;display:inline-block'>"
+            "<button>Configurer l'accueil Messenger</button></form>"
+            "<p class='sub'>Définit la salutation + le bouton « Get Started » de ta page (une seule fois).</p>"
+        )
+    else:
+        body = page_header(SEC_TITLE[nav_active], f"/admin/cases?status={status}") + table
+    return render_page(body, nav_active)
 
 
 @app.get("/admin/clients", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
@@ -917,7 +989,7 @@ def admin_clients():
         + ("".join(rows) or empty)
         + "</table>"
     )
-    return render_page(body)
+    return render_page(body, "clients")
 
 
 @app.get("/admin/clients/{client_id}", response_class=HTMLResponse,
@@ -936,7 +1008,7 @@ def admin_client_detail(client_id: int):
     with SessionLocal() as db:
         cl = db.get(Client, client_id)
         if not cl:
-            return HTMLResponse(render_page("<p>Client introuvable.</p>"), status_code=404)
+            return HTMLResponse(render_page("<p>Client introuvable.</p>", "clients"), status_code=404)
         reqs = cl.requests
         idents = cl.identities
         name = escape(cl.display_name or "Client sans nom")
@@ -1055,7 +1127,7 @@ def admin_client_detail(client_id: int):
             f"{stats}"
             f"<div class='grid2'>{info}{ident_card}{merge_card}{hist}{activity}</div>"
         )
-    return render_page(body)
+    return render_page(body, "clients")
 
 
 @app.post("/admin/clients/{client_id}/update", dependencies=[Depends(require_admin)])
@@ -1093,6 +1165,123 @@ async def admin_clients_merge(request: Request):
     return RedirectResponse("/admin/clients", status_code=303)
 
 
+@app.get("/admin/search", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+def admin_search(q: str = ""):
+    q = (q or "").strip()
+    if not q:
+        body = ("<h2>Recherche</h2><div class='card'><p class='muted'>"
+                "Saisis un nom, un courriel, un téléphone ou un numéro de demande (ex. 42).</p></div>")
+        return render_page(body, "")
+    like = f"%{q}%"
+    with SessionLocal() as db:
+        found = {}
+        for c in (db.query(Client).filter(
+                (Client.display_name.ilike(like)) | (Client.primary_email.ilike(like))
+                | (Client.primary_phone.ilike(like))).limit(50).all()):
+            found[c.id] = c
+        for ident in db.query(ClientIdentity).filter(
+                ClientIdentity.value.ilike(like)).limit(50).all():
+            if ident.client_id not in found and ident.client:
+                found[ident.client_id] = ident.client
+        crows = []
+        for c in found.values():
+            crows.append(
+                f"<tr data-href='/admin/clients/{c.id}'>"
+                f"<td><a href='/admin/clients/{c.id}'><b>{escape(c.display_name or 'Client')}</b></a></td>"
+                f"<td>{escape(c.primary_email or c.primary_phone or '—')}</td>"
+                f"<td>{len(c.requests)}</td></tr>"
+            )
+        case_block = ""
+        digits = q.lstrip("#").strip()
+        if digits.isdigit():
+            cs = db.get(Case, int(digits))
+            if cs:
+                t = cs.trip or {}
+                case_block = (
+                    "<h3 class='sub' style='margin:20px 0 6px'>Demande #"
+                    f"{cs.id}</h3><table><tr><th>#</th><th>Client</th><th>Statut</th>"
+                    "<th>Hôtel / Dest.</th></tr>"
+                    f"<tr data-href='/admin/cases/{cs.id}'>"
+                    f"<td><a href='/admin/cases/{cs.id}'>#{cs.id}</a></td>"
+                    f"<td>{escape(str(t.get('customer_name') or '—'))}</td>"
+                    f"<td><span class='tag {cs.status}'>{cs.status}</span></td>"
+                    f"<td>{escape(str(t.get('hotel_name_raw') or t.get('destination') or '—'))}</td>"
+                    "</tr></table>"
+                )
+    ctable = ("<table><tr><th>Client</th><th>Contact</th><th>Demandes</th></tr>"
+              + ("".join(crows) or "<tr><td colspan='3' class='muted'>Aucun client trouvé.</td></tr>")
+              + "</table>")
+    body = f"<h2>Recherche : « {escape(q)} »</h2>" + ctable + case_block
+    return render_page(body, "")
+
+
+@app.get("/admin/system", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+def admin_system():
+    with SessionLocal() as db:
+        try:
+            db.execute(text("SELECT 1"))
+            db_ok = True
+        except Exception:  # noqa: BLE001
+            db_ok = False
+        n_clients = db.query(Client).count()
+        n_cases = db.query(Case).count()
+        n_ident = db.query(ClientIdentity).count()
+        n_acts = db.query(Interaction).count()
+        n_await = db.query(Case).filter(
+            Case.awaiting_reply.is_(True), Case.status != "closed").count()
+    dialect = engine.dialect.name
+    secret_ok = bool(settings.SECRET_KEY) and settings.SECRET_KEY != "dev-only-insecure-change-me"
+
+    def chk(label, ok, detail=""):
+        dot = "🟢" if ok else "🔴"
+        return (f"<div class='kv'><span class='k'>{dot} {label}</span>"
+                f"<span class='v'>{escape(detail)}</span></div>")
+
+    services = (
+        "<div class='card'><h3>Services</h3>"
+        + chk("Base de données", db_ok, dialect)
+        + chk("IA — clé Anthropic", bool(settings.ANTHROPIC_API_KEY),
+              "configurée" if settings.ANTHROPIC_API_KEY else "absente")
+        + chk("Messenger — token Facebook", bool(settings.FB_PAGE_TOKEN),
+              "configuré" if settings.FB_PAGE_TOKEN else "absent")
+        + chk("Cookie de session — SECRET_KEY", secret_ok,
+              "OK" if secret_ok else "à définir")
+        + "</div>"
+    )
+    stats = (
+        "<div class='stats'>"
+        f"<div class='stat'><div class='stat-n'>{n_clients}</div><div class='stat-l'>Clients</div></div>"
+        f"<div class='stat'><div class='stat-n'>{n_cases}</div><div class='stat-l'>Demandes</div></div>"
+        f"<div class='stat'><div class='stat-n'>{n_await}</div><div class='stat-l'>À répondre</div></div>"
+        f"<div class='stat'><div class='stat-n'>{n_ident}</div><div class='stat-l'>Identités</div></div>"
+        f"<div class='stat'><div class='stat-n'>{n_acts}</div><div class='stat-l'>Activités</div></div>"
+        "</div>"
+    )
+    body = (page_header("System Health", "/admin/system") + stats
+            + f"<div class='grid2'>{services}</div>")
+    return render_page(body, "health")
+
+
+@app.get("/admin/config", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+def admin_config():
+    body = page_header("System Config") + "<div class='card'><p class='muted'>Section à venir.</p></div>"
+    return render_page(body, "config")
+
+
+@app.get("/admin/reports", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+def admin_reports():
+    body = page_header("Reports") + "<div class='card'><p class='muted'>Rapports à venir.</p></div>"
+    return render_page(body, "reports")
+
+
+@app.get("/admin/espace-client", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+def admin_espace_client():
+    body = (page_header("Espace client")
+            + "<div class='card'><p class='muted'>Le portail self-service pour les clients "
+              "sera bâti plus tard.</p></div>")
+    return render_page(body, "")
+
+
 @app.get("/admin/cases/{case_id}", response_class=HTMLResponse,
          dependencies=[Depends(require_admin)])
 def admin_case_detail(case_id: int):
@@ -1120,7 +1309,7 @@ def admin_case_detail(case_id: int):
     with SessionLocal() as db:
         c = db.get(Case, case_id)
         if not c:
-            return HTMLResponse(render_page("<p>Introuvable.</p>"), status_code=404)
+            return HTMLResponse(render_page("<p>Introuvable.</p>", "cases"), status_code=404)
         t = c.trip or {}
 
         # --- derived display values ---
@@ -1257,7 +1446,7 @@ def admin_case_detail(case_id: int):
             f"<div class='grid2'>{cards}{screenshot_card}{profil}{send_panel}{convo}</div>"
             f"{actions}{raw}"
         )
-    return render_page(body)
+    return render_page(body, "cases")
 
 
 @app.post("/admin/cases/{case_id}/status", dependencies=[Depends(require_admin)])
@@ -1305,7 +1494,7 @@ def admin_setup_greeting():
         "« Démarrer » pour déclencher le message de bienvenue.</p>"
         f"<pre>{escape(detail)}</pre>"
     )
-    return render_page(body)
+    return render_page(body, "cases")
 
 
 @app.post("/admin/cases/{case_id}/send", dependencies=[Depends(require_admin)])
@@ -1333,15 +1522,21 @@ async def admin_case_send(case_id: int, request: Request):
 
 @app.post("/admin/reset", dependencies=[Depends(require_admin)])
 def admin_reset():
-    """Wipe ALL cases. Disabled unless ALLOW_RESET is set (testing only)."""
+    """Wipe ALL data (cases, clients, identities, activity). Disabled unless
+    ALLOW_RESET is set."""
     if not settings.ALLOW_RESET:
         raise HTTPException(status_code=403,
                             detail="Reset désactivé. Mettre ALLOW_RESET=1 pour activer.")
     with SessionLocal() as db:
         if engine.dialect.name == "postgresql":
-            db.execute(text("TRUNCATE TABLE cases RESTART IDENTITY"))
+            db.execute(text(
+                "TRUNCATE TABLE interactions, client_identities, cases, clients RESTART IDENTITY CASCADE"))
         else:
+            # SQLite: delete children first to respect FKs.
+            db.query(Interaction).delete()
+            db.query(ClientIdentity).delete()
             db.query(Case).delete()
+            db.query(Client).delete()
         db.commit()
-    log.info("All cases wiped via /admin/reset")
+    log.info("All CRM data wiped via /admin/reset")
     return RedirectResponse("/admin/cases", status_code=303)
