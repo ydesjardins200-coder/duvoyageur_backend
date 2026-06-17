@@ -503,9 +503,9 @@ def _handle_human_message(sender: str, text: str, shots: list | None) -> None:
         if case is None:
             case = Case(
                 client_id=client.id, channel="messenger", status="needs_info",
-                sender_ref=sender, raw_message=text or "(demande de support)",
+                kind="support", sender_ref=sender, raw_message=text or "(demande de support)",
                 trip={"customer_name": client.display_name} if client.display_name else {},
-                needs_clarification=["support humain"], screenshots=shots or [],
+                needs_clarification=[], screenshots=shots or [],
             )
             db.add(case)
             db.flush()
@@ -906,9 +906,9 @@ def _nav_html(active: str = "") -> str:
     """Top navigation row, travel-domain sections, with a live count on the
     new-requests queue."""
     with SessionLocal() as db:
-        n_new = db.query(Case).filter(Case.status == "new").count()
+        n_new = db.query(Case).filter(Case.kind == "trip", Case.status == "new").count()
     items = [
-        ("queue", "Nouvelle demande", "/admin/cases?status=new", n_new),
+        ("queue", "Nouvelle demande de voyage", "/admin/cases?status=new", n_new),
         ("cases", "Demandes", "/admin/cases", None),
         ("clients", "Clients", "/admin/clients", None),
         ("traveling", "Clients en voyage", "/admin/cases?status=booked", None),
@@ -1029,72 +1029,77 @@ def admin_logout(request: Request):
 
 
 @app.get("/admin/cases", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
-def admin_cases(status: str = "all"):
-    # Top-nav sections that are really status filters of this same list.
+def admin_cases(status: str = "all", view: str = "voyage"):
+    # Top-nav travel sections (status filters, trip only).
     SECTION = {"new": "queue", "booked": "traveling", "closed": "completed"}
-    SEC_TITLE = {"queue": "Nouvelle demande", "traveling": "Clients en voyage",
-                 "completed": "Voyages complétés"}
+    SEC_TITLE = {"queue": "Nouvelle demande de voyage",
+                 "traveling": "Clients en voyage", "completed": "Voyages complétés"}
     nav_active = SECTION.get(status, "cases")
-    # In-page sub-tabs only cover statuses NOT promoted to the top nav.
-    TABS = [("all", "Tous"), ("needs_info", "À compléter"), ("quoted", "Coté")]
-    active = status if status in STATUSES else "all"
 
     def next_step(c) -> str:
-        """A short human next action, derived from status + missing info."""
+        """A short human next action, derived from kind + status + missing info."""
+        if (c.kind or "trip") == "support":
+            return "Répondre au client" if c.awaiting_reply else "—"
         miss = c.needs_clarification or []
         if c.status == "needs_info" or (c.status == "new" and miss):
             return "Demander : " + ", ".join(miss) if miss else "Relancer le client"
         return {"new": "Coter le forfait", "quoted": "Faire un suivi",
                 "booked": "Préparer le départ", "closed": "—"}.get(c.status, "—")
 
+    def table(cases) -> str:
+        rows = []
+        for c in cases:
+            t = c.trip or {}
+            name = escape(str(t.get("customer_name") or "Client inconnu"))
+            where = escape(str(t.get("hotel_name_raw") or t.get("destination") or "—"))
+            rows.append(
+                f"<tr data-href='/admin/cases/{c.id}'>"
+                f"<td><a href='/admin/cases/{c.id}'>#{c.id}</a></td>"
+                f"<td><b>{name}</b></td>"
+                f"<td><span class='tag {c.status}'>{c.status}</span></td>"
+                f"<td>{escape(c.channel)}</td>"
+                f"<td>{where}</td>"
+                f"<td>{c.parse_confidence:.2f}</td>"
+                f"<td class='muted'>{escape(next_step(c))}</td>"
+                f"<td class='muted'>{c.created_at:%Y-%m-%d %H:%M}</td></tr>"
+            )
+        empty = "<tr><td colspan='8' class='muted'>Aucun dossier ici.</td></tr>"
+        return ("<table><tr><th>#</th><th>Client</th><th>Statut</th><th>Canal</th>"
+                "<th>Hôtel / Dest.</th><th>Conf.</th><th>Prochaine étape</th><th>Reçu</th></tr>"
+                + ("".join(rows) or empty) + "</table>")
+
+    # Focused travel sections (trip only).
+    if nav_active in ("queue", "traveling", "completed"):
+        with SessionLocal() as db:
+            cases = (db.query(Case)
+                     .filter(Case.kind == "trip", Case.status == status)
+                     .order_by(Case.created_at.desc()).limit(200).all())
+        body = page_header(SEC_TITLE[nav_active], f"/admin/cases?status={status}") + table(cases)
+        return render_page(body, nav_active)
+
+    # "Demandes": split between Voyage and Service client.
+    view = "service" if view == "service" else "voyage"
+    kind = "support" if view == "service" else "trip"
     with SessionLocal() as db:
-        q = db.query(Case)
-        if active in STATUSES:
-            q = q.filter(Case.status == active)
-        cases = q.order_by(Case.created_at.desc()).limit(200).all()
-        counts = dict(db.query(Case.status, func.count(Case.id)).group_by(Case.status).all())
-    total = sum(counts.values())
-
-    rows = []
-    for c in cases:
-        t = c.trip or {}
-        name = escape(str(t.get("customer_name") or "Client inconnu"))
-        where = escape(str(t.get("hotel_name_raw") or t.get("destination") or "—"))
-        rows.append(
-            f"<tr data-href='/admin/cases/{c.id}'>"
-            f"<td><a href='/admin/cases/{c.id}'>#{c.id}</a></td>"
-            f"<td><b>{name}</b></td>"
-            f"<td><span class='tag {c.status}'>{c.status}</span></td>"
-            f"<td>{escape(c.channel)}</td>"
-            f"<td>{where}</td>"
-            f"<td>{c.parse_confidence:.2f}</td>"
-            f"<td class='muted'>{escape(next_step(c))}</td>"
-            f"<td class='muted'>{c.created_at:%Y-%m-%d %H:%M}</td></tr>"
-        )
-    empty = "<tr><td colspan='8' class='muted'>Aucun dossier ici.</td></tr>"
-    table = (
-        "<table><tr><th>#</th><th>Client</th><th>Statut</th><th>Canal</th><th>Hôtel / Dest.</th>"
-        "<th>Conf.</th><th>Prochaine étape</th><th>Reçu</th></tr>"
-        + ("".join(rows) or empty)
-        + "</table>"
+        cases = (db.query(Case).filter(Case.kind == kind)
+                 .order_by(Case.created_at.desc()).limit(300).all())
+        n_voyage = db.query(Case).filter(Case.kind == "trip").count()
+        n_service = db.query(Case).filter(Case.kind == "support").count()
+    subtabs = (
+        f"<a class='tab{' active' if view == 'voyage' else ''}' href='/admin/cases?view=voyage'>"
+        f"✈️ Voyage<span class='tab-n'>{n_voyage}</span></a>"
+        f"<a class='tab{' active' if view == 'service' else ''}' href='/admin/cases?view=service'>"
+        f"💬 Service client<span class='tab-n'>{n_service}</span></a>"
     )
-
-    if nav_active == "cases":
-        tabs = "".join(
-            f"<a class='tab{' active' if active == key else ''}' href='/admin/cases?status={key}'>"
-            f"{label}<span class='tab-n'>{total if key == 'all' else counts.get(key, 0)}</span></a>"
-            for key, label in TABS
-        )
-        body = f"<h2>Demandes</h2><div class='tabs'>{tabs}</div>" + table
+    body = f"<h2>Demandes</h2><div class='tabs'>{subtabs}</div>" + table(cases)
+    if view == "voyage":
         body += (
             "<form method='post' action='/admin/setup-greeting' style='margin-top:24px;display:inline-block'>"
             "<button>Configurer l'accueil Messenger</button></form>"
-            "<p class='sub'>Définit la salutation, le bouton « Démarrer » et les 3 bulles "
-            "d'accueil (rabais / question générale / conseiller) de ta page.</p>"
+            "<p class='sub'>Définit la salutation, le bouton « Démarrer », les 3 bulles "
+            "d'accueil et le menu ☰ de ta page.</p>"
         )
-    else:
-        body = page_header(SEC_TITLE[nav_active], f"/admin/cases?status={status}") + table
-    return render_page(body, nav_active)
+    return render_page(body, "cases")
 
 
 @app.get("/admin/clients", response_class=HTMLResponse, dependencies=[Depends(require_admin)])

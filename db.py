@@ -41,6 +41,9 @@ class Base(DeclarativeBase):
 # Status lifecycle for a case as it moves through the pipeline.
 STATUSES = ("new", "needs_info", "quoted", "booked", "closed")
 
+# What a case is about: a travel-rebate request, or a customer-service request.
+CASE_KINDS = ("trip", "support")
+
 # Kinds of identifiers we can use to recognize a returning client across channels.
 IDENTITY_KINDS = ("messenger_psid", "email", "phone")
 
@@ -136,6 +139,8 @@ class Case(Base):
     client = relationship("Client", back_populates="requests")
 
     channel: Mapped[str] = mapped_column(String(20))            # 'messenger' | 'form'
+    # What this case is: a trip-rebate request or a customer-service request.
+    kind: Mapped[str] = mapped_column(String(20), default="trip", index=True)
     status: Mapped[str] = mapped_column(String(20), default="new")
     # True while the ball is in OUR court: a client wrote and we haven't replied
     # or triaged yet. Drives the notification bell. Channel-agnostic.
@@ -186,6 +191,14 @@ def _ensure_columns() -> None:
             conn.execute(text(
                 "ALTER TABLE clients ADD COLUMN IF NOT EXISTS "
                 "support_mode VARCHAR(20) DEFAULT 'profiling'"))
+            has_kind = conn.execute(text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name='cases' AND column_name='kind'")).first()
+            if not has_kind:
+                conn.execute(text("ALTER TABLE cases ADD COLUMN kind VARCHAR(20) DEFAULT 'trip'"))
+                conn.execute(text(
+                    "UPDATE cases SET kind='support' "
+                    "WHERE needs_clarification::text ILIKE '%support humain%'"))
         elif engine.dialect.name == "sqlite":
             cols = [r[1] for r in conn.execute(text("PRAGMA table_info(cases)"))]
             if "screenshots" not in cols:
@@ -203,6 +216,11 @@ def _ensure_columns() -> None:
             if "support_mode" not in ccols:
                 conn.execute(text(
                     "ALTER TABLE clients ADD COLUMN support_mode VARCHAR(20) DEFAULT 'profiling'"))
+            if "kind" not in cols:
+                conn.execute(text("ALTER TABLE cases ADD COLUMN kind VARCHAR(20) DEFAULT 'trip'"))
+                conn.execute(text(
+                    "UPDATE cases SET kind='support' "
+                    "WHERE needs_clarification LIKE '%support humain%'"))
 
 
 # Statuses that mean "this request is still in progress" — new messages from the
