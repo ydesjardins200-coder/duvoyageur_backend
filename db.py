@@ -44,6 +44,12 @@ STATUSES = ("new", "needs_info", "quoted", "booked", "closed")
 # Kinds of identifiers we can use to recognize a returning client across channels.
 IDENTITY_KINDS = ("messenger_psid", "email", "phone")
 
+# Conversation lane chosen by the customer via the Messenger ice-breaker bubbles.
+#   profiling -> the trip-rebate progressive-profiling bot (default)
+#   concierge -> general-info AI assistant
+#   human     -> no AI; route to a human agent and notify the backend
+SUPPORT_MODES = ("profiling", "concierge", "human")
+
 
 class Client(Base):
     """The durable record of a person. One client → many requests (demandes).
@@ -63,6 +69,8 @@ class Client(Base):
     primary_email: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     primary_phone: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     preferred_channel: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Messenger conversation lane (see SUPPORT_MODES); set by ice-breaker taps.
+    support_mode: Mapped[str] = mapped_column(String(20), default="profiling")
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tags: Mapped[list] = mapped_column(JSON, default=list)
     last_contact_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -175,6 +183,9 @@ def _ensure_columns() -> None:
                 conn.execute(text(
                     "UPDATE cases SET awaiting_reply = FALSE "
                     "WHERE status IN ('quoted','booked','closed')"))
+            conn.execute(text(
+                "ALTER TABLE clients ADD COLUMN IF NOT EXISTS "
+                "support_mode VARCHAR(20) DEFAULT 'profiling'"))
         elif engine.dialect.name == "sqlite":
             cols = [r[1] for r in conn.execute(text("PRAGMA table_info(cases)"))]
             if "screenshots" not in cols:
@@ -188,6 +199,10 @@ def _ensure_columns() -> None:
                 conn.execute(text(
                     "UPDATE cases SET awaiting_reply = 0 "
                     "WHERE status IN ('quoted','booked','closed')"))
+            ccols = [r[1] for r in conn.execute(text("PRAGMA table_info(clients)"))]
+            if "support_mode" not in ccols:
+                conn.execute(text(
+                    "ALTER TABLE clients ADD COLUMN support_mode VARCHAR(20) DEFAULT 'profiling'"))
 
 
 # Statuses that mean "this request is still in progress" — new messages from the

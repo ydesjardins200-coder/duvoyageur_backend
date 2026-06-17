@@ -175,3 +175,39 @@ def set_messenger_profile(page_token: str, greeting_text: str,
                 pass
         log.warning("set_messenger_profile failed: %s", detail)
         return False, detail
+
+
+def set_ice_breakers(page_token: str, ice_breakers: list[dict],
+                     graph_version: str = "v21.0", timeout: int = 8) -> tuple[bool, str]:
+    """
+    Configure the page's Ice Breakers — the tappable question bubbles shown when
+    a user opens the conversation for the first time. Each entry is
+    {"question": "...", "payload": "..."}; a tap fires that payload as a postback.
+
+    Up to 4 are allowed; questions must be <= 80 characters. Never raises.
+    Returns (ok, detail) with Meta's response/error body for diagnostics.
+    """
+    if not page_token:
+        return False, "Aucun FB_PAGE_TOKEN configuré."
+    url = (
+        f"https://graph.facebook.com/{graph_version}/me/messenger_profile"
+        f"?access_token={urllib.parse.quote(page_token)}"
+    )
+    body = json.dumps({
+        "ice_breakers": [{"locale": "default", "call_to_actions": ice_breakers}],
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return (200 <= resp.status < 300), resp.read().decode("utf-8")
+    except Exception as e:  # noqa: BLE001 — surface Meta's error body when present
+        detail = str(e)
+        if hasattr(e, "read"):
+            try:
+                detail = e.read().decode("utf-8")
+            except Exception:  # noqa: BLE001
+                pass
+        log.warning("set_ice_breakers failed: %s", detail)
+        return False, detail

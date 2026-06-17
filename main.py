@@ -46,10 +46,11 @@ from auth import NotAuthenticated, check_credentials, require_admin
 from concierge import concierge_reply
 from config import settings
 from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLocal, engine,
-                find_duplicate_groups, find_open_case_for_sender, find_open_request_for_client,
-                init_db, log_activity, merge_clients, resolve_or_create_client)
-from facebook import (extract_messages, extract_postbacks, get_user_name,
-                      send_text, set_messenger_profile, valid_signature, verify_challenge)
+                find_client_by_identity, find_duplicate_groups, find_open_case_for_sender,
+                find_open_request_for_client, init_db, log_activity, merge_clients,
+                resolve_or_create_client)
+from facebook import (extract_messages, extract_postbacks, get_user_name, send_text,
+                      set_ice_breakers, set_messenger_profile, valid_signature, verify_challenge)
 from parser import parse_trip
 from trip_schema import ContactChannel, TripRequest, merge_trip_requests
 
@@ -228,6 +229,28 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
         if b:
             downloaded.append((b, mt or "image/png"))
 
+    # Persistable screenshot records (base64 survives Facebook's expiring URLs).
+    shots = [{
+        "media_type": mt,
+        "b64": base64.b64encode(b).decode("ascii"),
+        "received_at": datetime.utcnow().isoformat(timespec="seconds"),
+    } for (b, mt) in downloaded]
+
+    # Route by the conversation lane chosen via the ice-breaker bubbles. Human and
+    # concierge lanes skip the trip-parsing AI entirely.
+    mode = "profiling"
+    if sender:
+        with SessionLocal() as db:
+            cl = find_client_by_identity(db, "messenger_psid", sender)
+            if cl:
+                mode = cl.support_mode or "profiling"
+    if mode == "human":
+        _handle_human_message(sender, text, shots)
+        return
+    if mode == "concierge":
+        _handle_concierge_message(sender, text)
+        return
+
     try:
         new_trip = parse_trip(text, images=downloaded)
     except Exception as e:  # noqa: BLE001
@@ -236,13 +259,6 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
         new_trip = TripRequest(raw_message=text or "(capture d'écran)", source="messenger",
                                agent_notes=f"Parsing automatique échoué: {e}",
                                needs_clarification=["à traiter manuellement"])
-
-    # Persistable screenshot records (base64 so they survive Facebook's expiring URLs).
-    shots = [{
-        "media_type": mt,
-        "b64": base64.b64encode(b).decode("ascii"),
-        "received_at": datetime.utcnow().isoformat(timespec="seconds"),
-    } for (b, mt) in downloaded]
 
     # Find-or-merge: keep one evolving request per CLIENT (progressive profiling).
     with SessionLocal() as db:
@@ -356,22 +372,115 @@ GREETING_TEXT = (
     "une capture d'écran, et on te trouve le même voyage avec un rabais. 💸"
 )
 
+# Ice-breaker bubbles shown when a user first opens the conversation. Each tap
+# fires its payload as a postback (handled below), which sets the conversation
+# lane on the client so subsequent messages route to the right subsystem.
+IB_PROFILING = "IB_PROFILING"   # trip-rebate progressive profiling (default)
+IB_CONCIERGE = "IB_CONCIERGE"   # general-info AI concierge
+IB_HUMAN = "IB_HUMAN"           # human support, no AI, notify the backend
 
-def process_postback(sender: str | None, payload: str) -> None:
-    """Handle button taps. On Get Started, fire the screenshot-first welcome."""
-    if not (sender and settings.FB_PAGE_TOKEN) or payload != GET_STARTED_PAYLOAD:
-        return
+ICE_BREAKERS = [
+    {"question": "✈️ Trouver un rabais sur mon voyage", "payload": IB_PROFILING},
+    {"question": "❓ Question générale", "payload": IB_CONCIERGE},
+    {"question": "🧑‍💼 Parler à un conseiller", "payload": IB_HUMAN},
+]
+
+
+def _set_support_mode(sender: str, mode: str) -> None:
+    """Remember which lane this Messenger user chose."""
+    with SessionLocal() as db:
+        client = resolve_or_create_client(db, messenger_psid=sender, channel="messenger")
+        client.support_mode = mode
+        db.commit()
+
+
+def _profiling_intro(sender: str) -> str:
     first = ""
     name = get_user_name(sender, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
     if name:
         first = " " + name.split()[0]
-    greeting = (
-        f"Salut{first} ! 🌴 Bienvenue chez Du Voyageur. Trouve ton forfait tout "
-        "inclus et envoie-moi une capture d'écran 📸 — je te trouve le même voyage "
-        "avec un rabais. Tu peux m'envoyer ta capture tout de suite !"
+    return (
+        f"Salut{first} ! 🌴 Parfait, on s'occupe de ça. Envoie-moi une capture "
+        "d'écran 📸 du forfait que tu as trouvé (ou décris-le) — je te trouve le "
+        "même voyage avec un rabais."
     )
-    sent = send_text(sender, greeting, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
-    log.info("Get Started greeting to %s: %s", sender, "sent" if sent else "failed")
+
+
+def _handle_concierge_message(sender: str, text: str) -> None:
+    """General-info lane: answer with the concierge AI, no trip profiling."""
+    if not sender:
+        return
+    if not text:
+        send_text(sender, "Avec plaisir ! 🌴 Pose-moi ta question.",
+                  settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+        return
+    answer = concierge_reply(text)
+    reply = answer or ("Bonne question ! 🌴 Un conseiller pourra te détailler ça. "
+                       "Veux-tu qu'on regarde un forfait pour toi ?")
+    send_text(sender, reply, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+    with SessionLocal() as db:
+        cl = find_client_by_identity(db, "messenger_psid", sender)
+        if cl:
+            log_activity(db, cl.id, "message_in", f"Question générale : {text[:120]}")
+            db.commit()
+    log.info("Concierge reply to %s: %s", sender, "sent" if reply else "skipped")
+
+
+def _handle_human_message(sender: str, text: str, shots: list | None) -> None:
+    """Human-support lane: NO AI. Store the message on a case, flag it for the
+    agent (bell), and stay silent so a human takes over."""
+    if not sender:
+        return
+    with SessionLocal() as db:
+        client = resolve_or_create_client(db, messenger_psid=sender, channel="messenger")
+        case = find_open_request_for_client(db, client.id)
+        if case is None:
+            case = Case(
+                client_id=client.id, channel="messenger", status="needs_info",
+                sender_ref=sender, raw_message=text or "(demande de support)",
+                trip={"customer_name": client.display_name} if client.display_name else {},
+                needs_clarification=["support humain"], screenshots=shots or [],
+            )
+            db.add(case)
+            db.flush()
+            log_activity(db, client.id, "request_created",
+                         "Demande de support (conseiller humain)", case.id)
+        else:
+            if text:
+                case.raw_message = ((case.raw_message + "\n---\n" + text)
+                                    if case.raw_message else text)
+            if shots:
+                case.screenshots = (case.screenshots or []) + shots
+        case.awaiting_reply = True
+        log_activity(db, client.id, "message_in", "Message reçu (support humain)", case.id)
+        db.commit()
+    log.info("Human-support message stored for %s (no AI reply)", sender)
+
+
+def process_postback(sender: str | None, payload: str) -> None:
+    """Handle button / ice-breaker taps: set the conversation lane and reply."""
+    if not (sender and settings.FB_PAGE_TOKEN):
+        return
+    if payload in (GET_STARTED_PAYLOAD, IB_PROFILING):
+        _set_support_mode(sender, "profiling")
+        sent = send_text(sender, _profiling_intro(sender),
+                         settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+        log.info("Profiling intro to %s: %s", sender, "sent" if sent else "failed")
+    elif payload == IB_CONCIERGE:
+        _set_support_mode(sender, "concierge")
+        send_text(sender,
+                  "Avec plaisir ! 🌴 Pose-moi ta question (météo, destinations, "
+                  "« tout inclus »…) et j'y réponds.",
+                  settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+        log.info("Concierge lane set for %s", sender)
+    elif payload == IB_HUMAN:
+        _set_support_mode(sender, "human")
+        _handle_human_message(sender, "(le client demande un conseiller)", None)
+        send_text(sender,
+                  "Parfait 🙏 Un conseiller va te répondre directement ici. "
+                  "Écris-nous ta question, on revient vite !",
+                  settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+        log.info("Human-support lane set for %s", sender)
 
 
 @app.get("/webhook")
@@ -912,7 +1021,8 @@ def admin_cases(status: str = "all"):
         body += (
             "<form method='post' action='/admin/setup-greeting' style='margin-top:24px;display:inline-block'>"
             "<button>Configurer l'accueil Messenger</button></form>"
-            "<p class='sub'>Définit la salutation + le bouton « Get Started » de ta page (une seule fois).</p>"
+            "<p class='sub'>Définit la salutation, le bouton « Démarrer » et les 3 bulles "
+            "d'accueil (rabais / question générale / conseiller) de ta page.</p>"
         )
     else:
         body = page_header(SEC_TITLE[nav_active], f"/admin/cases?status={status}") + table
@@ -1481,18 +1591,26 @@ def admin_case_screenshot(case_id: int, idx: int):
 
 @app.post("/admin/setup-greeting", dependencies=[Depends(require_admin)])
 def admin_setup_greeting():
-    """One-time: set the page's greeting text + Get Started button on Meta."""
-    ok, detail = set_messenger_profile(
+    """One-time: set the page's greeting text, Get Started button, and the three
+    ice-breaker bubbles (rabais / question générale / conseiller humain)."""
+    ok1, d1 = set_messenger_profile(
         settings.FB_PAGE_TOKEN, GREETING_TEXT, GET_STARTED_PAYLOAD,
         settings.FB_GRAPH_VERSION)
-    title = "✅ Accueil Messenger configuré" if ok else "❌ Échec de la configuration"
+    ok2, d2 = set_ice_breakers(
+        settings.FB_PAGE_TOKEN, ICE_BREAKERS, settings.FB_GRAPH_VERSION)
+    ok = ok1 and ok2
+    title = "✅ Accueil Messenger configuré" if ok else "❌ Configuration partielle / échec"
+    bubbles = "".join(f"<li>{escape(ib['question'])}</li>" for ib in ICE_BREAKERS)
     body = (
         "<p><a href='/admin/cases'>&larr; Retour aux dossiers</a></p>"
         f"<h2>{title}</h2>"
-        "<p class='sub'>Salutation d'accueil + bouton « Get Started » envoyés à Meta. "
-        "Ouvre la conversation avec ta page pour voir l'écran d'accueil, puis tape "
-        "« Démarrer » pour déclencher le message de bienvenue.</p>"
-        f"<pre>{escape(detail)}</pre>"
+        "<p class='sub'>Salutation + bouton « Démarrer » + 3 bulles d'accueil envoyés à Meta. "
+        "Ouvre la conversation avec ta page (ou efface l'historique) pour voir les bulles.</p>"
+        f"<div class='card'><h3>Bulles configurées</h3><ul>{bubbles}</ul>"
+        "<p class='sub'>1) Rabais → outil de profilage · 2) Question générale → concierge IA · "
+        "3) Conseiller → support humain (sans IA, notifié dans la cloche).</p></div>"
+        f"<details><summary>Réponse de Meta</summary><pre>greeting/get_started : {escape(d1)}\n\n"
+        f"ice_breakers : {escape(d2)}</pre></details>"
     )
     return render_page(body, "cases")
 
