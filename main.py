@@ -492,20 +492,38 @@ def _handle_concierge_message(sender: str, text: str) -> None:
     log.info("Concierge reply to %s: %s", sender, "sent" if reply else "skipped")
 
 
+def _conversation(case) -> list:
+    """The message thread (in/out). Seeds inbound history from raw_message for
+    cases created before structured threads existed."""
+    if case.messages:
+        return list(case.messages)
+    parts = [p.strip() for p in (case.raw_message or "").split("\n---\n")
+             if p.strip() and p.strip() != "(demande de support)"]
+    at = case.created_at.isoformat(timespec="seconds") if case.created_at else ""
+    return [{"dir": "in", "text": p, "at": at} for p in parts]
+
+
 def _handle_human_message(sender: str, text: str, shots: list | None) -> None:
-    """Human-support lane: NO AI. Store the message on a case, flag it for the
-    agent (bell), and stay silent so a human takes over."""
+    """Human-support lane: NO AI. Store the message on a support case, record it
+    in the conversation thread, flag it for the agent (bell), and stay silent."""
     if not sender:
         return
+    text = (text or "").strip()
+    now = datetime.utcnow().isoformat(timespec="seconds")
     with SessionLocal() as db:
         client = resolve_or_create_client(db, messenger_psid=sender, channel="messenger")
-        case = find_open_request_for_client(db, client.id)
+        case = (db.query(Case)
+                .filter(Case.client_id == client.id, Case.kind == "support",
+                        Case.status != "closed")
+                .order_by(Case.created_at.desc()).first())
         if case is None:
             case = Case(
                 client_id=client.id, channel="messenger", status="needs_info",
-                kind="support", sender_ref=sender, raw_message=text or "(demande de support)",
+                kind="support", sender_ref=sender,
+                raw_message=text or "(demande de support)",
                 trip={"customer_name": client.display_name} if client.display_name else {},
                 needs_clarification=[], screenshots=shots or [],
+                messages=([{"dir": "in", "text": text, "at": now}] if text else []),
             )
             db.add(case)
             db.flush()
@@ -513,12 +531,16 @@ def _handle_human_message(sender: str, text: str, shots: list | None) -> None:
                          "Demande de support (conseiller humain)", case.id)
         else:
             if text:
-                case.raw_message = ((case.raw_message + "\n---\n" + text)
-                                    if case.raw_message else text)
+                case.messages = _conversation(case) + [{"dir": "in", "text": text, "at": now}]
+                if case.raw_message in (None, "", "(demande de support)"):
+                    case.raw_message = text
+                else:
+                    case.raw_message = case.raw_message + "\n---\n" + text
             if shots:
                 case.screenshots = (case.screenshots or []) + shots
         case.awaiting_reply = True
-        log_activity(db, client.id, "message_in", "Message reçu (support humain)", case.id)
+        if text:
+            log_activity(db, client.id, "message_in", "Message reçu (support humain)", case.id)
         db.commit()
     log.info("Human-support message stored for %s (no AI reply)", sender)
 
@@ -541,7 +563,7 @@ def process_postback(sender: str | None, payload: str) -> None:
         log.info("Concierge lane set for %s", sender)
     elif payload == IB_HUMAN:
         _set_support_mode(sender, "human")
-        _handle_human_message(sender, "(le client demande un conseiller)", None)
+        _handle_human_message(sender, "", None)
         send_text(sender,
                   "Parfait 🙏 Un conseiller va te répondre directement ici. "
                   "Écris-nous ta question, on revient vite !",
@@ -832,7 +854,11 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .stat-n{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:1.6rem;color:var(--foam);line-height:1}}
  .stat-l{{font-family:"Space Grotesk",monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-top:5px}}
  .msg-in{{background:rgba(3,18,27,.5);border:1px solid var(--line);border-radius:14px 14px 14px 4px;
-   padding:11px 14px;margin-bottom:10px;white-space:pre-wrap;max-width:85%;line-height:1.5}}
+   padding:11px 14px;margin:0 auto 10px 0;white-space:pre-wrap;max-width:85%;line-height:1.5}}
+ .msg-out{{background:linear-gradient(120deg,rgba(25,211,230,.16),rgba(61,240,197,.13));
+   border:1px solid rgba(25,211,230,.32);border-radius:14px 14px 4px 14px;padding:11px 14px;
+   margin:0 0 10px auto;white-space:pre-wrap;max-width:85%;line-height:1.5}}
+ .msg-at{{font-family:"Space Grotesk",monospace;font-size:10.5px;color:var(--mist);margin-top:6px;opacity:.85}}
 </style></head><body>
 <header>
  <div class="topbar">
@@ -1519,9 +1545,20 @@ def admin_case_detail(case_id: int):
         # Customer-service case: show the message(s) and a reply box, nothing more.
         if (c.kind or "trip") == "support":
             name = escape(str(t.get("customer_name") or "Client inconnu"))
-            msgs = [m.strip() for m in (c.raw_message or "").split("\n---\n") if m.strip()]
-            msg_html = ("".join(f"<div class='msg-in'>{escape(m)}</div>" for m in msgs)
-                        or "<p class='muted'>(aucun message)</p>")
+            convo = _conversation(c)
+            if convo:
+                bubbles = []
+                for m in convo:
+                    out = m.get("dir") == "out"
+                    at = (m.get("at") or "").replace("T", " ")
+                    who = "Toi" if out else name
+                    bubbles.append(
+                        f"<div class='{'msg-out' if out else 'msg-in'}'>"
+                        f"{escape(m.get('text') or '')}"
+                        f"<div class='msg-at'>{who} · {escape(at)}</div></div>")
+                msg_html = "".join(bubbles)
+            else:
+                msg_html = "<p class='muted'>En attente du premier message du client…</p>"
             opts = "".join(
                 f"<option value='{s}'{' selected' if s == c.status else ''}>{s}</option>"
                 for s in STATUSES)
@@ -1561,7 +1598,7 @@ def admin_case_detail(case_id: int):
                 f"<div class='kv'><span class='k'>Fiche client</span><span class='v'>{client_link}</span></div>"
                 "</div>"
             )
-            msg_card = f"<div class='card full'><h3>Message du client</h3>{msg_html}</div>"
+            msg_card = f"<div class='card full'><h3>Conversation</h3>{msg_html}</div>"
             actions = (
                 f"<form method='post' action='/admin/cases/{c.id}/status' style='margin-top:18px'>"
                 f"<label class='muted'>Statut : </label><select name='status'>{opts}</select> "
@@ -1788,10 +1825,12 @@ async def admin_case_send(case_id: int, request: Request):
         log.info("Manual reply to case #%s: %s", case_id, "sent" if ok else "failed")
         if ok:
             preview = message if len(message) <= 80 else message[:77] + "…"
+            now = datetime.utcnow().isoformat(timespec="seconds")
             with SessionLocal() as db:
                 c = db.get(Case, case_id)
                 if c:
                     c.awaiting_reply = False            # we replied
+                    c.messages = _conversation(c) + [{"dir": "out", "text": message, "at": now}]
                 log_activity(db, client_id, "reply_out", f"Message envoyé : {preview}", case_id)
                 db.commit()
     return RedirectResponse(f"/admin/cases/{case_id}", status_code=303)

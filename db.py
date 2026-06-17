@@ -157,6 +157,8 @@ class Case(Base):
     needs_clarification: Mapped[list] = mapped_column(JSON, default=list)
     # Screenshots the customer sent: list of {media_type, b64, received_at}.
     screenshots: Mapped[list] = mapped_column(JSON, default=list)
+    # Conversation thread for service-client cases: list of {dir:'in'|'out', text, at}.
+    messages: Mapped[list] = mapped_column(JSON, default=list)
 
 
 def init_db() -> None:
@@ -177,6 +179,9 @@ def _ensure_columns() -> None:
             ))
             conn.execute(text(
                 "ALTER TABLE cases ADD COLUMN IF NOT EXISTS client_id INTEGER"
+            ))
+            conn.execute(text(
+                "ALTER TABLE cases ADD COLUMN IF NOT EXISTS messages JSONB DEFAULT '[]'::jsonb"
             ))
             has = conn.execute(text(
                 "SELECT 1 FROM information_schema.columns "
@@ -207,6 +212,8 @@ def _ensure_columns() -> None:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN customer_phone VARCHAR(40)"))
             if "client_id" not in cols:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN client_id INTEGER"))
+            if "messages" not in cols:
+                conn.execute(text("ALTER TABLE cases ADD COLUMN messages JSON"))
             if "awaiting_reply" not in cols:  # add + one-time backfill
                 conn.execute(text("ALTER TABLE cases ADD COLUMN awaiting_reply BOOLEAN DEFAULT 1"))
                 conn.execute(text(
