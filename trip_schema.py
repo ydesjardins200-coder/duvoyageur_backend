@@ -252,14 +252,11 @@ class TripRequest(BaseModel):
             rem.append("prix par personne ou total")
         if not self.operator and not _meaningful_source(self.source):
             rem.append("voyagiste / site du forfait")
-        # LAST: how the customer wants to receive the offer, then the matching
-        # contact detail (email or phone). Messenger needs no extra contact.
-        if self.preferred_channel in (None, ContactChannel.unknown):
-            rem.append("mode de réception de l'offre")
-        elif self.preferred_channel == ContactChannel.email and not self.customer_email:
-            rem.append("courriel pour le rabais")
-        elif self.preferred_channel == ContactChannel.sms and not self.customer_phone:
-            rem.append("téléphone pour le SMS")
+        # LAST and ALWAYS required: a way to reach the customer OFF Messenger.
+        # The Messenger send window closes 24h after the customer's last message,
+        # so every trip request needs an email (preferred) or a phone number.
+        if not (self.customer_email or self.customer_phone):
+            rem.append("courriel ou téléphone")
         return rem
 
     def next_question(self) -> Optional[str]:
@@ -279,9 +276,9 @@ _NEXT_QUESTIONS = {
     "prix trouvé": "Quel prix as-tu vu pour ce forfait ?",
     "prix par personne ou total": "Ce prix-là, c'est par personne ou pour tout le groupe ?",
     "voyagiste / site du forfait": "Sur quel site ou voyagiste as-tu trouvé ce prix (Transat, Sunwing…) ?",
-    "mode de réception de l'offre": "Comment préfères-tu recevoir ton offre : par Messenger, par courriel ou par SMS ?",
-    "courriel pour le rabais": "À quel courriel veux-tu recevoir ton offre ?",
-    "téléphone pour le SMS": "À quel numéro de téléphone veux-tu recevoir ton offre par SMS ?",
+    "courriel ou téléphone": "Dernière chose : à quel courriel veux-tu recevoir ton offre ? "
+                             "(un numéro de téléphone fait aussi l'affaire — c'est pour pouvoir te "
+                             "joindre même si Messenger se ferme après 24 h)",
 }
 
 
