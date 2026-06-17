@@ -183,6 +183,7 @@ def _send_debounced_reply(sender: str, my_stamp: float) -> bool:
             return False
         trip = TripRequest.model_validate(case.trip)
         has_shot = bool(case.screenshots)
+        case_id = case.id
 
     # The message brought new info (or was a screenshot) -> keep profiling.
     rem = trip.remaining_fields()
@@ -190,19 +191,21 @@ def _send_debounced_reply(sender: str, my_stamp: float) -> bool:
     # left to profile (so a vague opener still gets the screenshot-first prompt).
     is_question = ("?" in text) or (not rem)
     if advanced or not text or not settings.CONCIERGE_ENABLED or not is_question:
-        return bool(send_text(sender, _ack_message(trip, has_shot),
-                              settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION))
-
-    # No new info + looks like a question -> answer it (hybrid), then, if we're
-    # still profiling, re-ask the pending question.
-    answer = concierge_reply(text, trip)
-    if rem:
-        q = trip.next_question()
-        reply = (answer + " " + q) if answer else "Merci ! 🌴 " + q
+        reply = _ack_message(trip, has_shot)
     else:
-        reply = answer or ("Bonne question ! 🌴 Un conseiller va te revenir bientôt "
-                           "avec ton offre et pourra répondre à ça. 👍")
-    return bool(send_text(sender, reply, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION))
+        # No new info + looks like a question -> answer it (hybrid), then, if we're
+        # still profiling, re-ask the pending question.
+        answer = concierge_reply(text, trip)
+        if rem:
+            q = trip.next_question()
+            reply = (answer + " " + q) if answer else "Merci ! 🌴 " + q
+        else:
+            reply = answer or ("Bonne question ! 🌴 Un conseiller va te revenir bientôt "
+                               "avec ton offre et pourra répondre à ça. 👍")
+    sent = send_text(sender, reply, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+    if sent:                                            # keep the full conversation
+        _record_message(case_id, "out", reply)
+    return bool(sent)
 
 
 def _ack_message(trip: TripRequest, has_screenshot: bool = False) -> str:
@@ -302,6 +305,12 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
         if existing:
             before_trip = TripRequest.model_validate(existing.trip)
             was_complete = not before_trip.remaining_fields()
+            # Record the inbound message in the thread BEFORE raw_message changes.
+            _inbound = text or ("(capture d'écran envoyée)" if shots else "")
+            if _inbound:
+                existing.messages = (_conversation(existing)
+                                     + [{"dir": "in", "text": _inbound,
+                                         "at": datetime.utcnow().isoformat(timespec="seconds")}])
             if was_complete and text and not downloaded:
                 # Dossier already finalized + a text-only message => treat as a
                 # question. Don't overwrite the trip; just log it for the agent.
@@ -340,6 +349,7 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                         client.display_name = name
             trip = new_trip
             rem = new_trip.remaining_fields()
+            _inbound = text or ("(capture d'écran envoyée)" if shots else "")
             case = Case(
                 client_id=client.id if client else None,
                 channel="messenger",
@@ -352,6 +362,9 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                 trip=new_trip.model_dump(),
                 needs_clarification=rem,
                 screenshots=shots,
+                messages=([{"dir": "in", "text": _inbound,
+                            "at": datetime.utcnow().isoformat(timespec="seconds")}]
+                          if _inbound else []),
             )
             db.add(case)
             db.flush()
@@ -531,6 +544,36 @@ def _conversation(case) -> list:
              if p.strip() and p.strip() != "(demande de support)"]
     at = case.created_at.isoformat(timespec="seconds") if case.created_at else ""
     return [{"dir": "in", "text": p, "at": at} for p in parts]
+
+
+def _record_message(case_id: int, direction: str, text: str) -> None:
+    """Append an in/out message to a case's conversation thread."""
+    if not (case_id and text):
+        return
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    with SessionLocal() as db:
+        c = db.get(Case, case_id)
+        if c is not None:
+            c.messages = _conversation(c) + [{"dir": direction, "text": text, "at": now}]
+            db.commit()
+
+
+def _render_thread(case, name: str = "Client") -> str:
+    """Render the full in/out conversation as chat bubbles."""
+    convo = _conversation(case)
+    if not convo:
+        return "<p class='muted'>Aucun message.</p>"
+    bubbles = []
+    for m in convo:
+        out = m.get("dir") == "out"
+        at = (m.get("at") or "").replace("T", " ")
+        who = "Toi" if out else name
+        bubbles.append(
+            f"<div class='{'msg-out' if out else 'msg-in'}'>"
+            f"{escape(m.get('text') or '')}"
+            f"<div class='msg-at'>{escape(who)} · {escape(at)}</div></div>"
+        )
+    return "".join(bubbles)
 
 
 def _handle_human_message(sender: str, text: str, shots: list | None) -> None:
@@ -1804,7 +1847,7 @@ def admin_case_detail(case_id: int):
 
         convo = (
             "<div class='card full'><h3>Conversation</h3>"
-            f"<pre>{escape(c.raw_message or '—')}</pre></div>"
+            + _render_thread(c, name) + "</div>"
         )
 
         shots = c.screenshots or []
@@ -1812,11 +1855,13 @@ def admin_case_detail(case_id: int):
             imgs = "".join(
                 f"<a href='/admin/cases/{c.id}/screenshot/{i}' target='_blank'>"
                 f"<img src='/admin/cases/{c.id}/screenshot/{i}' alt='capture {i+1}' "
-                f"style='max-width:100%;border-radius:10px;border:1px solid var(--line);margin-bottom:10px'></a>"
+                "style='max-width:100%;max-height:460px;display:block;margin:0 auto 10px;"
+                "border-radius:10px;border:1px solid var(--line);background:rgba(3,18,27,.4)'></a>"
                 for i in range(len(shots))
             )
             screenshot_card = (
-                f"<div class='card full'><h3>Capture(s) d'écran · {len(shots)}</h3>{imgs}</div>"
+                f"<div class='card'><h3>Capture(s) d'écran · {len(shots)}</h3>{imgs}"
+                "<p class='sub'>Clique pour agrandir.</p></div>"
             )
         else:
             screenshot_card = ""
@@ -1853,7 +1898,8 @@ def admin_case_detail(case_id: int):
             "<div class='pagehdr'>"
             f"<h2 style='margin:0'>#{c.id} · {name} <span class='tag {c.status}'>{c.status}</span></h2>"
             f"{status_form}</div>"
-            f"<div class='grid2'>{cards}{screenshot_card}{profil}{send_panel}{convo}</div>"
+            f"<div class='grid2'>{cards}{screenshot_card}</div>"
+            f"<div class='grid2'>{profil}{convo}{send_panel}</div>"
             f"{raw}"
         )
     return render_page(body, "cases")
