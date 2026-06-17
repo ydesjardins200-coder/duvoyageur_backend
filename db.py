@@ -153,7 +153,10 @@ OPEN_STATUSES = ("new", "needs_info")
 
 
 def find_open_case_for_sender(db, sender_ref: Optional[str], within_days: int = 30):
-    """Most recent open Messenger case for this sender, within the merge window."""
+    """Most recent open Messenger case for this sender, within the merge window.
+
+    Kept for reference; the Messenger flow now resolves the client first and
+    uses find_open_request_for_client (client-scoped, any channel)."""
     if not sender_ref:
         return None
     cutoff = datetime.utcnow() - timedelta(days=within_days)
@@ -162,6 +165,25 @@ def find_open_case_for_sender(db, sender_ref: Optional[str], within_days: int = 
         .filter(
             Case.sender_ref == sender_ref,
             Case.channel == "messenger",
+            Case.status.in_(OPEN_STATUSES),
+            Case.created_at >= cutoff,
+        )
+        .order_by(Case.created_at.desc())
+        .first()
+    )
+
+
+def find_open_request_for_client(db, client_id: Optional[int], within_days: int = 30):
+    """Most recent still-open request for THIS client, any channel, within the
+    merge window. New messages from a known client fold into it; once the
+    request is quoted/booked/closed, the next message starts a fresh one."""
+    if not client_id:
+        return None
+    cutoff = datetime.utcnow() - timedelta(days=within_days)
+    return (
+        db.query(Case)
+        .filter(
+            Case.client_id == client_id,
             Case.status.in_(OPEN_STATUSES),
             Case.created_at >= cutoff,
         )

@@ -46,7 +46,7 @@ from auth import NotAuthenticated, check_credentials, require_admin
 from concierge import concierge_reply
 from config import settings
 from db import (STATUSES, Case, SessionLocal, engine, find_open_case_for_sender,
-                init_db, resolve_or_create_client)
+                find_open_request_for_client, init_db, resolve_or_create_client)
 from facebook import (extract_messages, extract_postbacks, get_user_name,
                       send_text, set_messenger_profile, valid_signature, verify_challenge)
 from parser import parse_trip
@@ -240,9 +240,16 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
         "received_at": datetime.utcnow().isoformat(timespec="seconds"),
     } for (b, mt) in downloaded]
 
-    # Find-or-merge: keep one evolving case per customer (progressive profiling).
+    # Find-or-merge: keep one evolving request per CLIENT (progressive profiling).
     with SessionLocal() as db:
-        existing = find_open_case_for_sender(db, sender)
+        # Resolve the client behind this PSID up front (creates on first contact;
+        # may also match a known client by an email/phone they typed in the chat).
+        client = resolve_or_create_client(
+            db, messenger_psid=sender,
+            email=new_trip.customer_email, phone=new_trip.customer_phone,
+            name=new_trip.customer_name, channel="messenger",
+        ) if sender else None
+        existing = find_open_request_for_client(db, client.id if client else None)
         if existing:
             before_trip = TripRequest.model_validate(existing.trip)
             was_complete = not before_trip.remaining_fields()
@@ -271,23 +278,17 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
             log.info("Merged into case #%s (sender %s, +%d shots, advanced=%s)",
                      existing.id, sender, len(shots), advanced)
         else:
-            # Resolve the customer's Facebook name once, when the case is created.
+            # Resolve the customer's Facebook name once, when the request is created.
             if sender and settings.FB_PAGE_TOKEN and not new_trip.customer_name:
                 name = get_user_name(sender, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
                 if name:
                     new_trip.customer_name = name
+                    if client and not client.display_name:
+                        client.display_name = name
             trip = new_trip
             rem = new_trip.remaining_fields()
-            client = resolve_or_create_client(
-                db,
-                messenger_psid=sender,
-                email=new_trip.customer_email,
-                phone=new_trip.customer_phone,
-                name=new_trip.customer_name,
-                channel="messenger",
-            )
             case = Case(
-                client_id=client.id,
+                client_id=client.id if client else None,
                 channel="messenger",
                 status="needs_info" if rem else "new",
                 sender_ref=sender,
