@@ -512,6 +512,10 @@ def _handle_human_message(sender: str, text: str, shots: list | None) -> None:
     now = datetime.utcnow().isoformat(timespec="seconds")
     with SessionLocal() as db:
         client = resolve_or_create_client(db, messenger_psid=sender, channel="messenger")
+        if not client.display_name and settings.FB_PAGE_TOKEN:
+            nm = get_user_name(sender, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+            if nm:
+                client.display_name = nm
         case = (db.query(Case)
                 .filter(Case.client_id == client.id, Case.kind == "support",
                         Case.status != "closed")
@@ -1599,17 +1603,19 @@ def admin_case_detail(case_id: int):
                 "</div>"
             )
             msg_card = f"<div class='card full'><h3>Conversation</h3>{msg_html}</div>"
-            actions = (
-                f"<form method='post' action='/admin/cases/{c.id}/status' style='margin-top:18px'>"
-                f"<label class='muted'>Statut : </label><select name='status'>{opts}</select> "
+            status_form = (
+                f"<form method='post' action='/admin/cases/{c.id}/status' "
+                "style='display:flex;gap:8px;align-items:center;margin:0'>"
+                f"<select name='status'>{opts}</select>"
                 "<button>Mettre à jour</button></form>"
             )
             body = (
                 "<p><a href='/admin/cases?view=service'>&larr; Service client</a></p>"
-                f"<h2>#{c.id} · {name} <span class='tag {c.status}'>{c.status}</span> "
+                "<div class='pagehdr'>"
+                f"<h2 style='margin:0'>#{c.id} · {name} <span class='tag {c.status}'>{c.status}</span> "
                 "<span class='tag'>service client</span></h2>"
+                f"{status_form}</div>"
                 f"<div class='grid2'>{info}{msg_card}{reply}{shot_html}</div>"
-                f"{actions}"
             )
             return render_page(body, "cases")
 
@@ -1715,9 +1721,10 @@ def admin_case_detail(case_id: int):
         else:
             screenshot_card = ""
 
-        actions = (
-            "<form method='post' action='/admin/cases/" + str(c.id) + "/status' style='margin-top:18px'>"
-            f"<label class='muted'>Statut : </label><select name='status'>{opts}</select> "
+        status_form = (
+            f"<form method='post' action='/admin/cases/{c.id}/status' "
+            "style='display:flex;gap:8px;align-items:center;margin:0'>"
+            f"<select name='status'>{opts}</select>"
             "<button>Mettre à jour</button></form>"
         )
 
@@ -1743,9 +1750,11 @@ def admin_case_detail(case_id: int):
 
         body = (
             "<p><a href='/admin/cases'>&larr; Tous les dossiers</a></p>"
-            f"<h2>#{c.id} · {name} <span class='tag {c.status}'>{c.status}</span></h2>"
+            "<div class='pagehdr'>"
+            f"<h2 style='margin:0'>#{c.id} · {name} <span class='tag {c.status}'>{c.status}</span></h2>"
+            f"{status_form}</div>"
             f"<div class='grid2'>{cards}{screenshot_card}{profil}{send_panel}{convo}</div>"
-            f"{actions}{raw}"
+            f"{raw}"
         )
     return render_page(body, "cases")
 
