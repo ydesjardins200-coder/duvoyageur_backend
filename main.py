@@ -884,6 +884,8 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .card form input,.card form textarea{{width:100%}}
  .stats{{display:flex;flex-wrap:wrap;gap:12px;margin:6px 0 0}}
  .stat{{background:var(--glass);border:1px solid var(--line);border-radius:14px;padding:12px 18px;min-width:130px}}
+ a.stat{{text-decoration:none;color:inherit;display:block;transition:border-color .15s,transform .15s}}
+ a.stat:hover{{border-color:var(--pacific);transform:translateY(-1px)}}
  .stat-n{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:1.6rem;color:var(--foam);line-height:1}}
  .stat-l{{font-family:"Space Grotesk",monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-top:5px}}
  .msg-in{{background:rgba(3,18,27,.5);border:1px solid var(--line);border-radius:14px 14px 14px 4px;
@@ -1257,8 +1259,9 @@ def admin_clients():
 
 @app.get("/admin/clients/{client_id}", response_class=HTMLResponse,
          dependencies=[Depends(require_admin)])
-def admin_client_detail(client_id: int):
+def admin_client_detail(client_id: int, tab: str = "identite"):
     KIND_FR = {"messenger_psid": "Messenger (PSID)", "email": "Courriel", "phone": "Téléphone"}
+    tab = tab if tab in ("identite", "voyage", "service") else "identite"
 
     def val(x):
         if x in (None, "", "—"):
@@ -1268,95 +1271,147 @@ def admin_client_detail(client_id: int):
     def kv(label, value):
         return f"<div class='kv'><span class='k'>{label}</span><span class='v'>{value}</span></div>"
 
+    def status_form(cid, status, nxt):
+        opts = "".join(f"<option value='{s}'{' selected' if s == status else ''}>{s}</option>"
+                       for s in STATUSES)
+        return (f"<form method='post' action='/admin/cases/{cid}/status' "
+                "style='display:flex;gap:8px;align-items:center;margin:0'>"
+                f"<input type='hidden' name='next' value=\"{escape(nxt)}\">"
+                f"<select name='status'>{opts}</select>"
+                "<button>Mettre à jour</button></form>")
+
     with SessionLocal() as db:
         cl = db.get(Client, client_id)
         if not cl:
             return HTMLResponse(render_page("<p>Client introuvable.</p>", "clients"), status_code=404)
         reqs = cl.requests
         idents = cl.identities
+        acts = cl.activities
         name = escape(cl.display_name or "Client sans nom")
 
-        # Lifetime value: count of booked requests and an estimate from prices seen.
-        booked = [r for r in reqs if r.status == "booked"]
+        trips = [r for r in reqs if (r.kind or "trip") == "trip"]
+        supports = [r for r in reqs if (r.kind or "trip") == "support"]
+        booked = [r for r in trips if r.status == "booked"]
         est_total = 0.0
         for r in booked:
             amt = ((r.trip or {}).get("price_seen") or {}).get("amount")
             if isinstance(amt, (int, float)):
                 est_total += amt
+
+        base = f"/admin/clients/{cl.id}"
+        # Top tiles — the two demande tiles are clickable to their tabs.
         stats = (
             "<div class='stats'>"
-            f"<div class='stat'><div class='stat-n'>{len(reqs)}</div><div class='stat-l'>Demandes</div></div>"
+            f"<a class='stat' href='{base}?tab=voyage'><div class='stat-n'>{len(trips)}</div>"
+            "<div class='stat-l'>Demandes de voyage</div></a>"
+            f"<a class='stat' href='{base}?tab=service'><div class='stat-n'>{len(supports)}</div>"
+            "<div class='stat-l'>Demandes de service</div></a>"
             f"<div class='stat'><div class='stat-n'>{len(booked)}</div><div class='stat-l'>Réservées</div></div>"
             f"<div class='stat'><div class='stat-n'>{est_total:,.0f} $</div><div class='stat-l'>Valeur estimée</div></div>"
             "</div>"
-            "<p class='sub' style='margin:4px 0 14px'>Valeur estimée d'après les prix vus sur les demandes réservées.</p>"
+            "<p class='sub' style='margin:4px 0 14px'>Valeur estimée d'après les prix vus sur les "
+            "demandes de voyage réservées.</p>"
         )
 
-        tags_str = ", ".join(cl.tags or [])
-        info = (
-            "<div class='card'><h3>Client</h3>"
-            f"<form method='post' action='/admin/clients/{cl.id}/update'>"
-            "<label class='flbl'>Nom</label>"
-            f"<input name='display_name' value=\"{escape(cl.display_name or '')}\">"
-            "<label class='flbl'>Notes</label>"
-            f"<textarea name='notes' rows='3'>{escape(cl.notes or '')}</textarea>"
-            "<label class='flbl'>Tags (séparés par des virgules)</label>"
-            f"<input name='tags' value=\"{escape(tags_str)}\">"
-            "<button style='margin-top:12px'>Enregistrer</button>"
-            "</form>"
-            "<div style='margin-top:14px'>"
-            + kv("Courriel", val(cl.primary_email))
-            + kv("Téléphone", val(cl.primary_phone))
-            + kv("Canal préféré", val(cl.preferred_channel))
-            + kv("Créé", cl.created_at.strftime("%Y-%m-%d %H:%M"))
-            + kv("Dernier contact",
-                 cl.last_contact_at.strftime("%Y-%m-%d %H:%M") if cl.last_contact_at else "—")
-            + "</div></div>"
-        )
-        id_rows = "".join(kv(KIND_FR.get(i.kind, i.kind), escape(i.value)) for i in idents)
-        ident_card = f"<div class='card'><h3>Identités</h3>{id_rows or '<div class=muted>Aucune.</div>'}</div>"
+        def tnav(key, label, n):
+            return (f"<a class='tab{' active' if tab == key else ''}' href='{base}?tab={key}'>"
+                    f"{label}<span class='tab-n'>{n}</span></a>")
+        tabs = ("<div class='tabs'>"
+                f"<a class='tab{' active' if tab == 'identite' else ''}' href='{base}?tab=identite'>Identité</a>"
+                + tnav("voyage", "✈️ Demandes de voyage", len(trips))
+                + tnav("service", "💬 Demandes de service", len(supports))
+                + "</div>")
 
-        others = (db.query(Client).filter(Client.id != cl.id)
-                  .order_by(func.coalesce(Client.display_name, "")).limit(500).all())
-        if others:
-            opts = "".join(
-                f"<option value='{o.id}'>{escape(o.display_name or 'Client')} (#{o.id})</option>"
-                for o in others)
-            merge_card = (
-                "<div class='card'><h3>Fusion</h3>"
-                "<form method='post' action='/admin/clients/merge' "
-                "onsubmit=\"return confirm('Fusionner cette fiche dans la fiche choisie ? Action irréversible.')\">"
-                f"<input type='hidden' name='drop' value='{cl.id}'>"
-                "<label class='flbl'>Fusionner cette fiche dans :</label>"
-                f"<select name='keep'>{opts}</select>"
-                "<button class='btn-danger' style='margin-top:12px'>Fusionner</button></form>"
-                "<p class='sub'>Déplace les demandes, identités et l'activité vers la fiche "
-                "choisie, puis supprime celle-ci.</p></div>"
+        if tab == "identite":
+            id_rows = "".join(kv(KIND_FR.get(i.kind, i.kind), escape(i.value)) for i in idents)
+            identity_card = (
+                "<div class='card'><h3>Identité</h3>"
+                f"<form method='post' action='/admin/clients/{cl.id}/update'>"
+                "<label class='flbl'>Nom</label>"
+                f"<input name='display_name' value=\"{escape(cl.display_name or '')}\">"
+                "<button style='margin-top:12px'>Enregistrer</button></form>"
+                "<div style='margin-top:14px'>"
+                + kv("Courriel", val(cl.primary_email))
+                + kv("Téléphone", val(cl.primary_phone))
+                + kv("Canal préféré", val(cl.preferred_channel))
+                + kv("Créé", cl.created_at.strftime("%Y-%m-%d %H:%M"))
+                + kv("Dernier contact",
+                     cl.last_contact_at.strftime("%Y-%m-%d %H:%M") if cl.last_contact_at else "—")
+                + "</div>"
+                "<h3 style='margin-top:18px'>Identifiants</h3>"
+                + (id_rows or "<div class='muted'>Aucun.</div>")
+                + "</div>"
             )
+            others = (db.query(Client).filter(Client.id != cl.id)
+                      .order_by(func.coalesce(Client.display_name, "")).limit(500).all())
+            if others:
+                opts = "".join(
+                    f"<option value='{o.id}'>{escape(o.display_name or 'Client')} (#{o.id})</option>"
+                    for o in others)
+                merge_card = (
+                    "<div class='card'><h3>Fusion</h3>"
+                    "<form method='post' action='/admin/clients/merge' "
+                    "onsubmit=\"return confirm('Fusionner cette fiche dans la fiche choisie ? Action irréversible.')\">"
+                    f"<input type='hidden' name='drop' value='{cl.id}'>"
+                    "<label class='flbl'>Fusionner cette fiche dans :</label>"
+                    f"<select name='keep'>{opts}</select>"
+                    "<button class='btn-danger' style='margin-top:12px'>Fusionner</button></form>"
+                    "<p class='sub'>Déplace les demandes, identités et l'activité vers la fiche "
+                    "choisie, puis supprime celle-ci.</p></div>"
+                )
+            else:
+                merge_card = ""
+            content = f"<div class='grid2'>{identity_card}{merge_card}</div>"
+
+        elif tab == "voyage":
+            if trips:
+                cards = []
+                for r in trips:
+                    t = r.trip or {}
+                    dep, ret = t.get("departure_date"), t.get("return_date")
+                    dates = (f"{dep or '?'} → {ret or '?'}" if (dep or ret) else (t.get("dates_raw") or "—"))
+                    cards.append(
+                        "<div class='card'>"
+                        "<div class='pagehdr'>"
+                        f"<h3 style='margin:0'>#{r.id} <span class='tag {r.status}'>{r.status}</span></h3>"
+                        + status_form(r.id, r.status, f"{base}?tab=voyage")
+                        + "</div>"
+                        + kv("Destination", val(t.get("destination")))
+                        + kv("Hôtel", val(t.get("hotel_name_raw")))
+                        + kv("Dates", val(dates))
+                        + kv("Canal", val(r.channel))
+                        + kv("Reçu", r.created_at.strftime("%Y-%m-%d %H:%M"))
+                        + f"<div style='margin-top:10px'><a href='/admin/cases/{r.id}'>Ouvrir le dossier &rarr;</a></div>"
+                        "</div>"
+                    )
+                content = f"<div class='grid2'>{''.join(cards)}</div>"
+            else:
+                content = "<div class='card full'><div class='muted'>Aucune demande de voyage.</div></div>"
+
         else:
-            merge_card = ""
-
-        rrows = []
-        for r in reqs:
-            t = r.trip or {}
-            where = escape(str(t.get("hotel_name_raw") or t.get("destination") or "—"))
-            rrows.append(
-                f"<tr data-href='/admin/cases/{r.id}'>"
-                f"<td><a href='/admin/cases/{r.id}'>#{r.id}</a></td>"
-                f"<td><span class='tag {r.status}'>{r.status}</span></td>"
-                f"<td>{escape(r.channel)}</td>"
-                f"<td>{where}</td>"
-                f"<td>{r.parse_confidence:.2f}</td>"
-                f"<td class='muted'>{r.created_at:%Y-%m-%d %H:%M}</td></tr>"
-            )
-        empty = "<tr><td colspan='6' class='muted'>Aucune demande.</td></tr>"
-        hist = (
-            f"<div class='card full'><h3>Demandes · {len(reqs)}</h3>"
-            "<table><tr><th>#</th><th>Statut</th><th>Canal</th><th>Hôtel / Dest.</th>"
-            "<th>Conf.</th><th>Reçu</th></tr>"
-            + ("".join(rrows) or empty)
-            + "</table></div>"
-        )
+            if supports:
+                cards = []
+                for r in supports:
+                    msgs = _conversation(r)
+                    last_in = next((m for m in reversed(msgs) if m.get("dir") == "in"), None)
+                    preview = (last_in.get("text") if last_in else (r.raw_message or "")) or "—"
+                    if len(preview) > 140:
+                        preview = preview[:140] + "…"
+                    cards.append(
+                        "<div class='card'>"
+                        "<div class='pagehdr'>"
+                        f"<h3 style='margin:0'>#{r.id} <span class='tag {r.status}'>{r.status}</span></h3>"
+                        + status_form(r.id, r.status, f"{base}?tab=service")
+                        + "</div>"
+                        + kv("Canal", val(r.channel))
+                        + kv("Reçu", r.created_at.strftime("%Y-%m-%d %H:%M"))
+                        + f"<div class='msg-in' style='margin-top:10px'>{escape(preview)}</div>"
+                        + f"<div style='margin-top:10px'><a href='/admin/cases/{r.id}'>Ouvrir la conversation &rarr;</a></div>"
+                        "</div>"
+                    )
+                content = f"<div class='grid2'>{''.join(cards)}</div>"
+            else:
+                content = "<div class='card full'><div class='muted'>Aucune demande de service.</div></div>"
 
         KIND_LABEL = {
             "request_created": ("Nouvelle demande", "🆕"),
@@ -1366,7 +1421,6 @@ def admin_client_detail(client_id: int):
             "merge": ("Fusion de fiches", "🔗"),
             "note": ("Note", "📝"),
         }
-        acts = cl.activities
         if acts:
             items = []
             for a in acts:
@@ -1387,8 +1441,8 @@ def admin_client_detail(client_id: int):
         body = (
             "<p><a href='/admin/clients'>&larr; Tous les clients</a></p>"
             f"<h2>{name}</h2>"
-            f"{stats}"
-            f"<div class='grid2'>{info}{ident_card}{merge_card}{hist}{activity}</div>"
+            f"{stats}{tabs}{content}"
+            f"<div class='grid2' style='margin-top:18px'>{activity}</div>"
         )
     return render_page(body, "clients")
 
@@ -1396,15 +1450,15 @@ def admin_client_detail(client_id: int):
 @app.post("/admin/clients/{client_id}/update", dependencies=[Depends(require_admin)])
 async def admin_client_update(client_id: int, request: Request):
     form = await request.form()
-    name = (form.get("display_name") or "").strip() or None
-    notes = (form.get("notes") or "").strip() or None
-    tags = [t.strip() for t in (form.get("tags") or "").split(",") if t.strip()]
     with SessionLocal() as db:
         cl = db.get(Client, client_id)
         if cl:
-            cl.display_name = name
-            cl.notes = notes
-            cl.tags = tags
+            if "display_name" in form:
+                cl.display_name = (form.get("display_name") or "").strip() or None
+            if "notes" in form:
+                cl.notes = (form.get("notes") or "").strip() or None
+            if "tags" in form:
+                cl.tags = [t.strip() for t in (form.get("tags") or "").split(",") if t.strip()]
             log_activity(db, cl.id, "note", "Fiche client modifiée")
             db.commit()
     return RedirectResponse(f"/admin/clients/{client_id}", status_code=303)
@@ -1792,6 +1846,7 @@ def admin_case_detail(case_id: int):
 async def admin_update_status(case_id: int, request: Request):
     form = await request.form()
     new_status = form.get("status")
+    nxt = form.get("next") or f"/admin/cases/{case_id}"
     with SessionLocal() as db:
         c = db.get(Case, case_id)
         if c and new_status in STATUSES and new_status != c.status:
@@ -1800,7 +1855,9 @@ async def admin_update_status(case_id: int, request: Request):
             c.status = new_status
             c.awaiting_reply = False                    # we triaged it
             db.commit()
-    return RedirectResponse(f"/admin/cases/{case_id}", status_code=303)
+    if not nxt.startswith("/admin/"):                   # only allow internal redirects
+        nxt = f"/admin/cases/{case_id}"
+    return RedirectResponse(nxt, status_code=303)
 
 
 @app.get("/admin/cases/{case_id}/screenshot/{idx}", dependencies=[Depends(require_admin)])
