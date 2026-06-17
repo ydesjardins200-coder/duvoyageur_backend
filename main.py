@@ -278,6 +278,7 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                 existing.status = "needs_info" if trip.needs_clarification else "new"
                 if shots:                               # accumulate screenshots
                     existing.screenshots = (existing.screenshots or []) + shots
+            existing.awaiting_reply = True              # client wrote -> our move
             log_activity(db, existing.client_id, "message_in",
                          "Message reçu sur Messenger", existing.id)
             db.commit()
@@ -547,6 +548,25 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .topnav{{display:flex;gap:6px}}
  .topnav a{{color:var(--mist);font-size:13.5px;font-weight:600;padding:6px 13px;border-radius:999px}}
  .topnav a:hover{{color:var(--foam);text-decoration:none;background:rgba(25,211,230,.1)}}
+ .hdr-right{{display:flex;align-items:center;gap:14px}}
+ .bell{{position:relative}}
+ .bell-btn{{background:transparent;border:0;cursor:pointer;font-size:20px;line-height:1;padding:5px;
+   color:var(--foam);box-shadow:none;border-radius:9px}}
+ .bell-btn:hover{{transform:none;box-shadow:none;background:rgba(25,211,230,.12)}}
+ .bell-badge{{position:absolute;top:-1px;right:-3px;min-width:17px;height:17px;padding:0 4px;
+   border-radius:999px;background:#e0675b;color:#fff;font:700 11px/17px "Space Grotesk",monospace;text-align:center}}
+ .bell-panel{{position:absolute;right:0;top:44px;width:320px;max-width:82vw;z-index:50;display:none;
+   background:rgba(6,33,47,.98);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+   border:1px solid var(--line);border-radius:14px;box-shadow:0 22px 54px -16px rgba(0,0,0,.85);overflow:hidden}}
+ .bell-panel.open{{display:block}}
+ .bell-head{{padding:11px 14px;font-family:"Space Grotesk",monospace;font-size:12px;letter-spacing:.1em;
+   text-transform:uppercase;color:var(--pacific);border-bottom:1px solid var(--line)}}
+ .bell-item{{display:block;padding:11px 14px;border-bottom:1px solid var(--line);color:var(--foam)}}
+ .bell-item:last-child{{border-bottom:0}}
+ .bell-item:hover{{background:rgba(25,211,230,.08);text-decoration:none}}
+ .bell-empty{{padding:18px 14px;color:var(--mist);font-size:13px}}
+ .bell-name{{font-weight:600}}
+ .bell-meta{{display:flex;gap:8px;align-items:center;margin-top:4px;font-size:12px;color:var(--mist)}}
  main{{padding:22px;max-width:1100px;margin:auto}}
  table{{width:100%;border-collapse:collapse;font-size:14px;background:rgba(6,33,47,.4);
    border:1px solid var(--line);border-radius:14px;overflow:hidden}}
@@ -612,7 +632,7 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .stat-n{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:1.6rem;color:var(--foam);line-height:1}}
  .stat-l{{font-family:"Space Grotesk",monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-top:5px}}
 </style></head><body>
-<header><span class="brand"><img src="/static/logo.png" alt=""><h1>Du Voyageur</h1></span><nav class="topnav"><a href="/admin/cases">Demandes</a><a href="/admin/clients">Clients</a></nav><a class="logout" href="/admin/logout">Déconnexion</a></header>
+<header><span class="brand"><img src="/static/logo.png" alt=""><h1>Du Voyageur</h1></span><nav class="topnav"><a href="/admin/cases">Demandes</a><a href="/admin/clients">Clients</a></nav><span class="hdr-right">{bell}<a class="logout" href="/admin/logout">Déconnexion</a></span></header>
 <main>{body}</main>
 <script>
 document.addEventListener('click',function(e){{
@@ -620,8 +640,53 @@ document.addEventListener('click',function(e){{
  if(!tr||e.target.closest('a'))return;
  window.location=tr.getAttribute('data-href');
 }});
+(function(){{
+ var b=document.getElementById('bellBtn');
+ if(!b)return;
+ b.addEventListener('click',function(e){{
+  e.stopPropagation();
+  document.getElementById('bellPanel').classList.toggle('open');
+ }});
+ document.addEventListener('click',function(e){{
+  var p=document.getElementById('bellPanel');
+  if(p&&!e.target.closest('.bell'))p.classList.remove('open');
+ }});
+}})();
 </script>
 </body></html>"""
+
+
+def _bell_html() -> str:
+    """Notification bell: requests still awaiting our reply, any channel."""
+    with SessionLocal() as db:
+        q = db.query(Case).filter(Case.awaiting_reply.is_(True), Case.status != "closed")
+        total = q.count()
+        pend = q.order_by(Case.created_at.desc()).limit(15).all()
+        rows = []
+        for c in pend:
+            t = c.trip or {}
+            nm = escape(str(t.get("customer_name") or "Client inconnu"))
+            where = escape(str(t.get("hotel_name_raw") or t.get("destination") or "—"))
+            rows.append(
+                f"<a class='bell-item' href='/admin/cases/{c.id}'>"
+                f"<div class='bell-name'>{nm}</div>"
+                f"<div class='bell-meta'><span class='tag {c.status}'>{c.status}</span>"
+                f"<span>{where}</span></div></a>"
+            )
+    badge = (f"<span class='bell-badge'>{total if total < 100 else '99+'}</span>"
+             if total else "")
+    head = f"<div class='bell-head'>À répondre · {total}</div>"
+    items = "".join(rows) or "<div class='bell-empty'>Rien à traiter pour l'instant 🎉</div>"
+    return (
+        "<div class='bell'>"
+        f"<button class='bell-btn' id='bellBtn' aria-label='Notifications'>🔔{badge}</button>"
+        f"<div class='bell-panel' id='bellPanel'>{head}{items}</div></div>"
+    )
+
+
+def render_page(body: str) -> str:
+    """Render an admin page in the shell, with the live notification bell."""
+    return _PAGE.format(body=body, bell=_bell_html())
 
 
 _LOGIN_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
@@ -779,7 +844,7 @@ def admin_cases(status: str = "all"):
             "onsubmit=\"return confirm('Effacer TOUS les dossiers ? Action irréversible.')\">"
             "<button class='btn-danger'>Vider tous les dossiers (test)</button></form>"
         )
-    return _PAGE.format(body=body)
+    return render_page(body)
 
 
 @app.get("/admin/clients", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
@@ -852,7 +917,7 @@ def admin_clients():
         + ("".join(rows) or empty)
         + "</table>"
     )
-    return _PAGE.format(body=body)
+    return render_page(body)
 
 
 @app.get("/admin/clients/{client_id}", response_class=HTMLResponse,
@@ -871,7 +936,7 @@ def admin_client_detail(client_id: int):
     with SessionLocal() as db:
         cl = db.get(Client, client_id)
         if not cl:
-            return HTMLResponse(_PAGE.format(body="<p>Client introuvable.</p>"), status_code=404)
+            return HTMLResponse(render_page("<p>Client introuvable.</p>"), status_code=404)
         reqs = cl.requests
         idents = cl.identities
         name = escape(cl.display_name or "Client sans nom")
@@ -990,7 +1055,7 @@ def admin_client_detail(client_id: int):
             f"{stats}"
             f"<div class='grid2'>{info}{ident_card}{merge_card}{hist}{activity}</div>"
         )
-    return _PAGE.format(body=body)
+    return render_page(body)
 
 
 @app.post("/admin/clients/{client_id}/update", dependencies=[Depends(require_admin)])
@@ -1055,7 +1120,7 @@ def admin_case_detail(case_id: int):
     with SessionLocal() as db:
         c = db.get(Case, case_id)
         if not c:
-            return HTMLResponse(_PAGE.format(body="<p>Introuvable.</p>"), status_code=404)
+            return HTMLResponse(render_page("<p>Introuvable.</p>"), status_code=404)
         t = c.trip or {}
 
         # --- derived display values ---
@@ -1192,7 +1257,7 @@ def admin_case_detail(case_id: int):
             f"<div class='grid2'>{cards}{screenshot_card}{profil}{send_panel}{convo}</div>"
             f"{actions}{raw}"
         )
-    return _PAGE.format(body=body)
+    return render_page(body)
 
 
 @app.post("/admin/cases/{case_id}/status", dependencies=[Depends(require_admin)])
@@ -1205,6 +1270,7 @@ async def admin_update_status(case_id: int, request: Request):
             log_activity(db, c.client_id, "status_change",
                          f"Statut : {c.status} → {new_status}", c.id)
             c.status = new_status
+            c.awaiting_reply = False                    # we triaged it
             db.commit()
     return RedirectResponse(f"/admin/cases/{case_id}", status_code=303)
 
@@ -1239,7 +1305,7 @@ def admin_setup_greeting():
         "« Démarrer » pour déclencher le message de bienvenue.</p>"
         f"<pre>{escape(detail)}</pre>"
     )
-    return _PAGE.format(body=body)
+    return render_page(body)
 
 
 @app.post("/admin/cases/{case_id}/send", dependencies=[Depends(require_admin)])
@@ -1257,6 +1323,9 @@ async def admin_case_send(case_id: int, request: Request):
         if ok:
             preview = message if len(message) <= 80 else message[:77] + "…"
             with SessionLocal() as db:
+                c = db.get(Case, case_id)
+                if c:
+                    c.awaiting_reply = False            # we replied
                 log_activity(db, client_id, "reply_out", f"Message envoyé : {preview}", case_id)
                 db.commit()
     return RedirectResponse(f"/admin/cases/{case_id}", status_code=303)

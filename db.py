@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import (JSON, DateTime, Float, ForeignKey, Integer, String, Text,
+from sqlalchemy import (JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text,
                         UniqueConstraint, create_engine, text)
 from sqlalchemy.orm import (DeclarativeBase, Mapped, mapped_column, relationship,
                             sessionmaker)
@@ -129,6 +129,9 @@ class Case(Base):
 
     channel: Mapped[str] = mapped_column(String(20))            # 'messenger' | 'form'
     status: Mapped[str] = mapped_column(String(20), default="new")
+    # True while the ball is in OUR court: a client wrote and we haven't replied
+    # or triaged yet. Drives the notification bell. Channel-agnostic.
+    awaiting_reply: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     sender_ref: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     customer_email: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     customer_phone: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
@@ -162,6 +165,16 @@ def _ensure_columns() -> None:
             conn.execute(text(
                 "ALTER TABLE cases ADD COLUMN IF NOT EXISTS client_id INTEGER"
             ))
+            has = conn.execute(text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name='cases' AND column_name='awaiting_reply'"
+            )).first()
+            if not has:  # add + one-time backfill (open requests await a reply)
+                conn.execute(text(
+                    "ALTER TABLE cases ADD COLUMN awaiting_reply BOOLEAN DEFAULT TRUE"))
+                conn.execute(text(
+                    "UPDATE cases SET awaiting_reply = FALSE "
+                    "WHERE status IN ('quoted','booked','closed')"))
         elif engine.dialect.name == "sqlite":
             cols = [r[1] for r in conn.execute(text("PRAGMA table_info(cases)"))]
             if "screenshots" not in cols:
@@ -170,6 +183,11 @@ def _ensure_columns() -> None:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN customer_phone VARCHAR(40)"))
             if "client_id" not in cols:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN client_id INTEGER"))
+            if "awaiting_reply" not in cols:  # add + one-time backfill
+                conn.execute(text("ALTER TABLE cases ADD COLUMN awaiting_reply BOOLEAN DEFAULT 1"))
+                conn.execute(text(
+                    "UPDATE cases SET awaiting_reply = 0 "
+                    "WHERE status IN ('quoted','booked','closed')"))
 
 
 # Statuses that mean "this request is still in progress" — new messages from the
