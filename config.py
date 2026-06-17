@@ -26,6 +26,9 @@ class Settings:
     # Wait this many seconds before replying, so a burst of messages (e.g. text
     # then screenshot as separate events) yields ONE reply on the merged state.
     ACK_DEBOUNCE_SECONDS: float = float(os.getenv("ACK_DEBOUNCE_SECONDS", "5"))
+    # Answer general questions (weather, season…) with a short concierge reply
+    # instead of repeating the profiling line. Set to "0" to disable.
+    CONCIERGE_ENABLED: bool = os.getenv("CONCIERGE_ENABLED", "1") not in ("0", "false", "False", "")
 
     # --- admin panel auth ---
     ADMIN_USER: str = os.getenv("ADMIN_USER", "admin")

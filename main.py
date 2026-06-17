@@ -39,6 +39,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from sqlalchemy import text
 
 from auth import require_admin
+from concierge import concierge_reply
 from config import settings
 from db import STATUSES, Case, SessionLocal, engine, find_open_case_for_sender, init_db
 from facebook import (extract_messages, extract_postbacks, get_user_name,
@@ -110,20 +111,52 @@ SCREENSHOT_FIRST_THRESHOLD = 5
 # Per-sender timestamp of the latest inbound message, used to debounce replies so
 # a burst (text + screenshot as separate events) gets ONE reply on merged state.
 _last_msg_at: dict[str, float] = {}
+# Per-sender metadata about the latest message: did it add info, and its text.
+_last_msg_meta: dict[str, dict] = {}
+
+_TRIP_NOISE = {"raw_message", "needs_clarification", "parse_confidence", "agent_notes",
+               "source", "customer_name"}
 
 
-def _send_debounced_ack(sender: str, my_stamp: float) -> bool:
-    """Send the acknowledgment only if no newer message has arrived since."""
+def _trip_changed(before: TripRequest, after: TripRequest) -> bool:
+    """True if the message added or changed real trip data (not just metadata)."""
+    return before.model_dump(exclude=_TRIP_NOISE) != after.model_dump(exclude=_TRIP_NOISE)
+
+
+def _send_debounced_reply(sender: str, my_stamp: float) -> bool:
+    """Reply once per burst: profiling question, or a concierge answer to a
+    general question — never the canned line on repeat."""
     if _last_msg_at.get(sender) != my_stamp:
         return False  # a newer message superseded this one; it will reply
+    meta = _last_msg_meta.get(sender, {})
+    text = meta.get("text", "") or ""
+    advanced = meta.get("advanced", True)
     with SessionLocal() as db:
         case = find_open_case_for_sender(db, sender)
         if not case:
             return False
-        final_trip = TripRequest.model_validate(case.trip)
+        trip = TripRequest.model_validate(case.trip)
         has_shot = bool(case.screenshots)
-    return bool(send_text(sender, _ack_message(final_trip, has_shot),
-                          settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION))
+
+    # The message brought new info (or was a screenshot) -> keep profiling.
+    rem = trip.remaining_fields()
+    # Treat as a general question only if it looks like one, or there's nothing
+    # left to profile (so a vague opener still gets the screenshot-first prompt).
+    is_question = ("?" in text) or (not rem)
+    if advanced or not text or not settings.CONCIERGE_ENABLED or not is_question:
+        return bool(send_text(sender, _ack_message(trip, has_shot),
+                              settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION))
+
+    # No new info + looks like a question -> answer it (hybrid), then, if we're
+    # still profiling, re-ask the pending question.
+    answer = concierge_reply(text, trip)
+    if rem:
+        q = trip.next_question()
+        reply = (answer + " " + q) if answer else "Merci ! 🌴 " + q
+    else:
+        reply = answer or ("Bonne question ! 🌴 Un conseiller va te revenir bientôt "
+                           "avec ton offre et pourra répondre à ça. 👍")
+    return bool(send_text(sender, reply, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION))
 
 
 def _ack_message(trip: TripRequest, has_screenshot: bool = False) -> str:
@@ -173,19 +206,32 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
     with SessionLocal() as db:
         existing = find_open_case_for_sender(db, sender)
         if existing:
-            trip = merge_trip_requests(TripRequest.model_validate(existing.trip), new_trip)
-            existing.trip = trip.model_dump()
-            existing.needs_clarification = trip.needs_clarification
-            existing.parse_confidence = trip.parse_confidence
-            existing.raw_message = trip.raw_message
-            existing.customer_email = trip.customer_email or existing.customer_email
-            existing.customer_phone = trip.customer_phone or existing.customer_phone
-            existing.status = "needs_info" if trip.needs_clarification else "new"
-            if shots:                                   # accumulate screenshots
-                existing.screenshots = (existing.screenshots or []) + shots
+            before_trip = TripRequest.model_validate(existing.trip)
+            was_complete = not before_trip.remaining_fields()
+            if was_complete and text and not downloaded:
+                # Dossier already finalized + a text-only message => treat as a
+                # question. Don't overwrite the trip; just log it for the agent.
+                trip = before_trip.model_copy(deep=True)
+                trip.raw_message = ((existing.raw_message + "\n---\n" + text)
+                                    if existing.raw_message else text)
+                existing.raw_message = trip.raw_message
+                existing.trip = trip.model_dump()
+                advanced = False
+            else:
+                trip = merge_trip_requests(before_trip, new_trip)
+                advanced = _trip_changed(before_trip, trip)
+                existing.trip = trip.model_dump()
+                existing.needs_clarification = trip.needs_clarification
+                existing.parse_confidence = trip.parse_confidence
+                existing.raw_message = trip.raw_message
+                existing.customer_email = trip.customer_email or existing.customer_email
+                existing.customer_phone = trip.customer_phone or existing.customer_phone
+                existing.status = "needs_info" if trip.needs_clarification else "new"
+                if shots:                               # accumulate screenshots
+                    existing.screenshots = (existing.screenshots or []) + shots
             db.commit()
-            log.info("Merged message into case #%s (sender %s, +%d shots)",
-                     existing.id, sender, len(shots))
+            log.info("Merged into case #%s (sender %s, +%d shots, advanced=%s)",
+                     existing.id, sender, len(shots), advanced)
         else:
             # Resolve the customer's Facebook name once, when the case is created.
             if sender and settings.FB_PAGE_TOKEN and not new_trip.customer_name:
@@ -209,15 +255,27 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
             db.add(case)
             db.commit()
             db.refresh(case)
-            log.info("New case #%s (sender %s, %d shots)", case.id, sender, len(shots))
+            advanced = _trip_changed(TripRequest(source="messenger"), new_trip) or bool(new_trip.agent_notes)
+            log.info("New case #%s (sender %s, %d shots, advanced=%s)",
+                     case.id, sender, len(shots), advanced)
+
+    # Record routing metadata for the debounced reply (OR 'advanced' across a
+    # burst so a screenshot in the burst keeps us in profiling mode).
+    if sender:
+        prev = _last_msg_meta.get(sender)
+        adv, txt = advanced, text
+        if prev and (my_stamp - prev.get("at", 0)) < settings.ACK_DEBOUNCE_SECONDS + 2:
+            adv = adv or prev.get("advanced", False)
+            txt = text or prev.get("text", "")
+        _last_msg_meta[sender] = {"text": txt, "advanced": adv, "at": my_stamp}
 
     # Debounced acknowledgment: wait briefly so a burst (text + screenshot as
     # separate events) produces ONE reply built on the final merged state. Only
     # the last message in the burst actually replies. Never breaks processing.
     if sender and settings.FB_PAGE_TOKEN:
         time.sleep(settings.ACK_DEBOUNCE_SECONDS)
-        sent = _send_debounced_ack(sender, my_stamp)
-        log.info("Ack to %s: %s", sender, "sent" if sent else "skipped (superseded)")
+        sent = _send_debounced_reply(sender, my_stamp)
+        log.info("Reply to %s: %s", sender, "sent" if sent else "skipped (superseded)")
 
 
 # --------------------------------------------------------------------------- #
