@@ -250,15 +250,15 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                 mode = cl.support_mode or "profiling"
                 is_cold = find_open_request_for_client(db, cl.id) is None
     if mode == "human":
-        # The customer asked for a human — but if they now clearly want a rebate
-        # (the core funnel), pull them back into the profiling bot and let the
-        # normal profiling flow below greet them (avoids a duplicate message).
-        if _wants_rebate(text):
-            _set_support_mode(sender, "profiling")
-            mode = "profiling"  # fall through to the profiling flow below
-        else:
-            _handle_human_message(sender, text, shots)
-            return
+        # Always record the message for the agent. If the customer signals rebate
+        # intent, OFFER (once) to hand them to the profiling bot — their choice.
+        _handle_human_message(sender, text, shots)
+        if sender and _wants_rebate(text) and sender not in _rebate_offered:
+            _rebate_offered.add(sender)
+            send_quick_replies(sender, REBATE_OFFER_TEXT, REBATE_OFFER_QR,
+                               settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+            log.info("Rebate-switch offer sent to %s", sender)
+        return
     if mode == "concierge":
         _handle_concierge_message(sender, text)
         return
@@ -432,6 +432,16 @@ PERSISTENT_MENU = [
 
 # Senders already shown the triage chips (once per process lifetime, avoids spam).
 _triaged: set[str] = set()
+
+# When a human-lane customer signals rebate intent, we OFFER to switch to the
+# profiling bot (rather than hijacking the conversation). Shown once per sender.
+REBATE_OFFER_TEXT = ("On dirait que tu cherches un rabais sur un voyage 🌴 "
+                     "Je peux m'en occuper tout de suite — on y va ?")
+REBATE_OFFER_QR = [
+    {"content_type": "text", "title": "✈️ Oui, mon rabais", "payload": IB_PROFILING},
+    {"content_type": "text", "title": "👤 Un conseiller", "payload": IB_HUMAN},
+]
+_rebate_offered: set[str] = set()
 
 _HUMAN_RE = re.compile(
     r"(agent|conseill\w+|repr[ée]sentant|humain|une personne|vraie personne|"
