@@ -33,7 +33,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from html import escape
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
+from fastapi import (BackgroundTasks, Depends, FastAPI, File, Form, HTTPException,
+                     Request, Response, UploadFile)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from sqlalchemy import text
@@ -69,7 +70,8 @@ app.add_middleware(
 # --------------------------------------------------------------------------- #
 # Storage helper
 # --------------------------------------------------------------------------- #
-def store_case(channel: str, trip: TripRequest, sender_ref: str | None = None) -> int:
+def store_case(channel: str, trip: TripRequest, sender_ref: str | None = None,
+               shots: list | None = None) -> int:
     with SessionLocal() as db:
         rem = trip.remaining_fields()
         case = Case(
@@ -82,6 +84,7 @@ def store_case(channel: str, trip: TripRequest, sender_ref: str | None = None) -
             raw_message=trip.raw_message,
             trip=trip.model_dump(),
             needs_clarification=rem,
+            screenshots=shots or [],
         )
         db.add(case)
         db.commit()
@@ -361,6 +364,63 @@ def intake_form(trip: TripRequest):
     return {"ok": True, "case_id": case_id,
             "searchable": trip.is_searchable(),
             "needs": trip.remaining_fields()}
+
+
+@app.post("/intake/screenshot")
+async def intake_screenshot(
+    file: UploadFile = File(...),
+    email: str | None = Form(None),
+    name: str | None = Form(None),
+    origin_city: str | None = Form(None),
+    origin_airport_iata: str | None = Form(None),
+    where: str | None = Form(None),
+    dep: str | None = Form(None),
+    ret: str | None = Form(None),
+    adults: int | None = Form(None),
+    children: int | None = Form(None),
+    operator: str | None = Form(None),
+    notes: str | None = Form(None),
+):
+    """Web equivalent of the Messenger screenshot flow: a customer uploads a
+    picture of their deal; Claude parses it, and any manually-typed fields
+    override the parse. The screenshot is stored on the case like in Messenger."""
+    img_bytes = await file.read()
+    media = file.content_type or "image/png"
+
+    try:
+        trip = parse_trip("(capture web)", images=[(img_bytes, media)])
+    except Exception as e:  # noqa: BLE001 — never lose a submission
+        log.exception("Screenshot parse failed: %s", e)
+        trip = TripRequest(raw_message="(capture web)", source="capture web",
+                           agent_notes=f"Analyse automatique échouée: {e}")
+
+    # Manual fields the customer also typed take precedence (they correct the AI).
+    manual = TripRequest(
+        customer_email=email or None,
+        customer_name=name or None,
+        origin_city=origin_city or None,
+        origin_airport_iata=origin_airport_iata or None,
+        hotel_name_raw=where or None,
+        departure_date=dep or None,
+        return_date=ret or None,
+        num_adults=adults,
+        num_children=children,
+        operator=operator or None,
+        agent_notes=notes or None,
+    )
+    trip = merge_trip_requests(trip, manual)
+    trip.source = "capture web"
+    if trip.preferred_channel == ContactChannel.unknown and trip.customer_email:
+        trip.preferred_channel = ContactChannel.email
+
+    shots = [{
+        "media_type": media,
+        "b64": base64.b64encode(img_bytes).decode("ascii"),
+        "received_at": datetime.utcnow().isoformat(timespec="seconds"),
+    }]
+    case_id = store_case("form", trip, shots=shots)
+    return {"ok": True, "case_id": case_id,
+            "trip": trip.model_dump(), "needs": trip.remaining_fields()}
 
 
 # --------------------------------------------------------------------------- #
