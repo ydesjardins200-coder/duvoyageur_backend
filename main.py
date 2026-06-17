@@ -313,11 +313,18 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                                          "at": datetime.utcnow().isoformat(timespec="seconds")}])
             if was_complete and text and not downloaded:
                 # Dossier already finalized + a text-only message => treat as a
-                # question. Don't overwrite the trip; just log it for the agent.
+                # question. Don't re-profile, but DO capture late contact details
+                # (email / phone) so the case and client stay in sync.
                 trip = before_trip.model_copy(deep=True)
+                if new_trip.customer_email:
+                    trip.customer_email = new_trip.customer_email
+                if new_trip.customer_phone:
+                    trip.customer_phone = new_trip.customer_phone
                 trip.raw_message = ((existing.raw_message + "\n---\n" + text)
                                     if existing.raw_message else text)
                 existing.raw_message = trip.raw_message
+                existing.customer_email = trip.customer_email or existing.customer_email
+                existing.customer_phone = trip.customer_phone or existing.customer_phone
                 existing.trip = trip.model_dump()
                 advanced = False
             else:
@@ -1802,11 +1809,14 @@ def admin_case_detail(case_id: int):
             f"<option value='{s}'{' selected' if s == c.status else ''}>{s}</option>"
             for s in STATUSES)
 
+        cl = db.get(Client, c.client_id) if c.client_id else None
+        disp_email = t.get("customer_email") or (cl.primary_email if cl else None)
+        disp_phone = t.get("customer_phone") or (cl.primary_phone if cl else None)
         cards = (
             card("Client",
-                 kv("Nom", val(t.get("customer_name"))),
-                 kv("Courriel", val(t.get("customer_email"))),
-                 kv("Téléphone", val(t.get("customer_phone"))),
+                 kv("Nom", val(t.get("customer_name") or (cl.display_name if cl else None))),
+                 kv("Courriel", val(disp_email)),
+                 kv("Téléphone", val(disp_phone)),
                  kv("Reçoit l'offre par", val(CHANNEL_FR.get(t.get("preferred_channel")))),
                  kv("Canal", val(c.channel)),
                  kv("Reçu", c.created_at.strftime("%Y-%m-%d %H:%M")),
