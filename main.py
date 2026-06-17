@@ -45,7 +45,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from auth import NotAuthenticated, check_credentials, require_admin
 from concierge import concierge_reply
 from config import settings
-from db import STATUSES, Case, SessionLocal, engine, find_open_case_for_sender, init_db
+from db import (STATUSES, Case, SessionLocal, engine, find_open_case_for_sender,
+                init_db, resolve_or_create_client)
 from facebook import (extract_messages, extract_postbacks, get_user_name,
                       send_text, set_messenger_profile, valid_signature, verify_challenge)
 from parser import parse_trip
@@ -99,7 +100,16 @@ def store_case(channel: str, trip: TripRequest, sender_ref: str | None = None,
                shots: list | None = None) -> int:
     with SessionLocal() as db:
         rem = trip.remaining_fields()
+        client = resolve_or_create_client(
+            db,
+            messenger_psid=sender_ref if channel == "messenger" else None,
+            email=trip.customer_email,
+            phone=trip.customer_phone,
+            name=trip.customer_name,
+            channel=channel,
+        )
         case = Case(
+            client_id=client.id,
             channel=channel,
             status="needs_info" if rem else "new",
             sender_ref=sender_ref,
@@ -268,7 +278,16 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                     new_trip.customer_name = name
             trip = new_trip
             rem = new_trip.remaining_fields()
+            client = resolve_or_create_client(
+                db,
+                messenger_psid=sender,
+                email=new_trip.customer_email,
+                phone=new_trip.customer_phone,
+                name=new_trip.customer_name,
+                channel="messenger",
+            )
             case = Case(
+                client_id=client.id,
                 channel="messenger",
                 status="needs_info" if rem else "new",
                 sender_ref=sender,
