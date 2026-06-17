@@ -488,34 +488,76 @@ async def intake_screenshot(
 _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Du Voyageur — Dossiers</title>
+<link rel="icon" type="image/png" href="/static/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
 <style>
- body{{font:15px/1.5 system-ui,sans-serif;margin:0;background:#0f1115;color:#e6e6e6}}
- header{{padding:16px 20px;background:#171a21;border-bottom:1px solid #262b35}}
- h1{{font-size:18px;margin:0}} main{{padding:20px;max-width:1100px;margin:auto}}
- table{{width:100%;border-collapse:collapse;font-size:14px}}
- th,td{{text-align:left;padding:10px 12px;border-bottom:1px solid #262b35;vertical-align:top}}
- th{{color:#9aa4b2;font-weight:600}} a{{color:#7db4ff;text-decoration:none}}
- .tag{{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;background:#262b35}}
- .new{{background:#1d3a5f}} .needs_info{{background:#5f491d}} .booked{{background:#1d5f33}}
- .quoted{{background:#3a1d5f}} .closed{{background:#33383f}}
- .muted{{color:#9aa4b2}} code{{background:#171a21;padding:1px 5px;border-radius:4px}}
+ :root{{
+   --abyss:#03121b;--abyss-2:#06212f;--deep:#0a3346;--pacific:#19d3e6;--lagoon:#3df0c5;
+   --surf:#9bf6ec;--gold:#ffd23f;--foam:#eafcff;--mist:#94b8c6;
+   --line:rgba(155,246,236,.16);--glass:linear-gradient(180deg,rgba(20,62,82,.5),rgba(8,33,47,.62));
+   --glow:rgba(25,211,230,.5);
+ }}
+ *{{box-sizing:border-box}}
+ body{{margin:0;font-family:"Inter",system-ui,sans-serif;font-size:15px;line-height:1.6;color:var(--foam);
+   background:
+     radial-gradient(80% 50% at 85% -8%, rgba(25,211,230,.10), transparent 60%),
+     radial-gradient(70% 50% at 0% 108%, rgba(61,240,197,.08), transparent 60%),
+     var(--abyss);
+   background-attachment:fixed;-webkit-font-smoothing:antialiased}}
+ a{{color:var(--surf);text-decoration:none}} a:hover{{text-decoration:underline}}
+ header{{position:sticky;top:0;z-index:10;display:flex;justify-content:space-between;align-items:center;
+   gap:12px;padding:14px 22px;background:rgba(6,33,47,.72);backdrop-filter:blur(12px);
+   -webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}}
+ .brand{{display:flex;align-items:center;gap:11px}}
+ .brand img{{width:34px;height:34px;border-radius:50%;box-shadow:0 0 0 1px var(--line)}}
+ h1{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:18px;letter-spacing:-.02em;margin:0}}
+ h2{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:22px;letter-spacing:-.02em;margin:6px 0 4px}}
+ .logout{{color:var(--mist);font-size:13px;font-family:"Space Grotesk",monospace}} .logout:hover{{color:var(--foam);text-decoration:none}}
+ main{{padding:22px;max-width:1100px;margin:auto}}
+ table{{width:100%;border-collapse:collapse;font-size:14px;background:rgba(6,33,47,.4);
+   border:1px solid var(--line);border-radius:14px;overflow:hidden}}
+ th,td{{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}}
+ tr:last-child td{{border-bottom:0}} tbody tr:hover td,table tr:hover td{{background:rgba(25,211,230,.05)}}
+ th{{font-family:"Space Grotesk",monospace;font-size:12px;letter-spacing:.06em;text-transform:uppercase;
+   color:var(--mist);font-weight:500}}
+ .tag{{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;
+   border:1px solid var(--line);background:rgba(148,184,198,.12);color:var(--foam)}}
+ .new{{background:rgba(25,211,230,.16);border-color:rgba(25,211,230,.4);color:#bff3fb}}
+ .needs_info{{background:rgba(255,210,63,.15);border-color:rgba(255,210,63,.4);color:#ffe08a}}
+ .booked{{background:rgba(61,240,197,.15);border-color:rgba(61,240,197,.4);color:#a9f7e2}}
+ .quoted{{background:rgba(167,139,250,.18);border-color:rgba(167,139,250,.4);color:#d6c9ff}}
+ .closed{{background:rgba(148,184,198,.12);border-color:var(--line);color:var(--mist)}}
+ .muted{{color:var(--mist)}} code{{background:rgba(3,18,27,.6);padding:1px 6px;border-radius:5px}}
  .grid2{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin:18px 0}}
- .card{{background:#171a21;border:1px solid #262b35;border-radius:14px;padding:16px 18px}}
- .card h3{{margin:0 0 12px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#7db4ff}}
- .kv{{display:flex;justify-content:space-between;gap:14px;padding:6px 0;border-bottom:1px solid #20242e}}
- .kv:last-child{{border-bottom:0}} .kv .k{{color:#9aa4b2}} .kv .v{{text-align:right;font-weight:500}}
- .sub{{font-size:12px;color:#9aa4b2;font-weight:400}}
+ .card{{background:var(--glass);border:1px solid var(--line);border-radius:16px;padding:16px 18px}}
+ .card h3{{margin:0 0 12px;font-family:"Space Grotesk",monospace;font-size:12px;font-weight:700;
+   letter-spacing:.14em;text-transform:uppercase;color:var(--pacific)}}
+ .kv{{display:flex;justify-content:space-between;gap:14px;padding:7px 0;border-bottom:1px solid var(--line)}}
+ .kv:last-child{{border-bottom:0}} .kv .k{{color:var(--mist)}} .kv .v{{text-align:right;font-weight:500;color:var(--foam)}}
+ .sub{{font-size:12px;color:var(--mist);font-weight:400}}
  .chips{{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}}
- .chip{{background:#5f491d;color:#ffd9a8;padding:3px 10px;border-radius:999px;font-size:13px}}
- .ok{{color:#7be0a0;font-weight:600}}
- .meter{{height:10px;background:#20242e;border-radius:999px;overflow:hidden;margin:8px 0}}
+ .chip{{background:rgba(255,210,63,.14);border:1px solid rgba(255,210,63,.32);color:#ffe0a8;
+   padding:3px 11px;border-radius:999px;font-size:13px}}
+ .ok{{color:var(--lagoon);font-weight:600}}
+ .meter{{height:10px;background:rgba(3,18,27,.6);border:1px solid var(--line);border-radius:999px;overflow:hidden;margin:8px 0}}
  .meter > i{{display:block;height:100%;border-radius:999px}}
  .full{{grid-column:1 / -1}}
- select,button{{font-size:14px;padding:7px 10px;border-radius:8px;border:1px solid #2c3340;background:#0f1115;color:#e6e6e6}}
- button{{cursor:pointer;background:#1d3a5f;border-color:#274a73}}
- details summary{{cursor:pointer;color:#9aa4b2;margin-top:18px}}
- pre{{background:#0f1115;border:1px solid #262b35;border-radius:10px;padding:12px;overflow:auto}}
-</style></head><body><header style="display:flex;justify-content:space-between;align-items:center;gap:12px"><h1>Du Voyageur — Dossiers</h1><a href="/admin/logout" style="color:#9aa4b2;font-size:13px">Déconnexion</a></header><main>{body}</main></body></html>"""
+ select,input,textarea{{font-size:14px;font-family:inherit;padding:9px 11px;border-radius:10px;
+   border:1px solid var(--line);background:rgba(3,18,27,.55);color:var(--foam)}}
+ select:focus,input:focus,textarea:focus{{outline:none;border-color:var(--pacific);box-shadow:0 0 0 3px rgba(25,211,230,.16)}}
+ button,.btn{{font-family:"Bricolage Grotesque",sans-serif;font-size:14px;font-weight:700;padding:9px 16px;
+   border-radius:999px;border:0;cursor:pointer;color:#02161c;
+   background:linear-gradient(120deg,var(--pacific),var(--lagoon));
+   box-shadow:0 10px 24px -12px var(--glow);transition:transform .15s,box-shadow .15s}}
+ button:hover,.btn:hover{{transform:translateY(-2px);box-shadow:0 16px 30px -12px var(--glow);text-decoration:none}}
+ .btn-danger{{background:linear-gradient(120deg,#e0675b,#b23a30);color:#fff}}
+ details summary{{cursor:pointer;color:var(--mist);margin-top:18px}}
+ pre{{background:rgba(3,18,27,.6);border:1px solid var(--line);border-radius:12px;padding:12px;overflow:auto;color:var(--surf)}}
+</style></head><body>
+<header><span class="brand"><img src="/static/logo.png" alt=""><h1>Du Voyageur — Dossiers</h1></span><a class="logout" href="/admin/logout">Déconnexion</a></header>
+<main>{body}</main></body></html>"""
 
 
 _LOGIN_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
@@ -637,16 +679,14 @@ def admin_cases():
     )
     body += (
         "<form method='post' action='/admin/setup-greeting' style='margin-top:24px;display:inline-block'>"
-        "<button style='background:#1d3a5f;color:#fff;border:0;padding:8px 14px;"
-        "border-radius:8px;cursor:pointer'>Configurer l'accueil Messenger</button></form>"
+        "<button>Configurer l'accueil Messenger</button></form>"
         "<p class='sub'>Définit la salutation + le bouton « Get Started » de ta page (une seule fois).</p>"
     )
     if settings.ALLOW_RESET:
         body += (
             "<form method='post' action='/admin/reset' style='margin-top:24px' "
             "onsubmit=\"return confirm('Effacer TOUS les dossiers ? Action irréversible.')\">"
-            "<button style='background:#5f1d1d;color:#fff;border:0;padding:8px 14px;"
-            "border-radius:8px;cursor:pointer'>Vider tous les dossiers (test)</button></form>"
+            "<button class='btn-danger'>Vider tous les dossiers (test)</button></form>"
         )
     return _PAGE.format(body=body)
 
@@ -772,7 +812,7 @@ def admin_case_detail(case_id: int):
             imgs = "".join(
                 f"<a href='/admin/cases/{c.id}/screenshot/{i}' target='_blank'>"
                 f"<img src='/admin/cases/{c.id}/screenshot/{i}' alt='capture {i+1}' "
-                f"style='max-width:100%;border-radius:10px;border:1px solid #262b35;margin-bottom:10px'></a>"
+                f"style='max-width:100%;border-radius:10px;border:1px solid var(--line);margin-bottom:10px'></a>"
                 for i in range(len(shots))
             )
             screenshot_card = (
@@ -794,8 +834,7 @@ def admin_case_detail(case_id: int):
                 "<div class='card full'><h3>Réponse manuelle (sans le bot)</h3>"
                 f"<form method='post' action='/admin/cases/{c.id}/send'>"
                 "<textarea name='message' rows='3' placeholder='Écris ton message ou ton offre au client…' "
-                "style='width:100%;font-family:inherit;font-size:14px;padding:10px;border-radius:10px;"
-                "border:1px solid #2c3340;background:#0f1115;color:#e6e6e6'></textarea>"
+                "style='width:100%'></textarea>"
                 "<button style='margin-top:10px'>Envoyer au client sur Messenger</button></form>"
                 "<p class='sub'>Envoi direct via Messenger, sans déclencher le bot. "
                 "Fonctionne dans la fenêtre de 24 h après le dernier message du client.</p></div>"
