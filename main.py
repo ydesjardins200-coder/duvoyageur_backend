@@ -28,6 +28,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import re
 import time
 import urllib.request
 from contextlib import asynccontextmanager
@@ -49,8 +50,10 @@ from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLoca
                 find_client_by_identity, find_duplicate_groups, find_open_case_for_sender,
                 find_open_request_for_client, init_db, log_activity, merge_clients,
                 resolve_or_create_client)
-from facebook import (extract_messages, extract_postbacks, get_user_name, send_text,
-                      set_ice_breakers, set_messenger_profile, valid_signature, verify_challenge)
+from facebook import (extract_messages, extract_postbacks, extract_quick_replies,
+                      get_user_name, send_quick_replies, send_text, set_ice_breakers,
+                      set_messenger_profile, set_persistent_menu, valid_signature,
+                      verify_challenge)
 from parser import parse_trip
 from trip_schema import ContactChannel, TripRequest, merge_trip_requests
 
@@ -239,16 +242,35 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
     # Route by the conversation lane chosen via the ice-breaker bubbles. Human and
     # concierge lanes skip the trip-parsing AI entirely.
     mode = "profiling"
+    is_cold = True
     if sender:
         with SessionLocal() as db:
             cl = find_client_by_identity(db, "messenger_psid", sender)
             if cl:
                 mode = cl.support_mode or "profiling"
+                is_cold = find_open_request_for_client(db, cl.id) is None
     if mode == "human":
         _handle_human_message(sender, text, shots)
         return
     if mode == "concierge":
         _handle_concierge_message(sender, text)
+        return
+
+    # Profiling lane (default). Two shortcuts for people who type instead of
+    # tapping a bubble:
+    if sender and _wants_human(text):           # "je veux parler à un conseiller"
+        _set_support_mode(sender, "human")
+        _handle_human_message(sender, text, shots)
+        send_text(sender,
+                  "Parfait 🙏 Un conseiller va te répondre directement ici. On revient vite !",
+                  settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+        return
+    if (sender and not shots and is_cold and sender not in _triaged
+            and _is_vague(text)):               # vague opener -> offer the 3 lanes once
+        _triaged.add(sender)
+        send_quick_replies(sender, TRIAGE_TEXT, TRIAGE_QR,
+                           settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+        log.info("Triage quick replies sent to %s", sender)
         return
 
     try:
@@ -385,6 +407,50 @@ ICE_BREAKERS = [
     {"question": "🧑‍💼 Parler à un conseiller", "payload": IB_HUMAN},
 ]
 
+# Quick-reply chips shown on a vague cold open (user typed instead of tapping a
+# bubble). A tap sends the payload back, routed exactly like an ice-breaker.
+TRIAGE_TEXT = ("Salut ! 🌴 Bienvenue chez Du Voyageur. Comment puis-je t'aider ?")
+TRIAGE_QR = [
+    {"content_type": "text", "title": "✈️ Rabais voyage", "payload": IB_PROFILING},
+    {"content_type": "text", "title": "❓ Infos générales", "payload": IB_CONCIERGE},
+    {"content_type": "text", "title": "👤 Un conseiller", "payload": IB_HUMAN},
+]
+
+# Always-available hamburger (☰) menu — same three lanes, any time in the chat.
+PERSISTENT_MENU = [
+    {"type": "postback", "title": "✈️ Trouver un rabais", "payload": IB_PROFILING},
+    {"type": "postback", "title": "❓ Question générale", "payload": IB_CONCIERGE},
+    {"type": "postback", "title": "👤 Parler à un conseiller", "payload": IB_HUMAN},
+]
+
+# Senders already shown the triage chips (once per process lifetime, avoids spam).
+_triaged: set[str] = set()
+
+_HUMAN_RE = re.compile(
+    r"(agent|conseill\w+|repr[ée]sentant|humain|une personne|vraie personne|"
+    r"quelqu'?un|parler [àa]|service (?:[àa] la )?client\w*|\bsupport\b)", re.I)
+_GREETING_RE = re.compile(
+    r"^\s*(allo|all[ôo]|bonjour|bonsoir|salut|coucou|hello|hi|hey|yo|"
+    r"info\w*|question|aide|help|renseign\w*|besoin)", re.I)
+_TRIP_HINT_RE = re.compile(
+    r"(forfait|voyage|tout[- ]inclus|h[ôo]tel|s[ée]jour|rabais|prix|destination|"
+    r"\bvol\b|partir|semaine|nuits?|cuba|mexi\w+|punta|cana|varadero|canc[uú]n|"
+    r"r[ée]publique|dominicaine|jama[ïi]que|riviera|maya|floride|plage|resort)", re.I)
+
+
+def _wants_human(text: str) -> bool:
+    return bool(text and _HUMAN_RE.search(text))
+
+
+def _is_vague(text: str) -> bool:
+    """A cold opener with no clear travel intent — worth offering the 3 lanes."""
+    t = (text or "").strip()
+    if not t or _TRIP_HINT_RE.search(t):
+        return False  # empty (screenshot-only) or a clear trip request -> profiling
+    if _GREETING_RE.search(t):
+        return True
+    return len(t.split()) <= 4 and not any(ch.isdigit() for ch in t)
+
 
 def _set_support_mode(sender: str, mode: str) -> None:
     """Remember which lane this Messenger user chose."""
@@ -510,6 +576,8 @@ async def webhook_receive(request: Request, background: BackgroundTasks):
         background.add_task(process_messenger_message, sender, text, image_urls)
     for sender, pb_payload in extract_postbacks(payload):
         background.add_task(process_postback, sender, pb_payload)
+    for sender, qr_payload in extract_quick_replies(payload):
+        background.add_task(process_postback, sender, qr_payload)
 
     # ACK immediately; parsing happens after the response is sent.
     return PlainTextResponse("EVENT_RECEIVED")
@@ -1598,19 +1666,24 @@ def admin_setup_greeting():
         settings.FB_GRAPH_VERSION)
     ok2, d2 = set_ice_breakers(
         settings.FB_PAGE_TOKEN, ICE_BREAKERS, settings.FB_GRAPH_VERSION)
-    ok = ok1 and ok2
+    ok3, d3 = set_persistent_menu(
+        settings.FB_PAGE_TOKEN, PERSISTENT_MENU, settings.FB_GRAPH_VERSION)
+    ok = ok1 and ok2 and ok3
     title = "✅ Accueil Messenger configuré" if ok else "❌ Configuration partielle / échec"
     bubbles = "".join(f"<li>{escape(ib['question'])}</li>" for ib in ICE_BREAKERS)
     body = (
         "<p><a href='/admin/cases'>&larr; Retour aux dossiers</a></p>"
         f"<h2>{title}</h2>"
-        "<p class='sub'>Salutation + bouton « Démarrer » + 3 bulles d'accueil envoyés à Meta. "
-        "Ouvre la conversation avec ta page (ou efface l'historique) pour voir les bulles.</p>"
-        f"<div class='card'><h3>Bulles configurées</h3><ul>{bubbles}</ul>"
+        "<p class='sub'>Salutation + bouton « Démarrer » + 3 bulles d'accueil + menu ☰ "
+        "permanent envoyés à Meta. Ouvre la conversation avec ta page (ou efface "
+        "l'historique) pour voir les bulles et le menu.</p>"
+        f"<div class='card'><h3>Bulles & menu configurés</h3><ul>{bubbles}</ul>"
         "<p class='sub'>1) Rabais → outil de profilage · 2) Question générale → concierge IA · "
-        "3) Conseiller → support humain (sans IA, notifié dans la cloche).</p></div>"
+        "3) Conseiller → support humain (sans IA, notifié dans la cloche). "
+        "Mêmes choix dans le menu ☰ permanent, plus des puces de triage si le client "
+        "écrit sans cliquer.</p></div>"
         f"<details><summary>Réponse de Meta</summary><pre>greeting/get_started : {escape(d1)}\n\n"
-        f"ice_breakers : {escape(d2)}</pre></details>"
+        f"ice_breakers : {escape(d2)}\n\npersistent_menu : {escape(d3)}</pre></details>"
     )
     return render_page(body, "cases")
 

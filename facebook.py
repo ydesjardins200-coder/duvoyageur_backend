@@ -52,6 +52,8 @@ def extract_messages(payload: dict) -> list[tuple[Optional[str], str, list[str]]
             message = event.get("message")
             if not message or message.get("is_echo"):
                 continue  # skip our own outgoing echoes
+            if message.get("quick_reply"):
+                continue  # quick-reply taps are routed via extract_quick_replies
             sender = event.get("sender", {}).get("id")
             text = message.get("text", "") or ""
             image_urls = [
@@ -210,4 +212,84 @@ def set_ice_breakers(page_token: str, ice_breakers: list[dict],
             except Exception:  # noqa: BLE001
                 pass
         log.warning("set_ice_breakers failed: %s", detail)
+        return False, detail
+
+
+def extract_quick_replies(payload: dict) -> list[tuple[Optional[str], str]]:
+    """Return (sender_id, payload) for each quick-reply tap. Quick replies arrive
+    as MESSAGE events carrying message.quick_reply.payload (not as postbacks), so
+    we pull them out here and route them like postbacks."""
+    results: list[tuple[Optional[str], str]] = []
+    for entry in payload.get("entry", []):
+        for event in entry.get("messaging", []):
+            message = event.get("message")
+            if not message or message.get("is_echo"):
+                continue
+            qr = message.get("quick_reply")
+            if not qr:
+                continue
+            sender = event.get("sender", {}).get("id")
+            results.append((sender, qr.get("payload", "") or ""))
+    return results
+
+
+def send_quick_replies(recipient_id: Optional[str], text: str, quick_replies: list[dict],
+                       page_token: str, graph_version: str = "v21.0", timeout: int = 8) -> bool:
+    """Send a message with tappable quick-reply chips. Each chip is
+    {"content_type":"text","title":"...","payload":"..."}; a tap sends the payload
+    back as a message event. Never raises."""
+    if not (page_token and recipient_id and text and quick_replies):
+        return False
+    url = (
+        f"https://graph.facebook.com/{graph_version}/me/messages"
+        f"?access_token={urllib.parse.quote(page_token)}"
+    )
+    body = json.dumps({
+        "recipient": {"id": recipient_id},
+        "messaging_type": "RESPONSE",
+        "message": {"text": text, "quick_replies": quick_replies},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return 200 <= resp.status < 300
+    except Exception as e:  # noqa: BLE001
+        log.warning("Send quick replies failed: %s", e)
+        return False
+
+
+def set_persistent_menu(page_token: str, menu_items: list[dict],
+                        graph_version: str = "v21.0", timeout: int = 8) -> tuple[bool, str]:
+    """Configure the always-available hamburger (☰) menu. Each item is
+    {"type":"postback","title":"...","payload":"..."}; a tap fires that payload
+    as a postback. Up to 3 items at the top level. Never raises."""
+    if not page_token:
+        return False, "Aucun FB_PAGE_TOKEN configuré."
+    url = (
+        f"https://graph.facebook.com/{graph_version}/me/messenger_profile"
+        f"?access_token={urllib.parse.quote(page_token)}"
+    )
+    body = json.dumps({
+        "persistent_menu": [{
+            "locale": "default",
+            "composer_input_disabled": False,
+            "call_to_actions": menu_items,
+        }],
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return (200 <= resp.status < 300), resp.read().decode("utf-8")
+    except Exception as e:  # noqa: BLE001
+        detail = str(e)
+        if hasattr(e, "read"):
+            try:
+                detail = e.read().decode("utf-8")
+            except Exception:  # noqa: BLE001
+                pass
+        log.warning("set_persistent_menu failed: %s", detail)
         return False, detail
