@@ -605,6 +605,12 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .tl-body{{flex:1;min-width:0}}
  .tl-top{{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}}
  .tl-at{{margin-left:auto;font-family:"Space Grotesk",monospace;font-size:12px;color:var(--mist)}}
+ .flbl{{display:block;font-size:12px;color:var(--mist);margin:10px 0 5px}}
+ .card form input,.card form textarea{{width:100%}}
+ .stats{{display:flex;flex-wrap:wrap;gap:12px;margin:6px 0 0}}
+ .stat{{background:var(--glass);border:1px solid var(--line);border-radius:14px;padding:12px 18px;min-width:130px}}
+ .stat-n{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:1.6rem;color:var(--foam);line-height:1}}
+ .stat-l{{font-family:"Space Grotesk",monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-top:5px}}
 </style></head><body>
 <header><span class="brand"><img src="/static/logo.png" alt=""><h1>Du Voyageur</h1></span><nav class="topnav"><a href="/admin/cases">Demandes</a><a href="/admin/clients">Clients</a></nav><a class="logout" href="/admin/logout">Déconnexion</a></header>
 <main>{body}</main>
@@ -788,6 +794,7 @@ def admin_clients():
         for cl in clients:
             reqs = cl.requests  # ordered most-recent-first by the relationship
             last = reqs[0] if reqs else None
+            n_booked = sum(1 for r in reqs if r.status == "booked")
             name = escape(cl.display_name or "Client sans nom")
             contact = escape(cl.primary_email or cl.primary_phone or "—")
             last_status = (f"<span class='tag {last.status}'>{last.status}</span>"
@@ -798,13 +805,14 @@ def admin_clients():
                 f"<td><a href='/admin/clients/{cl.id}'><b>{name}</b></a></td>"
                 f"<td>{contact}</td>"
                 f"<td>{len(reqs)}</td>"
+                f"<td>{n_booked}</td>"
                 f"<td>{last_status}</td>"
                 f"<td class='muted'>{lastc}</td></tr>"
             )
-    empty = "<tr><td colspan='5' class='muted'>Aucun client pour l'instant.</td></tr>"
+    empty = "<tr><td colspan='6' class='muted'>Aucun client pour l'instant.</td></tr>"
     body = (
         "<h2>Clients</h2>"
-        "<table><tr><th>Client</th><th>Contact</th><th>Demandes</th>"
+        "<table><tr><th>Client</th><th>Contact</th><th>Demandes</th><th>Réservées</th>"
         "<th>Dernier statut</th><th>Dernier contact</th></tr>"
         + ("".join(rows) or empty)
         + "</table>"
@@ -833,17 +841,42 @@ def admin_client_detail(client_id: int):
         idents = cl.identities
         name = escape(cl.display_name or "Client sans nom")
 
+        # Lifetime value: count of booked requests and an estimate from prices seen.
+        booked = [r for r in reqs if r.status == "booked"]
+        est_total = 0.0
+        for r in booked:
+            amt = ((r.trip or {}).get("price_seen") or {}).get("amount")
+            if isinstance(amt, (int, float)):
+                est_total += amt
+        stats = (
+            "<div class='stats'>"
+            f"<div class='stat'><div class='stat-n'>{len(reqs)}</div><div class='stat-l'>Demandes</div></div>"
+            f"<div class='stat'><div class='stat-n'>{len(booked)}</div><div class='stat-l'>Réservées</div></div>"
+            f"<div class='stat'><div class='stat-n'>{est_total:,.0f} $</div><div class='stat-l'>Valeur estimée</div></div>"
+            "</div>"
+            "<p class='sub' style='margin:4px 0 14px'>Valeur estimée d'après les prix vus sur les demandes réservées.</p>"
+        )
+
+        tags_str = ", ".join(cl.tags or [])
         info = (
             "<div class='card'><h3>Client</h3>"
-            + kv("Nom", val(cl.display_name))
+            f"<form method='post' action='/admin/clients/{cl.id}/update'>"
+            "<label class='flbl'>Nom</label>"
+            f"<input name='display_name' value=\"{escape(cl.display_name or '')}\">"
+            "<label class='flbl'>Notes</label>"
+            f"<textarea name='notes' rows='3'>{escape(cl.notes or '')}</textarea>"
+            "<label class='flbl'>Tags (séparés par des virgules)</label>"
+            f"<input name='tags' value=\"{escape(tags_str)}\">"
+            "<button style='margin-top:12px'>Enregistrer</button>"
+            "</form>"
+            "<div style='margin-top:14px'>"
             + kv("Courriel", val(cl.primary_email))
             + kv("Téléphone", val(cl.primary_phone))
             + kv("Canal préféré", val(cl.preferred_channel))
             + kv("Créé", cl.created_at.strftime("%Y-%m-%d %H:%M"))
             + kv("Dernier contact",
                  cl.last_contact_at.strftime("%Y-%m-%d %H:%M") if cl.last_contact_at else "—")
-            + (kv("Notes", val(cl.notes)) if cl.notes else "")
-            + "</div>"
+            + "</div></div>"
         )
         id_rows = "".join(kv(KIND_FR.get(i.kind, i.kind), escape(i.value)) for i in idents)
         ident_card = f"<div class='card'><h3>Identités</h3>{id_rows or '<div class=muted>Aucune.</div>'}</div>"
@@ -899,9 +932,27 @@ def admin_client_detail(client_id: int):
         body = (
             "<p><a href='/admin/clients'>&larr; Tous les clients</a></p>"
             f"<h2>{name}</h2>"
+            f"{stats}"
             f"<div class='grid2'>{info}{ident_card}{hist}{activity}</div>"
         )
     return _PAGE.format(body=body)
+
+
+@app.post("/admin/clients/{client_id}/update", dependencies=[Depends(require_admin)])
+async def admin_client_update(client_id: int, request: Request):
+    form = await request.form()
+    name = (form.get("display_name") or "").strip() or None
+    notes = (form.get("notes") or "").strip() or None
+    tags = [t.strip() for t in (form.get("tags") or "").split(",") if t.strip()]
+    with SessionLocal() as db:
+        cl = db.get(Client, client_id)
+        if cl:
+            cl.display_name = name
+            cl.notes = notes
+            cl.tags = tags
+            log_activity(db, cl.id, "note", "Fiche client modifiée")
+            db.commit()
+    return RedirectResponse(f"/admin/clients/{client_id}", status_code=303)
 
 
 @app.get("/admin/cases/{case_id}", response_class=HTMLResponse,
