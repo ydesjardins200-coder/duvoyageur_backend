@@ -45,7 +45,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from auth import NotAuthenticated, check_credentials, require_admin
 from concierge import concierge_reply
 from config import settings
-from db import (STATUSES, Case, SessionLocal, engine, find_open_case_for_sender,
+from db import (STATUSES, Case, Client, SessionLocal, engine, find_open_case_for_sender,
                 find_open_request_for_client, init_db, resolve_or_create_client)
 from facebook import (extract_messages, extract_postbacks, get_user_name,
                       send_text, set_messenger_profile, valid_signature, verify_challenge)
@@ -535,6 +535,9 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  h1{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:18px;letter-spacing:-.02em;margin:0}}
  h2{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:22px;letter-spacing:-.02em;margin:6px 0 4px}}
  .logout{{color:var(--mist);font-size:13px;font-family:"Space Grotesk",monospace}} .logout:hover{{color:var(--foam);text-decoration:none}}
+ .topnav{{display:flex;gap:6px}}
+ .topnav a{{color:var(--mist);font-size:13.5px;font-weight:600;padding:6px 13px;border-radius:999px}}
+ .topnav a:hover{{color:var(--foam);text-decoration:none;background:rgba(25,211,230,.1)}}
  main{{padding:22px;max-width:1100px;margin:auto}}
  table{{width:100%;border-collapse:collapse;font-size:14px;background:rgba(6,33,47,.4);
    border:1px solid var(--line);border-radius:14px;overflow:hidden}}
@@ -587,7 +590,7 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
    background:rgba(3,18,27,.5);color:var(--mist)}}
  .tab.active .tab-n{{background:rgba(3,18,27,.45);color:var(--surf)}}
 </style></head><body>
-<header><span class="brand"><img src="/static/logo.png" alt=""><h1>Du Voyageur — Dossiers</h1></span><a class="logout" href="/admin/logout">Déconnexion</a></header>
+<header><span class="brand"><img src="/static/logo.png" alt=""><h1>Du Voyageur</h1></span><nav class="topnav"><a href="/admin/cases">Demandes</a><a href="/admin/clients">Clients</a></nav><a class="logout" href="/admin/logout">Déconnexion</a></header>
 <main>{body}</main>
 <script>
 document.addEventListener('click',function(e){{
@@ -757,6 +760,107 @@ def admin_cases(status: str = "all"):
     return _PAGE.format(body=body)
 
 
+@app.get("/admin/clients", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+def admin_clients():
+    with SessionLocal() as db:
+        clients = (
+            db.query(Client)
+            .order_by(func.coalesce(Client.last_contact_at, Client.created_at).desc())
+            .limit(300).all()
+        )
+        rows = []
+        for cl in clients:
+            reqs = cl.requests  # ordered most-recent-first by the relationship
+            last = reqs[0] if reqs else None
+            name = escape(cl.display_name or "Client sans nom")
+            contact = escape(cl.primary_email or cl.primary_phone or "—")
+            last_status = (f"<span class='tag {last.status}'>{last.status}</span>"
+                           if last else "<span class='muted'>—</span>")
+            lastc = cl.last_contact_at.strftime("%Y-%m-%d %H:%M") if cl.last_contact_at else "—"
+            rows.append(
+                f"<tr data-href='/admin/clients/{cl.id}'>"
+                f"<td><a href='/admin/clients/{cl.id}'><b>{name}</b></a></td>"
+                f"<td>{contact}</td>"
+                f"<td>{len(reqs)}</td>"
+                f"<td>{last_status}</td>"
+                f"<td class='muted'>{lastc}</td></tr>"
+            )
+    empty = "<tr><td colspan='5' class='muted'>Aucun client pour l'instant.</td></tr>"
+    body = (
+        "<h2>Clients</h2>"
+        "<table><tr><th>Client</th><th>Contact</th><th>Demandes</th>"
+        "<th>Dernier statut</th><th>Dernier contact</th></tr>"
+        + ("".join(rows) or empty)
+        + "</table>"
+    )
+    return _PAGE.format(body=body)
+
+
+@app.get("/admin/clients/{client_id}", response_class=HTMLResponse,
+         dependencies=[Depends(require_admin)])
+def admin_client_detail(client_id: int):
+    KIND_FR = {"messenger_psid": "Messenger (PSID)", "email": "Courriel", "phone": "Téléphone"}
+
+    def val(x):
+        if x in (None, "", "—"):
+            return "<span class='muted'>—</span>"
+        return escape(str(x))
+
+    def kv(label, value):
+        return f"<div class='kv'><span class='k'>{label}</span><span class='v'>{value}</span></div>"
+
+    with SessionLocal() as db:
+        cl = db.get(Client, client_id)
+        if not cl:
+            return HTMLResponse(_PAGE.format(body="<p>Client introuvable.</p>"), status_code=404)
+        reqs = cl.requests
+        idents = cl.identities
+        name = escape(cl.display_name or "Client sans nom")
+
+        info = (
+            "<div class='card'><h3>Client</h3>"
+            + kv("Nom", val(cl.display_name))
+            + kv("Courriel", val(cl.primary_email))
+            + kv("Téléphone", val(cl.primary_phone))
+            + kv("Canal préféré", val(cl.preferred_channel))
+            + kv("Créé", cl.created_at.strftime("%Y-%m-%d %H:%M"))
+            + kv("Dernier contact",
+                 cl.last_contact_at.strftime("%Y-%m-%d %H:%M") if cl.last_contact_at else "—")
+            + (kv("Notes", val(cl.notes)) if cl.notes else "")
+            + "</div>"
+        )
+        id_rows = "".join(kv(KIND_FR.get(i.kind, i.kind), escape(i.value)) for i in idents)
+        ident_card = f"<div class='card'><h3>Identités</h3>{id_rows or '<div class=muted>Aucune.</div>'}</div>"
+
+        rrows = []
+        for r in reqs:
+            t = r.trip or {}
+            where = escape(str(t.get("hotel_name_raw") or t.get("destination") or "—"))
+            rrows.append(
+                f"<tr data-href='/admin/cases/{r.id}'>"
+                f"<td><a href='/admin/cases/{r.id}'>#{r.id}</a></td>"
+                f"<td><span class='tag {r.status}'>{r.status}</span></td>"
+                f"<td>{escape(r.channel)}</td>"
+                f"<td>{where}</td>"
+                f"<td>{r.parse_confidence:.2f}</td>"
+                f"<td class='muted'>{r.created_at:%Y-%m-%d %H:%M}</td></tr>"
+            )
+        empty = "<tr><td colspan='6' class='muted'>Aucune demande.</td></tr>"
+        hist = (
+            f"<div class='card full'><h3>Demandes · {len(reqs)}</h3>"
+            "<table><tr><th>#</th><th>Statut</th><th>Canal</th><th>Hôtel / Dest.</th>"
+            "<th>Conf.</th><th>Reçu</th></tr>"
+            + ("".join(rrows) or empty)
+            + "</table></div>"
+        )
+        body = (
+            "<p><a href='/admin/clients'>&larr; Tous les clients</a></p>"
+            f"<h2>{name}</h2>"
+            f"<div class='grid2'>{info}{ident_card}{hist}</div>"
+        )
+    return _PAGE.format(body=body)
+
+
 @app.get("/admin/cases/{case_id}", response_class=HTMLResponse,
          dependencies=[Depends(require_admin)])
 def admin_case_detail(case_id: int):
@@ -834,7 +938,9 @@ def admin_case_detail(case_id: int):
                  kv("Téléphone", val(t.get("customer_phone"))),
                  kv("Reçoit l'offre par", val(CHANNEL_FR.get(t.get("preferred_channel")))),
                  kv("Canal", val(c.channel)),
-                 kv("Reçu", c.created_at.strftime("%Y-%m-%d %H:%M"))) +
+                 kv("Reçu", c.created_at.strftime("%Y-%m-%d %H:%M")),
+                 (kv("Fiche client", f"<a href='/admin/clients/{c.client_id}'>voir l'historique &rarr;</a>")
+                  if c.client_id else "")) +
             card("Voyage",
                  kv("Destination", val(t.get("destination"))),
                  kv("Hôtel", val(hotel), sub=hotel_sub),
