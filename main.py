@@ -366,36 +366,17 @@ def intake_form(trip: TripRequest):
             "needs": trip.remaining_fields()}
 
 
-@app.post("/intake/screenshot")
-async def intake_screenshot(
-    file: UploadFile = File(...),
-    email: str | None = Form(None),
-    name: str | None = Form(None),
-    origin_city: str | None = Form(None),
-    origin_airport_iata: str | None = Form(None),
-    where: str | None = Form(None),
-    dep: str | None = Form(None),
-    ret: str | None = Form(None),
-    adults: int | None = Form(None),
-    children: int | None = Form(None),
-    operator: str | None = Form(None),
-    notes: str | None = Form(None),
-):
-    """Web equivalent of the Messenger screenshot flow: a customer uploads a
-    picture of their deal; Claude parses it, and any manually-typed fields
-    override the parse. The screenshot is stored on the case like in Messenger."""
-    img_bytes = await file.read()
-    media = file.content_type or "image/png"
-
-    try:
-        trip = parse_trip("(capture web)", images=[(img_bytes, media)])
-    except Exception as e:  # noqa: BLE001 — never lose a submission
-        log.exception("Screenshot parse failed: %s", e)
-        trip = TripRequest(raw_message="(capture web)", source="capture web",
-                           agent_notes=f"Analyse automatique échouée: {e}")
-
-    # Manual fields the customer also typed take precedence (they correct the AI).
-    manual = TripRequest(
+def _trip_from_form(email, name, origin_city, origin_airport_iata, where,
+                    dep, ret, adults, children, operator, notes, price, basis) -> TripRequest:
+    from trip_schema import PriceBasis, PriceSeen
+    price_seen = None
+    if price is not None:
+        try:
+            price_seen = PriceSeen(amount=float(price),
+                                   basis=PriceBasis(basis) if basis else PriceBasis.unknown)
+        except Exception:  # noqa: BLE001
+            price_seen = None
+    return TripRequest(
         customer_email=email or None,
         customer_name=name or None,
         origin_city=origin_city or None,
@@ -407,7 +388,60 @@ async def intake_screenshot(
         num_children=children,
         operator=operator or None,
         agent_notes=notes or None,
+        price_seen=price_seen,
     )
+
+
+@app.post("/parse/screenshot")
+async def parse_screenshot(file: UploadFile = File(...)):
+    """Read a deal image and return the extracted fields WITHOUT saving anything.
+    The web form calls this on upload so the customer can review/edit before sending."""
+    img_bytes = await file.read()
+    media = file.content_type or "image/png"
+    try:
+        trip = parse_trip("(capture web)", images=[(img_bytes, media)])
+    except Exception as e:  # noqa: BLE001
+        log.exception("Screenshot parse failed: %s", e)
+        return {"ok": False, "error": "parse_failed", "trip": {}}
+    return {"ok": True, "trip": trip.model_dump()}
+
+
+@app.post("/intake/screenshot")
+async def intake_screenshot(
+    file: UploadFile = File(...),
+    parse: bool = Form(True),
+    email: str | None = Form(None),
+    name: str | None = Form(None),
+    origin_city: str | None = Form(None),
+    origin_airport_iata: str | None = Form(None),
+    where: str | None = Form(None),
+    dep: str | None = Form(None),
+    ret: str | None = Form(None),
+    adults: int | None = Form(None),
+    children: int | None = Form(None),
+    operator: str | None = Form(None),
+    notes: str | None = Form(None),
+    price: float | None = Form(None),
+    basis: str | None = Form(None),
+):
+    """Stores a web submission that came with a deal screenshot. The image is
+    saved on the case (like Messenger). If parse=False the form fields were
+    already reviewed by the customer, so we trust them and skip the AI call."""
+    img_bytes = await file.read()
+    media = file.content_type or "image/png"
+
+    if parse:
+        try:
+            trip = parse_trip("(capture web)", images=[(img_bytes, media)])
+        except Exception as e:  # noqa: BLE001 — never lose a submission
+            log.exception("Screenshot parse failed: %s", e)
+            trip = TripRequest(raw_message="(capture web)",
+                               agent_notes=f"Analyse automatique échouée: {e}")
+    else:
+        trip = TripRequest(raw_message="(capture web — révisé par le client)")
+
+    manual = _trip_from_form(email, name, origin_city, origin_airport_iata, where,
+                             dep, ret, adults, children, operator, notes, price, basis)
     trip = merge_trip_requests(trip, manual)
     trip.source = "capture web"
     if trip.preferred_channel == ContactChannel.unknown and trip.customer_email:
