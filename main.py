@@ -971,8 +971,12 @@ def _nav_html(active: str = "") -> str:
     new-requests queue."""
     with SessionLocal() as db:
         n_new = db.query(Case).filter(Case.kind == "trip", Case.status == "new").count()
+        n_svc = db.query(Case).filter(Case.kind == "support", Case.awaiting_reply.is_(True),
+                                      Case.status != "closed").count()
     items = [
         ("queue", "Nouvelle demande de voyage", "/admin/cases?status=new", n_new),
+        ("queue_service", "Nouvelle demande de service client",
+         "/admin/cases?status=service", n_svc),
         ("cases", "Demandes", "/admin/cases", None),
         ("clients", "Clients", "/admin/clients", None),
         ("traveling", "Clients en voyage", "/admin/cases?status=booked", None),
@@ -1095,8 +1099,10 @@ def admin_logout(request: Request):
 @app.get("/admin/cases", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 def admin_cases(status: str = "all", view: str = "voyage"):
     # Top-nav travel sections (status filters, trip only).
-    SECTION = {"new": "queue", "booked": "traveling", "closed": "completed"}
+    SECTION = {"new": "queue", "service": "queue_service",
+               "booked": "traveling", "closed": "completed"}
     SEC_TITLE = {"queue": "Nouvelle demande de voyage",
+                 "queue_service": "Nouvelle demande de service client",
                  "traveling": "Clients en voyage", "completed": "Voyages complétés"}
     nav_active = SECTION.get(status, "cases")
 
@@ -1150,6 +1156,16 @@ def admin_cases(status: str = "all", view: str = "voyage"):
             ncol = 8
         empty = f"<tr><td colspan='{ncol}' class='muted'>Aucun dossier ici.</td></tr>"
         return f"<table><tr>{head}</tr>" + ("".join(rows) or empty) + "</table>"
+
+    # Focused service-client queue: support cases awaiting our reply.
+    if nav_active == "queue_service":
+        with SessionLocal() as db:
+            cases = (db.query(Case)
+                     .filter(Case.kind == "support", Case.awaiting_reply.is_(True),
+                             Case.status != "closed")
+                     .order_by(Case.created_at.desc()).limit(200).all())
+        body = page_header(SEC_TITLE[nav_active], "/admin/cases?status=service") + table(cases, support=True)
+        return render_page(body, nav_active)
 
     # Focused travel sections (trip only).
     if nav_active in ("queue", "traveling", "completed"):
