@@ -39,7 +39,7 @@ from fastapi import (BackgroundTasks, Depends, FastAPI, File, Form, HTTPExceptio
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import text
+from sqlalchemy import func, text
 from starlette.middleware.sessions import SessionMiddleware
 
 from auth import NotAuthenticated, check_credentials, require_admin
@@ -555,9 +555,28 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .btn-danger{{background:linear-gradient(120deg,#e0675b,#b23a30);color:#fff}}
  details summary{{cursor:pointer;color:var(--mist);margin-top:18px}}
  pre{{background:rgba(3,18,27,.6);border:1px solid var(--line);border-radius:12px;padding:12px;overflow:auto;color:var(--surf)}}
+ tr[data-href]{{cursor:pointer}}
+ .tabs{{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 18px}}
+ .tab{{display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border-radius:999px;
+   border:1px solid var(--line);background:rgba(6,33,47,.5);color:var(--mist);font-size:13.5px;
+   font-weight:600;text-decoration:none}}
+ .tab:hover{{color:var(--foam);text-decoration:none;border-color:rgba(25,211,230,.35)}}
+ .tab.active{{background:linear-gradient(120deg,rgba(25,211,230,.22),rgba(61,240,197,.18));
+   border-color:rgba(25,211,230,.5);color:var(--foam)}}
+ .tab-n{{font-family:"Space Grotesk",monospace;font-size:11px;padding:1px 7px;border-radius:999px;
+   background:rgba(3,18,27,.5);color:var(--mist)}}
+ .tab.active .tab-n{{background:rgba(3,18,27,.45);color:var(--surf)}}
 </style></head><body>
 <header><span class="brand"><img src="/static/logo.png" alt=""><h1>Du Voyageur — Dossiers</h1></span><a class="logout" href="/admin/logout">Déconnexion</a></header>
-<main>{body}</main></body></html>"""
+<main>{body}</main>
+<script>
+document.addEventListener('click',function(e){{
+ var tr=e.target.closest('tr[data-href]');
+ if(!tr||e.target.closest('a'))return;
+ window.location=tr.getAttribute('data-href');
+}});
+</script>
+</body></html>"""
 
 
 _LOGIN_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
@@ -652,29 +671,56 @@ def admin_logout(request: Request):
 
 
 @app.get("/admin/cases", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
-def admin_cases():
+def admin_cases(status: str = "all"):
+    # Tabs (left→right). "all" shows everything (incl. closed); the rest filter.
+    TABS = [("all", "Tous"), ("new", "Nouveau"), ("needs_info", "À compléter"),
+            ("quoted", "Coté"), ("booked", "Réservé")]
+    active = status if status in STATUSES else "all"
+
+    def next_step(c) -> str:
+        """A short human next action, derived from status + missing info."""
+        miss = c.needs_clarification or []
+        if c.status == "needs_info" or (c.status == "new" and miss):
+            return "Demander : " + ", ".join(miss) if miss else "Relancer le client"
+        return {"new": "Coter le forfait", "quoted": "Faire un suivi",
+                "booked": "Préparer le départ", "closed": "—"}.get(c.status, "—")
+
     with SessionLocal() as db:
-        cases = db.query(Case).order_by(Case.created_at.desc()).limit(200).all()
+        q = db.query(Case)
+        if active in STATUSES:
+            q = q.filter(Case.status == active)
+        cases = q.order_by(Case.created_at.desc()).limit(200).all()
+        counts = dict(db.query(Case.status, func.count(Case.id)).group_by(Case.status).all())
+    total = sum(counts.values())
+
+    tabs = "".join(
+        f"<a class='tab{' active' if active == key else ''}' href='/admin/cases?status={key}'>"
+        f"{label}<span class='tab-n'>{total if key == 'all' else counts.get(key, 0)}</span></a>"
+        for key, label in TABS
+    )
+
     rows = []
     for c in cases:
         t = c.trip or {}
         name = escape(str(t.get("customer_name") or "Client inconnu"))
         where = escape(str(t.get("hotel_name_raw") or t.get("destination") or "—"))
-        needs = ", ".join(c.needs_clarification or []) or "—"
         rows.append(
-            f"<tr><td><a href='/admin/cases/{c.id}'>#{c.id}</a></td>"
+            f"<tr data-href='/admin/cases/{c.id}'>"
+            f"<td><a href='/admin/cases/{c.id}'>#{c.id}</a></td>"
             f"<td><b>{name}</b></td>"
             f"<td><span class='tag {c.status}'>{c.status}</span></td>"
             f"<td>{escape(c.channel)}</td>"
             f"<td>{where}</td>"
             f"<td>{c.parse_confidence:.2f}</td>"
-            f"<td class='muted'>{escape(needs)}</td>"
+            f"<td class='muted'>{escape(next_step(c))}</td>"
             f"<td class='muted'>{c.created_at:%Y-%m-%d %H:%M}</td></tr>"
         )
+    empty = "<tr><td colspan='8' class='muted'>Aucun dossier dans cet onglet.</td></tr>"
     body = (
+        f"<div class='tabs'>{tabs}</div>"
         "<table><tr><th>#</th><th>Client</th><th>Statut</th><th>Canal</th><th>Hôtel / Dest.</th>"
-        "<th>Conf.</th><th>À demander</th><th>Reçu</th></tr>"
-        + ("".join(rows) or "<tr><td colspan='8' class='muted'>Aucun dossier.</td></tr>")
+        "<th>Conf.</th><th>Prochaine étape</th><th>Reçu</th></tr>"
+        + ("".join(rows) or empty)
         + "</table>"
     )
     body += (
