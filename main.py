@@ -823,7 +823,7 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .bell-empty{{padding:18px 14px;color:var(--mist);font-size:13px}}
  .bell-name{{font-weight:600}}
  .bell-meta{{display:flex;gap:8px;align-items:center;margin-top:4px;font-size:12px;color:var(--mist)}}
- main{{padding:22px;max-width:1100px;margin:auto}}
+ main{{padding:22px 26px;max-width:none}}
  table{{width:100%;border-collapse:collapse;font-size:14px;background:rgba(6,33,47,.4);
    border:1px solid var(--line);border-radius:14px;overflow:hidden}}
  th,td{{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}}
