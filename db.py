@@ -72,6 +72,9 @@ class Client(Base):
         cascade="all, delete-orphan")
     requests = relationship(
         "Case", back_populates="client", order_by="Case.created_at.desc()")
+    activities = relationship(
+        "Interaction", back_populates="client",
+        cascade="all, delete-orphan", order_by="Interaction.created_at.desc()")
 
 
 class ClientIdentity(Base):
@@ -88,6 +91,29 @@ class ClientIdentity(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     client = relationship("Client", back_populates="identities")
+
+
+# Kinds of timeline events we record per client.
+ACTIVITY_KINDS = ("request_created", "message_in", "status_change", "reply_out",
+                  "merge", "note")
+
+
+class Interaction(Base):
+    """One entry in a client's activity timeline (a message, a status change,
+    an offer sent, a merge…). Append-only; drives the fiche-client timeline."""
+    __tablename__ = "interactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, index=True)
+    client_id: Mapped[int] = mapped_column(
+        ForeignKey("clients.id", ondelete="CASCADE"), index=True)
+    request_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("cases.id", ondelete="SET NULL"), nullable=True)
+    kind: Mapped[str] = mapped_column(String(30))   # one of ACTIVITY_KINDS
+    summary: Mapped[str] = mapped_column(Text)
+
+    client = relationship("Client", back_populates="activities")
 
 
 class Case(Base):
@@ -279,6 +305,15 @@ def resolve_or_create_client(db, *, messenger_psid: Optional[str] = None,
     client.last_contact_at = datetime.utcnow()
     db.flush()
     return client
+
+
+def log_activity(db, client_id: Optional[int], kind: str, summary: str,
+                 request_id: Optional[int] = None) -> None:
+    """Append a timeline entry for a client. No-op if there's no client."""
+    if not client_id:
+        return
+    db.add(Interaction(client_id=client_id, kind=kind,
+                       summary=(summary or "")[:500], request_id=request_id))
 
 
 def _backfill_clients() -> None:

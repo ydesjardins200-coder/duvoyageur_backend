@@ -46,7 +46,8 @@ from auth import NotAuthenticated, check_credentials, require_admin
 from concierge import concierge_reply
 from config import settings
 from db import (STATUSES, Case, Client, SessionLocal, engine, find_open_case_for_sender,
-                find_open_request_for_client, init_db, resolve_or_create_client)
+                find_open_request_for_client, init_db, log_activity,
+                resolve_or_create_client)
 from facebook import (extract_messages, extract_postbacks, get_user_name,
                       send_text, set_messenger_profile, valid_signature, verify_challenge)
 from parser import parse_trip
@@ -122,6 +123,9 @@ def store_case(channel: str, trip: TripRequest, sender_ref: str | None = None,
             screenshots=shots or [],
         )
         db.add(case)
+        db.flush()
+        log_activity(db, client.id, "request_created",
+                     f"Nouvelle demande via {channel}", case.id)
         db.commit()
         db.refresh(case)
         log.info("Stored case #%s via %s (conf=%.2f)", case.id, channel, trip.parse_confidence)
@@ -274,6 +278,8 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                 existing.status = "needs_info" if trip.needs_clarification else "new"
                 if shots:                               # accumulate screenshots
                     existing.screenshots = (existing.screenshots or []) + shots
+            log_activity(db, existing.client_id, "message_in",
+                         "Message reçu sur Messenger", existing.id)
             db.commit()
             log.info("Merged into case #%s (sender %s, +%d shots, advanced=%s)",
                      existing.id, sender, len(shots), advanced)
@@ -301,6 +307,9 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                 screenshots=shots,
             )
             db.add(case)
+            db.flush()
+            log_activity(db, client.id if client else None, "request_created",
+                         "Nouvelle demande via Messenger", case.id)
             db.commit()
             db.refresh(case)
             advanced = _trip_changed(TripRequest(source="messenger"), new_trip) or bool(new_trip.agent_notes)
@@ -589,6 +598,13 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .tab-n{{font-family:"Space Grotesk",monospace;font-size:11px;padding:1px 7px;border-radius:999px;
    background:rgba(3,18,27,.5);color:var(--mist)}}
  .tab.active .tab-n{{background:rgba(3,18,27,.45);color:var(--surf)}}
+ .tl{{display:flex;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}}
+ .tl:last-child{{border-bottom:0}}
+ .tl-dot{{flex:none;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;
+   background:rgba(3,18,27,.6);border:1px solid var(--line);font-size:14px}}
+ .tl-body{{flex:1;min-width:0}}
+ .tl-top{{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}}
+ .tl-at{{margin-left:auto;font-family:"Space Grotesk",monospace;font-size:12px;color:var(--mist)}}
 </style></head><body>
 <header><span class="brand"><img src="/static/logo.png" alt=""><h1>Du Voyageur</h1></span><nav class="topnav"><a href="/admin/cases">Demandes</a><a href="/admin/clients">Clients</a></nav><a class="logout" href="/admin/logout">Déconnexion</a></header>
 <main>{body}</main>
@@ -853,10 +869,37 @@ def admin_client_detail(client_id: int):
             + ("".join(rrows) or empty)
             + "</table></div>"
         )
+
+        KIND_LABEL = {
+            "request_created": ("Nouvelle demande", "🆕"),
+            "message_in": ("Message reçu", "💬"),
+            "status_change": ("Changement de statut", "🔄"),
+            "reply_out": ("Réponse envoyée", "📤"),
+            "merge": ("Fusion de fiches", "🔗"),
+            "note": ("Note", "📝"),
+        }
+        acts = cl.activities
+        if acts:
+            items = []
+            for a in acts:
+                label, icon = KIND_LABEL.get(a.kind, (a.kind, "•"))
+                link = (f" <a href='/admin/cases/{a.request_id}'>#{a.request_id}</a>"
+                        if a.request_id else "")
+                items.append(
+                    f"<div class='tl'><div class='tl-dot'>{icon}</div>"
+                    f"<div class='tl-body'><div class='tl-top'><b>{escape(label)}</b>{link}"
+                    f"<span class='tl-at'>{a.created_at:%Y-%m-%d %H:%M}</span></div>"
+                    f"<div class='muted'>{escape(a.summary)}</div></div></div>"
+                )
+            activity = f"<div class='card full'><h3>Activité · {len(acts)}</h3>{''.join(items)}</div>"
+        else:
+            activity = ("<div class='card full'><h3>Activité</h3>"
+                        "<div class='muted'>Aucune activité enregistrée.</div></div>")
+
         body = (
             "<p><a href='/admin/clients'>&larr; Tous les clients</a></p>"
             f"<h2>{name}</h2>"
-            f"<div class='grid2'>{info}{ident_card}{hist}</div>"
+            f"<div class='grid2'>{info}{ident_card}{hist}{activity}</div>"
         )
     return _PAGE.format(body=body)
 
@@ -1034,7 +1077,9 @@ async def admin_update_status(case_id: int, request: Request):
     new_status = form.get("status")
     with SessionLocal() as db:
         c = db.get(Case, case_id)
-        if c and new_status in STATUSES:
+        if c and new_status in STATUSES and new_status != c.status:
+            log_activity(db, c.client_id, "status_change",
+                         f"Statut : {c.status} → {new_status}", c.id)
             c.status = new_status
             db.commit()
     return RedirectResponse(f"/admin/cases/{case_id}", status_code=303)
@@ -1081,9 +1126,15 @@ async def admin_case_send(case_id: int, request: Request):
     with SessionLocal() as db:
         c = db.get(Case, case_id)
         sender = c.sender_ref if c else None
+        client_id = c.client_id if c else None
     if sender and message and settings.FB_PAGE_TOKEN:
         ok = send_text(sender, message, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
         log.info("Manual reply to case #%s: %s", case_id, "sent" if ok else "failed")
+        if ok:
+            preview = message if len(message) <= 80 else message[:77] + "…"
+            with SessionLocal() as db:
+                log_activity(db, client_id, "reply_out", f"Message envoyé : {preview}", case_id)
+                db.commit()
     return RedirectResponse(f"/admin/cases/{case_id}", status_code=303)
 
 
