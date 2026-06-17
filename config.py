@@ -34,6 +34,17 @@ class Settings:
     ADMIN_USER: str = os.getenv("ADMIN_USER", "admin")
     ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "")  # MUST be set in prod
 
+    # --- session cookie (the form login) ---
+    # SECRET_KEY signs the session cookie. MUST be set to a long random string
+    # in prod and kept STABLE (changing it logs everyone out). Generate one:
+    #   python -c "import secrets; print(secrets.token_urlsafe(48))"
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "dev-only-insecure-change-me")
+    # How long a login lasts, in seconds (default 14 days).
+    SESSION_MAX_AGE: int = int(os.getenv("SESSION_MAX_AGE", str(60 * 60 * 24 * 14)))
+    # Send the cookie only over HTTPS. Set to 1 in prod (Railway is HTTPS);
+    # leave unset locally so http://localhost keeps you logged in.
+    SECURE_COOKIES: bool = os.getenv("SECURE_COOKIES", "") not in ("", "0", "false", "False")
+
     # --- CORS: the Netlify domain(s) allowed to POST the intake form ---
     # Comma-separated, e.g. "https://duvoyageur.netlify.app,https://duvoyageur.ca"
     ALLOWED_ORIGINS: list[str] = os.getenv("ALLOWED_ORIGINS", "*").split(",")

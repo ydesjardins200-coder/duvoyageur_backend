@@ -10,9 +10,10 @@ Set `DATABASE_URL` to Supabase or Railway Postgres (SQLite locally by default).
 ## Endpoints
 - `GET /webhook` / `POST /webhook` — Messenger verification + inbound messages
 - `POST /intake` — the Netlify form posts a TripRequest here
-- `GET /admin/cases` — case list (HTTP Basic auth)
+- `GET /admin` — login form (session cookie)
+- `GET /admin/cases` — case list (requires login)
 
 ## Run locally
     pip install -r requirements.txt
-    cp .env.example .env   # set ADMIN_PASSWORD
+    cp .env.example .env   # set ADMIN_PASSWORD and SECRET_KEY
     uvicorn main:app --reload

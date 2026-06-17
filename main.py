@@ -9,10 +9,10 @@ GET  /                       health check
 GET  /webhook                Meta verification handshake
 POST /webhook                inbound Messenger messages (acks fast, parses async)
 POST /intake                 the Netlify form posts a TripRequest here
-GET  /admin                  -> /admin/cases
-GET  /admin/cases            list of cases (Basic auth)
-GET  /admin/cases/{id}       one case (Basic auth)
-POST /admin/cases/{id}/status   update a case's status (Basic auth)
+GET  /admin                  -> login form (or /admin/cases if logged in)
+GET  /admin/cases            list of cases (session login)
+GET  /admin/cases/{id}       one case (session login)
+POST /admin/cases/{id}/status   update a case's status (session login)
 
 Key design choices (carried from our strategy):
 * The webhook ACKS 200 immediately and parses in a BackgroundTask, so Claude's
@@ -38,8 +38,9 @@ from fastapi import (BackgroundTasks, Depends, FastAPI, File, Form, HTTPExceptio
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from sqlalchemy import text
+from starlette.middleware.sessions import SessionMiddleware
 
-from auth import require_admin
+from auth import NotAuthenticated, check_credentials, require_admin
 from concierge import concierge_reply
 from config import settings
 from db import STATUSES, Case, SessionLocal, engine, find_open_case_for_sender, init_db
@@ -65,6 +66,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Signed session cookie that backs the admin login form.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.SECRET_KEY,
+    session_cookie="dv_admin",
+    max_age=settings.SESSION_MAX_AGE,
+    same_site="lax",
+    https_only=settings.SECURE_COOKIES,
+)
+
+
+@app.exception_handler(NotAuthenticated)
+async def _redirect_to_login(request: Request, exc: NotAuthenticated):
+    """Protected pages bounce unauthenticated visitors to the login form."""
+    return RedirectResponse("/admin/login", status_code=303)
 
 
 # --------------------------------------------------------------------------- #
@@ -490,12 +507,72 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  button{{cursor:pointer;background:#1d3a5f;border-color:#274a73}}
  details summary{{cursor:pointer;color:#9aa4b2;margin-top:18px}}
  pre{{background:#0f1115;border:1px solid #262b35;border-radius:10px;padding:12px;overflow:auto}}
-</style></head><body><header><h1>Du Voyageur — Dossiers</h1></header><main>{body}</main></body></html>"""
+</style></head><body><header style="display:flex;justify-content:space-between;align-items:center;gap:12px"><h1>Du Voyageur — Dossiers</h1><a href="/admin/logout" style="color:#9aa4b2;font-size:13px">Déconnexion</a></header><main>{body}</main></body></html>"""
 
 
-@app.get("/admin", dependencies=[Depends(require_admin)])
-def admin_root():
-    return RedirectResponse("/admin/cases")
+_LOGIN_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Du Voyageur — Connexion</title>
+<style>
+ *{{box-sizing:border-box}}
+ body{{font:15px/1.5 system-ui,sans-serif;margin:0;min-height:100vh;display:flex;
+   align-items:center;justify-content:center;background:#0f1115;color:#e6e6e6;padding:20px}}
+ .card{{width:100%;max-width:360px;background:#171a21;border:1px solid #262b35;
+   border-radius:16px;padding:28px 26px}}
+ h1{{font-size:19px;margin:0 0 4px}}
+ .sub{{color:#9aa4b2;font-size:13px;margin:0 0 22px}}
+ label{{display:block;font-size:13px;color:#9aa4b2;margin:14px 0 6px}}
+ input{{width:100%;font-size:15px;padding:11px 12px;border-radius:10px;
+   border:1px solid #2c3340;background:#0f1115;color:#e6e6e6}}
+ input:focus{{outline:none;border-color:#3a6ea5}}
+ button{{width:100%;margin-top:22px;font-size:15px;font-weight:600;padding:12px;
+   border-radius:10px;border:0;background:#1d3a5f;color:#fff;cursor:pointer}}
+ button:hover{{background:#274a73}}
+ .err{{background:#3a1d1d;border:1px solid #5f2b2b;color:#ffb4b4;font-size:13px;
+   padding:10px 12px;border-radius:10px;margin-bottom:18px}}
+</style></head><body>
+ <form class="card" method="post" action="/admin/login">
+   <h1>Du Voyageur</h1>
+   <p class="sub">Espace administrateur</p>
+   {error}
+   <label for="u">Identifiant</label>
+   <input id="u" name="username" autocomplete="username" autofocus required>
+   <label for="p">Mot de passe</label>
+   <input id="p" name="password" type="password" autocomplete="current-password" required>
+   <button type="submit">Se connecter</button>
+ </form>
+</body></html>"""
+
+_LOGIN_ERR = "<div class='err'>Identifiant ou mot de passe invalide.</div>"
+
+
+@app.get("/admin")
+def admin_root(request: Request):
+    if request.session.get("admin"):
+        return RedirectResponse("/admin/cases", status_code=303)
+    return RedirectResponse("/admin/login", status_code=303)
+
+
+@app.get("/admin/login", response_class=HTMLResponse)
+def admin_login_form(request: Request, error: int = 0):
+    if request.session.get("admin"):
+        return RedirectResponse("/admin/cases", status_code=303)
+    return _LOGIN_PAGE.format(error=_LOGIN_ERR if error else "")
+
+
+@app.post("/admin/login")
+def admin_login(request: Request, username: str = Form(""), password: str = Form("")):
+    if check_credentials(username, password):
+        request.session["admin"] = True
+        request.session["user"] = username
+        return RedirectResponse("/admin/cases", status_code=303)
+    return RedirectResponse("/admin/login?error=1", status_code=303)
+
+
+@app.get("/admin/logout")
+def admin_logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/admin/login", status_code=303)
 
 
 @app.get("/admin/cases", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
