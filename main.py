@@ -831,6 +831,8 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .stat{{background:var(--glass);border:1px solid var(--line);border-radius:14px;padding:12px 18px;min-width:130px}}
  .stat-n{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:1.6rem;color:var(--foam);line-height:1}}
  .stat-l{{font-family:"Space Grotesk",monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--mist);margin-top:5px}}
+ .msg-in{{background:rgba(3,18,27,.5);border:1px solid var(--line);border-radius:14px 14px 14px 4px;
+   padding:11px 14px;margin-bottom:10px;white-space:pre-wrap;max-width:85%;line-height:1.5}}
 </style></head><body>
 <header>
  <div class="topbar">
@@ -1046,27 +1048,46 @@ def admin_cases(status: str = "all", view: str = "voyage"):
         return {"new": "Coter le forfait", "quoted": "Faire un suivi",
                 "booked": "Préparer le départ", "closed": "—"}.get(c.status, "—")
 
-    def table(cases) -> str:
+    def table(cases, support=False) -> str:
         rows = []
         for c in cases:
             t = c.trip or {}
             name = escape(str(t.get("customer_name") or "Client inconnu"))
-            where = escape(str(t.get("hotel_name_raw") or t.get("destination") or "—"))
-            rows.append(
+            base = (
                 f"<tr data-href='/admin/cases/{c.id}'>"
                 f"<td><a href='/admin/cases/{c.id}'>#{c.id}</a></td>"
                 f"<td><b>{name}</b></td>"
                 f"<td><span class='tag {c.status}'>{c.status}</span></td>"
                 f"<td>{escape(c.channel)}</td>"
-                f"<td>{where}</td>"
-                f"<td>{c.parse_confidence:.2f}</td>"
-                f"<td class='muted'>{escape(next_step(c))}</td>"
-                f"<td class='muted'>{c.created_at:%Y-%m-%d %H:%M}</td></tr>"
             )
-        empty = "<tr><td colspan='8' class='muted'>Aucun dossier ici.</td></tr>"
-        return ("<table><tr><th>#</th><th>Client</th><th>Statut</th><th>Canal</th>"
-                "<th>Hôtel / Dest.</th><th>Conf.</th><th>Prochaine étape</th><th>Reçu</th></tr>"
-                + ("".join(rows) or empty) + "</table>")
+            if support:
+                preview = (c.raw_message or "").replace("\n", " ").strip()
+                preview = (preview[:60] + "…") if len(preview) > 60 else (preview or "—")
+                rows.append(
+                    base
+                    + f"<td>{escape(preview)}</td>"
+                    + f"<td class='muted'>{escape(next_step(c))}</td>"
+                    + f"<td class='muted'>{c.created_at:%Y-%m-%d %H:%M}</td></tr>"
+                )
+            else:
+                where = escape(str(t.get("hotel_name_raw") or t.get("destination") or "—"))
+                rows.append(
+                    base
+                    + f"<td>{where}</td>"
+                    + f"<td>{c.parse_confidence:.2f}</td>"
+                    + f"<td class='muted'>{escape(next_step(c))}</td>"
+                    + f"<td class='muted'>{c.created_at:%Y-%m-%d %H:%M}</td></tr>"
+                )
+        if support:
+            head = ("<th>#</th><th>Client</th><th>Statut</th><th>Canal</th>"
+                    "<th>Message</th><th>Prochaine étape</th><th>Reçu</th>")
+            ncol = 7
+        else:
+            head = ("<th>#</th><th>Client</th><th>Statut</th><th>Canal</th>"
+                    "<th>Hôtel / Dest.</th><th>Conf.</th><th>Prochaine étape</th><th>Reçu</th>")
+            ncol = 8
+        empty = f"<tr><td colspan='{ncol}' class='muted'>Aucun dossier ici.</td></tr>"
+        return f"<table><tr>{head}</tr>" + ("".join(rows) or empty) + "</table>"
 
     # Focused travel sections (trip only).
     if nav_active in ("queue", "traveling", "completed"):
@@ -1091,7 +1112,7 @@ def admin_cases(status: str = "all", view: str = "voyage"):
         f"<a class='tab{' active' if view == 'service' else ''}' href='/admin/cases?view=service'>"
         f"💬 Service client<span class='tab-n'>{n_service}</span></a>"
     )
-    body = f"<h2>Demandes</h2><div class='tabs'>{subtabs}</div>" + table(cases)
+    body = f"<h2>Demandes</h2><div class='tabs'>{subtabs}</div>" + table(cases, support=(view == "service"))
     if view == "voyage":
         body += (
             "<form method='post' action='/admin/setup-greeting' style='margin-top:24px;display:inline-block'>"
@@ -1494,6 +1515,66 @@ def admin_case_detail(case_id: int):
         if not c:
             return HTMLResponse(render_page("<p>Introuvable.</p>", "cases"), status_code=404)
         t = c.trip or {}
+
+        # Customer-service case: show the message(s) and a reply box, nothing more.
+        if (c.kind or "trip") == "support":
+            name = escape(str(t.get("customer_name") or "Client inconnu"))
+            msgs = [m.strip() for m in (c.raw_message or "").split("\n---\n") if m.strip()]
+            msg_html = ("".join(f"<div class='msg-in'>{escape(m)}</div>" for m in msgs)
+                        or "<p class='muted'>(aucun message)</p>")
+            opts = "".join(
+                f"<option value='{s}'{' selected' if s == c.status else ''}>{s}</option>"
+                for s in STATUSES)
+            client_link = (f"<a href='/admin/clients/{c.client_id}'>voir la fiche &rarr;</a>"
+                           if c.client_id else "<span class='muted'>—</span>")
+
+            shots = c.screenshots or []
+            shot_html = ""
+            if shots:
+                imgs = "".join(
+                    f"<a href='/admin/cases/{c.id}/screenshot/{i}' target='_blank'>"
+                    f"<img src='/admin/cases/{c.id}/screenshot/{i}' alt='pièce {i+1}' "
+                    f"style='max-width:100%;border-radius:10px;border:1px solid var(--line);margin-bottom:10px'></a>"
+                    for i in range(len(shots)))
+                shot_html = f"<div class='card full'><h3>Pièce(s) jointe(s) · {len(shots)}</h3>{imgs}</div>"
+
+            reply = ""
+            if c.channel == "messenger" and c.sender_ref:
+                reply = (
+                    "<div class='card full'><h3>Répondre au client</h3>"
+                    f"<form method='post' action='/admin/cases/{c.id}/send'>"
+                    "<textarea name='message' rows='4' placeholder='Écris ta réponse au client…' "
+                    "style='width:100%'></textarea>"
+                    "<button style='margin-top:10px'>Envoyer sur Messenger</button></form>"
+                    "<p class='sub'>Envoi direct via Messenger (fenêtre de 24 h après le dernier "
+                    "message du client). Une fois envoyé, le dossier sort de la cloche.</p></div>"
+                )
+            else:
+                reply = ("<div class='card full'><h3>Répondre au client</h3>"
+                         "<p class='muted'>Réponse directe indisponible pour ce canal.</p></div>")
+
+            info = (
+                "<div class='card'><h3>Client</h3>"
+                f"<div class='kv'><span class='k'>Nom</span><span class='v'>{name}</span></div>"
+                f"<div class='kv'><span class='k'>Canal</span><span class='v'>{escape(c.channel)}</span></div>"
+                f"<div class='kv'><span class='k'>Reçu</span><span class='v'>{c.created_at:%Y-%m-%d %H:%M}</span></div>"
+                f"<div class='kv'><span class='k'>Fiche client</span><span class='v'>{client_link}</span></div>"
+                "</div>"
+            )
+            msg_card = f"<div class='card full'><h3>Message du client</h3>{msg_html}</div>"
+            actions = (
+                f"<form method='post' action='/admin/cases/{c.id}/status' style='margin-top:18px'>"
+                f"<label class='muted'>Statut : </label><select name='status'>{opts}</select> "
+                "<button>Mettre à jour</button></form>"
+            )
+            body = (
+                "<p><a href='/admin/cases?view=service'>&larr; Service client</a></p>"
+                f"<h2>#{c.id} · {name} <span class='tag {c.status}'>{c.status}</span> "
+                "<span class='tag'>service client</span></h2>"
+                f"<div class='grid2'>{info}{msg_card}{reply}{shot_html}</div>"
+                f"{actions}"
+            )
+            return render_page(body, "cases")
 
         # --- derived display values ---
         name = escape(str(t.get("customer_name") or "Client inconnu"))
