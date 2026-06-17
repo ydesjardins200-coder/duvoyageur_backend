@@ -258,9 +258,10 @@ def find_open_case_for_sender(db, sender_ref: Optional[str], within_days: int = 
 
 
 def find_open_request_for_client(db, client_id: Optional[int], within_days: int = 30):
-    """Most recent still-open request for THIS client, any channel, within the
-    merge window. New messages from a known client fold into it; once the
-    request is quoted/booked/closed, the next message starts a fresh one."""
+    """Most recent still-open TRIP request for THIS client, any channel, within
+    the merge window. New trip messages from a known client fold into it; once
+    quoted/booked/closed, the next message starts a fresh one. Service-client
+    (support) cases are excluded so trip profiling never merges into them."""
     if not client_id:
         return None
     cutoff = datetime.utcnow() - timedelta(days=within_days)
@@ -268,6 +269,7 @@ def find_open_request_for_client(db, client_id: Optional[int], within_days: int 
         db.query(Case)
         .filter(
             Case.client_id == client_id,
+            Case.kind == "trip",
             Case.status.in_(OPEN_STATUSES),
             Case.created_at >= cutoff,
         )

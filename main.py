@@ -250,8 +250,15 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                 mode = cl.support_mode or "profiling"
                 is_cold = find_open_request_for_client(db, cl.id) is None
     if mode == "human":
-        _handle_human_message(sender, text, shots)
-        return
+        # The customer asked for a human — but if they now clearly want a rebate
+        # (the core funnel), pull them back into the profiling bot and let the
+        # normal profiling flow below greet them (avoids a duplicate message).
+        if _wants_rebate(text):
+            _set_support_mode(sender, "profiling")
+            mode = "profiling"  # fall through to the profiling flow below
+        else:
+            _handle_human_message(sender, text, shots)
+            return
     if mode == "concierge":
         _handle_concierge_message(sender, text)
         return
@@ -436,6 +443,18 @@ _TRIP_HINT_RE = re.compile(
     r"(forfait|voyage|tout[- ]inclus|h[ôo]tel|s[ée]jour|rabais|prix|destination|"
     r"\bvol\b|partir|semaine|nuits?|cuba|mexi\w+|punta|cana|varadero|canc[uú]n|"
     r"r[ée]publique|dominicaine|jama[ïi]que|riviera|maya|floride|plage|resort)", re.I)
+
+# Strong "I want a deal / to book a trip" intent — used to pull a customer out of
+# the human-support lane back into trip profiling when they pivot to the funnel.
+_REBATE_RE = re.compile(
+    r"(rabais|moins cher|meilleur prix|bon prix|[ée]conomis\w+|\bdeal\b|aubaine|"
+    r"(?:trouver?|obtenir|avoir|veux|cherche\w*|r[ée]server)\b[^.?!]*"
+    r"\b(?:voyage|forfait|rabais|tout[- ]inclus|s[ée]jour)\b|"
+    r"soumission|cotation|coter)", re.I)
+
+
+def _wants_rebate(text: str) -> bool:
+    return bool(text and _REBATE_RE.search(text))
 
 
 def _wants_human(text: str) -> bool:
