@@ -542,8 +542,10 @@ def _new_trip_form() -> str:
         + "<div class='fset'><h3>Ton forfait</h3><div class='formgrid'>"
         f"<div class='field half'><label>Aéroport de départ <span class='req'>*</span></label>"
         f"<select name='origin_airport' required>{asel}</select></div>"
-        "<div class='field half'><label>Hôtel ou destination <span class='req'>*</span></label>"
-        "<input name='where' placeholder='ex. Riu Bambu, Punta Cana…' required></div>"
+        "<div class='field half'><label>Destination <span class='req'>*</span></label>"
+        "<input name='destination' placeholder='ex. Punta Cana, République dominicaine…' required></div>"
+        "<div class='field half'><label>Hôtel <span class='muted'>(si tu le connais)</span></label>"
+        "<input name='hotel' placeholder='ex. Eurostars Grand Cayacoa'></div>"
         "<div class='field half'><label>Date de départ <span class='req'>*</span></label>"
         "<input name='depart' type='date' required></div>"
         "<div class='field half'><label>Date de retour</label>"
@@ -591,7 +593,8 @@ _CAPTURE_JS = """<script>
     x.upload.onprogress=function(e){if(e.lengthComputable)bar.style.width=Math.round(e.loaded/e.total*60)+'%';};
     x.onload=function(){bar.style.width='100%';lbl.classList.remove('busy');
       try{var r=JSON.parse(x.responseText);if(r.ok&&r.trip){var t=r.trip;
-        setv('where',t.hotel_name_raw||t.destination);setv('depart',t.departure_date);setv('retour',t.return_date);
+        setv('destination',t.destination);setv('hotel',t.hotel_name_raw||t.hotel_name_normalized);
+        setv('depart',t.departure_date);setv('retour',t.return_date);
         setv('adults',t.num_adults);setv('children',t.num_children);
         if(t.origin_airport_iata)setsel('origin_airport',t.origin_airport_iata);
         if(t.operator)setsel('operator',t.operator);
@@ -985,7 +988,8 @@ async def portal_new_trip_save(request: Request):
             "customer_name": client.display_name,
             "customer_email": client.primary_email,
             "customer_phone": client.primary_phone,
-            "destination": g("where"),
+            "destination": g("destination"),
+            "hotel_name_raw": g("hotel"),
             "departure_date": g("depart"),
             "return_date": g("retour"),
             "num_adults": gi("adults"),
