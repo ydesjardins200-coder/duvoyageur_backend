@@ -1204,6 +1204,10 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .idtab>.col{{display:flex;flex-direction:column;gap:16px}}
  .voyagebox{{border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin:0 0 22px;background:rgba(255,255,255,.012)}}
  .voyagebox .grid2{{margin:14px 0}}
+ .qexp{{display:none}}
+ .qexp.open{{display:table-row}}
+ .qexp-td{{padding:0 0 10px 0 !important;border:none !important;background:transparent}}
+ .qexp-td .voyagebox{{margin:6px 0 0}}
  .cardhdr2{{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}}
  .cardhdr2 h3{{margin:0}}
  .voyagebox .carde{{display:none}}
@@ -1519,17 +1523,49 @@ def admin_cases(status: str = "all", view: str = "voyage"):
         return {"new": "Coter le forfait", "quoted": "Faire un suivi",
                 "booked": "Préparer le départ", "closed": "—"}.get(c.status, "—")
 
-    def table(cases, support=False) -> str:
+    def expand_panel(c) -> str:
+        """Full editable trip card shown when a queue row is expanded — same
+        layout and behaviour as the client fiche."""
+        nxt = f"/admin/cases?status={status}"
+        opts2 = "".join(f"<option value='{s}'{' selected' if s == c.status else ''}>{s}</option>"
+                        for s in STATUSES)
+        sform = (f"<form method='post' action='/admin/cases/{c.id}/status' "
+                 "style='display:flex;gap:8px;align-items:center;margin:0'>"
+                 f"<input type='hidden' name='next' value=\"{nxt}\">"
+                 f"<select name='status'>{opts2}</select>"
+                 "<button>Mettre à jour</button></form>")
+        return (
+            f"<div class='voyagebox' id='vb-{c.id}'>"
+            "<div class='pagehdr'>"
+            f"<h3 style='margin:0'>#{c.id} <span class='tag {c.status}'>{c.status}</span></h3>"
+            + sform + "</div>"
+            f"<form method='post' action='/admin/cases/{c.id}/trip'>"
+            f"<input type='hidden' name='next' value=\"{nxt}\">"
+            f"<div class='grid2'>{_trip_info_cards(c, editable=True)}</div>"
+            "<div class='savebar'><button>Enregistrer les modifications</button> "
+            f"<button type='button' class='btn-ghost' onclick='tripEdit({c.id},false)'>Annuler</button></div>"
+            "</form>"
+            + _trip_fulfillment_section(c, nxt)
+            + f"<div style='margin-top:14px'><a href='/admin/cases/{c.id}'>Ouvrir le dossier &rarr;</a></div>"
+            "</div>"
+        )
+
+    def table(cases, support=False, expand=False) -> str:
         rows = []
         for c in cases:
             t = c.trip or {}
             name = escape(str(t.get("customer_name") or "Client inconnu"))
+            if expand and not support:
+                row_open = f"<tr onclick='toggleQ({c.id})' style='cursor:pointer'>"
+                id_cell = f"<td>#{c.id}</td>"
+            else:
+                row_open = f"<tr data-href='/admin/cases/{c.id}'>"
+                id_cell = f"<td><a href='/admin/cases/{c.id}'>#{c.id}</a></td>"
             base = (
-                f"<tr data-href='/admin/cases/{c.id}'>"
-                f"<td><a href='/admin/cases/{c.id}'>#{c.id}</a></td>"
-                f"<td><b>{name}</b></td>"
-                f"<td><span class='tag {c.status}'>{c.status}</span></td>"
-                f"<td>{escape(c.channel)}</td>"
+                row_open + id_cell
+                + f"<td><b>{name}</b></td>"
+                + f"<td><span class='tag {c.status}'>{c.status}</span></td>"
+                + f"<td>{escape(c.channel)}</td>"
             )
             if support:
                 preview = (c.raw_message or "").replace("\n", " ").strip()
@@ -1549,6 +1585,11 @@ def admin_cases(status: str = "all", view: str = "voyage"):
                     + f"<td class='muted'>{escape(next_step(c))}</td>"
                     + f"<td class='muted'>{c.created_at:%Y-%m-%d %H:%M}</td></tr>"
                 )
+                if expand:
+                    rows.append(
+                        f"<tr class='qexp' id='qexp-{c.id}'>"
+                        f"<td colspan='8' class='qexp-td'>{expand_panel(c)}</td></tr>"
+                    )
         if support:
             head = ("<th>#</th><th>Client</th><th>Statut</th><th>Canal</th>"
                     "<th>Message</th><th>Prochaine étape</th><th>Reçu</th>")
@@ -1570,13 +1611,20 @@ def admin_cases(status: str = "all", view: str = "voyage"):
         body = page_header(SEC_TITLE[nav_active], "/admin/cases?status=service") + table(cases, support=True)
         return render_page(body, nav_active)
 
-    # Focused travel sections (trip only).
+    # Focused travel sections (trip only) — rows expand into the full card.
     if nav_active in ("queue", "traveling", "completed"):
         with SessionLocal() as db:
             cases = (db.query(Case)
                      .filter(Case.kind == "trip", Case.status == status)
                      .order_by(Case.created_at.desc()).limit(200).all())
-        body = page_header(SEC_TITLE[nav_active], f"/admin/cases?status={status}") + table(cases)
+        body = (
+            page_header(SEC_TITLE[nav_active], f"/admin/cases?status={status}")
+            + table(cases, expand=True)
+            + "<script>function toggleQ(i){var r=document.getElementById('qexp-'+i);"
+              "if(r)r.classList.toggle('open');}"
+              "function tripEdit(i,on){var b=document.getElementById('vb-'+i);"
+              "if(b)b.classList[on?'add':'remove']('editing');}</script>"
+        )
         return render_page(body, nav_active)
 
     # "Demandes": split between Voyage and Service client.
