@@ -47,9 +47,9 @@ from auth import NotAuthenticated, check_credentials, require_admin
 from concierge import concierge_reply
 from config import settings
 from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLocal, engine,
-                find_client_by_identity, find_duplicate_groups, find_open_case_for_sender,
-                find_open_request_for_client, init_db, log_activity, merge_clients,
-                resolve_or_create_client)
+                add_identity, find_client_by_identity, find_duplicate_groups,
+                find_open_case_for_sender, find_open_request_for_client, init_db, log_activity,
+                merge_clients, normalize_email, normalize_phone, resolve_or_create_client)
 from facebook import (extract_messages, extract_postbacks, extract_quick_replies,
                       get_user_name, send_quick_replies, send_text, set_ice_breakers,
                       set_messenger_profile, set_persistent_menu, valid_signature,
@@ -889,6 +889,17 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .closed{{background:rgba(148,184,198,.12);border-color:var(--line);color:var(--mist)}}
  .muted{{color:var(--mist)}} code{{background:rgba(3,18,27,.6);padding:1px 6px;border-radius:5px}}
  .grid2{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin:18px 0}}
+ .idtab{{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:stretch;margin:18px 0}}
+ @media(max-width:900px){{.idtab{{grid-template-columns:1fr}}}}
+ .idtab>.col{{display:flex;flex-direction:column;gap:16px}}
+ .act-card{{position:relative;padding:0;min-height:320px}}
+ .act-inner{{position:absolute;inset:0;display:flex;flex-direction:column;padding:18px 20px}}
+ .act-inner>h3{{margin:0 0 12px}}
+ .act-scroll{{flex:1;min-height:0;overflow-y:auto;padding-right:6px}}
+ .cardhdr{{display:flex;align-items:center;gap:12px;margin-bottom:14px}}
+ .eyebrow{{font-family:"Space Grotesk",monospace;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--pacific)}}
+ .editbtn{{padding:6px 12px;font-size:12px;border-radius:9px}}
+ .btn-ghost{{background:transparent;border:1px solid var(--line);color:var(--mist);box-shadow:none}}
  .card{{background:var(--glass);border:1px solid var(--line);border-radius:16px;padding:16px 18px}}
  .card h3{{margin:0 0 12px;font-family:"Space Grotesk",monospace;font-size:12px;font-weight:700;
    letter-spacing:.14em;text-transform:uppercase;color:var(--pacific)}}
@@ -1391,45 +1402,107 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
 
         if tab == "identite":
             id_rows = "".join(kv(KIND_FR.get(i.kind, i.kind), escape(i.value)) for i in idents)
-            identity_card = (
-                "<div class='card'><h3>Identité</h3>"
-                f"<form method='post' action='/admin/clients/{cl.id}/update'>"
-                "<label class='flbl'>Nom</label>"
-                f"<input name='display_name' value=\"{escape(cl.display_name or '')}\">"
-                "<button style='margin-top:12px'>Enregistrer</button></form>"
-                "<div style='margin-top:14px'>"
+            chans = (("", "\u2014"), ("messenger", "messenger"), ("email", "courriel"), ("sms", "sms"))
+            cur_ch = cl.preferred_channel or ""
+            opts_ch = "".join(
+                f"<option value='{c}'{' selected' if cur_ch == c else ''}>{lbl}</option>"
+                for c, lbl in chans)
+
+            view_block = (
+                "<div id='idview'>"
+                + kv("Nom", val(cl.display_name))
                 + kv("Courriel", val(cl.primary_email))
-                + kv("Téléphone", val(cl.primary_phone))
-                + kv("Canal préféré", val(cl.preferred_channel))
-                + kv("Créé", cl.created_at.strftime("%Y-%m-%d %H:%M"))
+                + kv("T\u00e9l\u00e9phone", val(cl.primary_phone))
+                + kv("Canal pr\u00e9f\u00e9r\u00e9", val(cl.preferred_channel))
+                + kv("Cr\u00e9\u00e9", cl.created_at.strftime("%Y-%m-%d %H:%M"))
                 + kv("Dernier contact",
-                     cl.last_contact_at.strftime("%Y-%m-%d %H:%M") if cl.last_contact_at else "—")
-                + "</div>"
-                "<h3 style='margin-top:18px'>Identifiants</h3>"
+                     cl.last_contact_at.strftime("%Y-%m-%d %H:%M") if cl.last_contact_at else "\u2014")
+                + "<h3 style='margin-top:18px'>Identifiants</h3>"
                 + (id_rows or "<div class='muted'>Aucun.</div>")
                 + "</div>"
             )
+            edit_block = (
+                f"<form id='idedit' method='post' action='/admin/clients/{cl.id}/update' style='display:none'>"
+                "<label class='flbl'>Nom</label>"
+                f"<input name='display_name' value=\"{escape(cl.display_name or '')}\">"
+                "<label class='flbl' style='margin-top:10px'>Courriel</label>"
+                f"<input name='primary_email' type='email' value=\"{escape(cl.primary_email or '')}\">"
+                "<label class='flbl' style='margin-top:10px'>T\u00e9l\u00e9phone</label>"
+                f"<input name='primary_phone' value=\"{escape(cl.primary_phone or '')}\">"
+                "<label class='flbl' style='margin-top:10px'>Canal pr\u00e9f\u00e9r\u00e9</label>"
+                f"<select name='preferred_channel'>{opts_ch}</select>"
+                "<div style='margin-top:14px;display:flex;gap:8px'>"
+                "<button>Enregistrer</button>"
+                "<button type='button' class='btn-ghost' onclick='idEdit(false)'>Annuler</button>"
+                "</div></form>"
+            )
+            identity_card = (
+                "<div class='card'>"
+                "<div class='cardhdr'>"
+                "<button type='button' class='editbtn' onclick='idEdit(true)'>\u270f\ufe0f \u00c9diter</button>"
+                "<span class='eyebrow'>Identit\u00e9</span></div>"
+                + view_block + edit_block
+                + "<script>function idEdit(o){var v=document.getElementById('idview'),"
+                  "e=document.getElementById('idedit'),b=document.querySelector('.editbtn');"
+                  "v.style.display=o?'none':'';e.style.display=o?'':'none';b.style.display=o?'none':'';}</script>"
+                "</div>"
+            )
+
             others = (db.query(Client).filter(Client.id != cl.id)
                       .order_by(func.coalesce(Client.display_name, "")).limit(500).all())
+            merge_card = ""
             if others:
-                opts = "".join(
+                mopts = "".join(
                     f"<option value='{o.id}'>{escape(o.display_name or 'Client')} (#{o.id})</option>"
                     for o in others)
                 merge_card = (
                     "<div class='card'><h3>Fusion</h3>"
                     "<form method='post' action='/admin/clients/merge' "
-                    "onsubmit=\"return confirm('Fusionner cette fiche dans la fiche choisie ? Action irréversible.')\">"
+                    "onsubmit=\"return confirm('Fusionner cette fiche dans la fiche choisie ? Action irr\u00e9versible.')\">"
                     f"<input type='hidden' name='drop' value='{cl.id}'>"
                     "<label class='flbl'>Fusionner cette fiche dans :</label>"
-                    f"<select name='keep'>{opts}</select>"
+                    f"<select name='keep'>{mopts}</select>"
                     "<button class='btn-danger' style='margin-top:12px'>Fusionner</button></form>"
-                    "<p class='sub'>Déplace les demandes, identités et l'activité vers la fiche "
+                    "<p class='sub'>D\u00e9place les demandes, identit\u00e9s et l'activit\u00e9 vers la fiche "
                     "choisie, puis supprime celle-ci.</p></div>"
                 )
-            else:
-                merge_card = ""
-            content = f"<div class='grid2'>{identity_card}{merge_card}</div>"
 
+            KIND_LABEL = {
+                "request_created": ("Nouvelle demande", "\U0001f195"),
+                "message_in": ("Message re\u00e7u", "\U0001f4ac"),
+                "status_change": ("Changement de statut", "\U0001f504"),
+                "reply_out": ("R\u00e9ponse envoy\u00e9e", "\U0001f4e4"),
+                "merge": ("Fusion de fiches", "\U0001f517"),
+                "note": ("Note", "\U0001f4dd"),
+            }
+            if acts:
+                items = []
+                for a in acts:
+                    lbl, icon = KIND_LABEL.get(a.kind, (a.kind, "\u2022"))
+                    link = (f" <a href='/admin/cases/{a.request_id}'>#{a.request_id}</a>"
+                            if a.request_id else "")
+                    items.append(
+                        f"<div class='tl'><div class='tl-dot'>{icon}</div>"
+                        f"<div class='tl-body'><div class='tl-top'><b>{escape(lbl)}</b>{link}"
+                        f"<span class='tl-at'>{a.created_at:%Y-%m-%d %H:%M}</span></div>"
+                        f"<div class='muted'>{escape(a.summary)}</div></div></div>"
+                    )
+                act_items = "".join(items)
+            else:
+                act_items = "<div class='muted'>Aucune activit\u00e9 enregistr\u00e9e.</div>"
+            activity_card = (
+                "<div class='card act-card'><div class='act-inner'>"
+                f"<h3>Activit\u00e9 \u00b7 {len(acts)}</h3>"
+                f"<div class='act-scroll'>{act_items}</div>"
+                "</div></div>"
+            )
+
+            content = (
+                "<div class='idtab'>"
+                f"<div class='col'>{identity_card}{merge_card}</div>"
+                f"{activity_card}"
+                "</div>"
+            )
         elif tab == "voyage":
             if trips:
                 cards = []
@@ -1480,36 +1553,10 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
             else:
                 content = "<div class='card full'><div class='muted'>Aucune demande de service.</div></div>"
 
-        KIND_LABEL = {
-            "request_created": ("Nouvelle demande", "🆕"),
-            "message_in": ("Message reçu", "💬"),
-            "status_change": ("Changement de statut", "🔄"),
-            "reply_out": ("Réponse envoyée", "📤"),
-            "merge": ("Fusion de fiches", "🔗"),
-            "note": ("Note", "📝"),
-        }
-        if acts:
-            items = []
-            for a in acts:
-                label, icon = KIND_LABEL.get(a.kind, (a.kind, "•"))
-                link = (f" <a href='/admin/cases/{a.request_id}'>#{a.request_id}</a>"
-                        if a.request_id else "")
-                items.append(
-                    f"<div class='tl'><div class='tl-dot'>{icon}</div>"
-                    f"<div class='tl-body'><div class='tl-top'><b>{escape(label)}</b>{link}"
-                    f"<span class='tl-at'>{a.created_at:%Y-%m-%d %H:%M}</span></div>"
-                    f"<div class='muted'>{escape(a.summary)}</div></div></div>"
-                )
-            activity = f"<div class='card full'><h3>Activité · {len(acts)}</h3>{''.join(items)}</div>"
-        else:
-            activity = ("<div class='card full'><h3>Activité</h3>"
-                        "<div class='muted'>Aucune activité enregistrée.</div></div>")
-
         body = (
             "<p><a href='/admin/clients'>&larr; Tous les clients</a></p>"
             f"<h2>{name}</h2>"
             f"{stats}{tabs}{content}"
-            f"<div class='grid2' style='margin-top:18px'>{activity}</div>"
         )
     return render_page(body, "clients")
 
@@ -1522,6 +1569,18 @@ async def admin_client_update(client_id: int, request: Request):
         if cl:
             if "display_name" in form:
                 cl.display_name = (form.get("display_name") or "").strip() or None
+            if "primary_email" in form:
+                em = normalize_email(form.get("primary_email"))
+                cl.primary_email = em
+                if em:
+                    add_identity(db, cl, "email", em)
+            if "primary_phone" in form:
+                ph = normalize_phone(form.get("primary_phone"))
+                cl.primary_phone = ph
+                if ph:
+                    add_identity(db, cl, "phone", ph)
+            if "preferred_channel" in form:
+                cl.preferred_channel = (form.get("preferred_channel") or "").strip() or None
             if "notes" in form:
                 cl.notes = (form.get("notes") or "").strip() or None
             if "tags" in form:
