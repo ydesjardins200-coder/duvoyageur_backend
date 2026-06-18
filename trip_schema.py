@@ -37,6 +37,32 @@ def _meaningful_source(s: Optional[str]) -> bool:
     return bool(s) and s.strip().lower() not in _GENERIC_SOURCES
 
 
+# Region-level "destinations" that are too broad to quote — a generic ad
+# ("CARIBBEAN FROM $1,008") yields one of these, which must NOT satisfy the
+# where-to question. We then ask for a specific destination or hotel.
+_VAGUE_DESTINATIONS = {
+    "caribbean", "caraibes", "caraibe", "les caraibes", "la caraibe",
+    "sud", "le sud", "dans le sud", "soleil", "au soleil", "le soleil",
+    "tout inclus", "all inclusive", "all-inclusive", "tropiques", "les tropiques",
+    "plage", "la plage", "mer", "la mer", "europe", "asie", "afrique",
+    "amerique", "amerique du sud", "amerique centrale", "amerique latine",
+    "vacances", "voyage", "sud des etats-unis",
+}
+
+
+def _strip_accents(s: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", s)
+                   if not unicodedata.combining(c))
+
+
+def is_vague_destination(dest: Optional[str]) -> bool:
+    """True if `dest` is a broad region rather than a bookable destination."""
+    if not dest:
+        return False
+    return _strip_accents(dest.strip().lower()) in _VAGUE_DESTINATIONS
+
+
 # --------------------------------------------------------------------------- #
 # Enums
 # --------------------------------------------------------------------------- #
@@ -206,7 +232,8 @@ class TripRequest(BaseModel):
     # ------------------------------------------------------------------ #
     def is_searchable(self) -> bool:
         has_origin = bool(self.origin_airport_iata or self.origin_city)
-        has_where = bool(self.hotel_name_raw or self.destination)
+        has_where = bool(self.hotel_name_raw) or bool(
+            self.destination and not is_vague_destination(self.destination))
         has_when = bool(self.departure_date or self.dates_raw)
         has_who = bool(self.passengers or self.num_adults)
         return has_origin and has_where and has_when and has_who
@@ -217,6 +244,8 @@ class TripRequest(BaseModel):
             missing.append("aéroport de départ")
         if not (self.hotel_name_raw or self.destination):
             missing.append("hôtel ou destination")
+        elif self.destination and is_vague_destination(self.destination) and not self.hotel_name_raw:
+            missing.append("destination précise")
         if not (self.departure_date or self.dates_raw):
             missing.append("dates de voyage")
         if not (self.passengers or self.num_adults):
@@ -235,6 +264,8 @@ class TripRequest(BaseModel):
             rem.append("aéroport de départ")
         if not (self.hotel_name_raw or self.destination):
             rem.append("hôtel ou destination")
+        elif self.destination and is_vague_destination(self.destination) and not self.hotel_name_raw:
+            rem.append("destination précise")
         if not (self.departure_date or self.dates_raw):
             rem.append("dates de voyage")
         if not (self.passengers or self.num_adults):
@@ -269,6 +300,8 @@ class TripRequest(BaseModel):
 _NEXT_QUESTIONS = {
     "aéroport de départ": "De quel aéroport aimerais-tu partir (Montréal, Québec…) ?",
     "hôtel ou destination": "Quelle destination ou quel hôtel t'intéresse ?",
+    "destination précise": "Ça reste un peu large 🙂 — tu vises quel coin précis ou quel hôtel ? "
+                           "(ex. Punta Cana, Cancún, Varadero, ou un complexe en particulier)",
     "dates de voyage": "Pour quelles dates penses-tu partir (départ et retour) ?",
     "nombre de voyageurs": "Vous voyagez combien de personnes en tout (adultes et enfants) ?",
     "âge des enfants": "Quel sera l'âge des enfants au moment du voyage ?",

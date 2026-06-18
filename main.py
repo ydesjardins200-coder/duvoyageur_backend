@@ -57,7 +57,7 @@ from facebook import (extract_messages, extract_postbacks, extract_quick_replies
                       set_messenger_profile, set_persistent_menu, valid_signature,
                       verify_challenge)
 from parser import parse_trip
-from trip_schema import ContactChannel, TripRequest, merge_trip_requests
+from trip_schema import ContactChannel, TripRequest, is_vague_destination, merge_trip_requests
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("duvoyageur")
@@ -278,6 +278,8 @@ def _trip_found_pairs(trip) -> list:
         ("Courriel", trip.customer_email),
     ):
         if value:
+            if label == "Destination" and is_vague_destination(value):
+                value = f"{value} (à préciser)"
             pairs.append((label, str(value)))
     return pairs
 
