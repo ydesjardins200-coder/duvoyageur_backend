@@ -102,11 +102,7 @@ def _gate(request: Request):
     a redirect to the profile (or a login prompt)."""
     cid = current_portal_client_id(request)
     if not cid:
-        return None, HTMLResponse(_info_page(
-            "Espace client",
-            "Connecte-toi avec ton courriel et ta date de naissance sur "
-            "<a href='/portail/connexion'>la page de connexion</a>, ou redemande "
-            "ton lien sur Messenger (menu ☰ → « 🔐 Mon espace client »). 🔐"))
+        return None, RedirectResponse("/portail/connexion", status_code=303)
     with SessionLocal() as db:
         client = db.get(Client, cid)
         if not client:
@@ -754,11 +750,7 @@ async def portal_login_consume(request: Request):
 def portal_home(request: Request, new: int = 0, avis: int = 0):
     cid = current_portal_client_id(request)
     if not cid:
-        return HTMLResponse(_info_page(
-            "Espace client",
-            "Pour accéder à ton espace, ouvre le lien personnel qu'on t'a "
-            "envoyé. Tu peux aussi le redemander à tout moment sur Messenger : "
-            "menu ☰ → « 🔐 Mon espace client ». 🔐"))
+        return RedirectResponse("/portail/connexion", status_code=303)
     flash = ""
     if new:
         flash = "Demande envoyée ✓ — on te revient bientôt avec ton rabais !"
@@ -805,10 +797,7 @@ def portal_notifications(request: Request):
 def portal_profile(request: Request, saved: int = 0):
     cid = current_portal_client_id(request)
     if not cid:
-        return HTMLResponse(_info_page(
-            "Espace client",
-            "Pour accéder à ton profil, ouvre ton lien personnel ou redemande-le "
-            "sur Messenger (menu ☰ → « 🔐 Mon espace client »). 🔐"))
+        return RedirectResponse("/portail/connexion", status_code=303)
     with SessionLocal() as db:
         client = db.get(Client, cid)
         if not client:
@@ -1112,7 +1101,8 @@ async def portal_service_save(request: Request):
 def portal_logout():
     resp = HTMLResponse(_info_page(
         "À bientôt 👋",
-        "Tu es déconnecté de ton espace client.", logged_in=False))
+        "Tu es déconnecté de ton espace client. "
+        "<a href='/portail/connexion'>Me reconnecter</a>.", logged_in=False))
     resp.delete_cookie(PORTAL_COOKIE, path=_COOKIE_PATH)
     return resp
 
