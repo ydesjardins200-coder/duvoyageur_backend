@@ -1373,6 +1373,10 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  pre{{background:rgba(3,18,27,.6);border:1px solid var(--line);border-radius:12px;padding:12px;overflow:auto;color:var(--surf)}}
  tr[data-href]{{cursor:pointer}}
  .tabs{{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 18px}}
+ .filters{{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 14px}}
+ .filters select{{min-width:140px}}
+ th a{{color:inherit;text-decoration:none;display:inline-flex;align-items:center;gap:2px}}
+ th a:hover{{color:var(--pacific)}}
  .tab{{display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border-radius:999px;
    border:1px solid var(--line);background:rgba(6,33,47,.5);color:var(--mist);font-size:13.5px;
    font-weight:600;text-decoration:none}}
@@ -1619,7 +1623,9 @@ def admin_logout(request: Request):
 
 
 @app.get("/admin/cases", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
-def admin_cases(status: str = "all", view: str = "voyage"):
+def admin_cases(status: str = "all", view: str = "voyage",
+                fstatus: str = "all", fcanal: str = "all", minconf: str = "0",
+                sort: str = "recu", dir: str = "desc"):
     # Top-nav travel sections (status filters, trip only).
     SECTION = {"new": "queue", "service": "queue_service",
                "booked": "traveling", "closed": "completed"}
@@ -1665,7 +1671,15 @@ def admin_cases(status: str = "all", view: str = "voyage"):
             "</div>"
         )
 
-    def table(cases, support=False, expand=False) -> str:
+    def table(cases, support=False, expand=False, sort=None) -> str:
+        # sort = (field, direction, base_url) -> sortable column headers
+        def th(label, key=None):
+            if sort and key:
+                field, direction, base = sort
+                ndir = "asc" if (field == key and direction == "desc") else "desc"
+                arrow = (" ▲" if direction == "asc" else " ▼") if field == key else ""
+                return f"<th><a href=\"{base}&sort={key}&dir={ndir}\">{label}{arrow}</a></th>"
+            return f"<th>{label}</th>"
         rows = []
         for c in cases:
             t = c.trip or {}
@@ -1706,12 +1720,13 @@ def admin_cases(status: str = "all", view: str = "voyage"):
                         f"<td colspan='8' class='qexp-td'>{expand_panel(c)}</td></tr>"
                     )
         if support:
-            head = ("<th>#</th><th>Client</th><th>Statut</th><th>Canal</th>"
-                    "<th>Message</th><th>Prochaine étape</th><th>Reçu</th>")
+            head = (th("#") + th("Client") + th("Statut", "status") + th("Canal", "channel")
+                    + th("Message") + th("Prochaine étape") + th("Reçu", "recu"))
             ncol = 7
         else:
-            head = ("<th>#</th><th>Client</th><th>Statut</th><th>Canal</th>"
-                    "<th>Hôtel / Dest.</th><th>Conf.</th><th>Prochaine étape</th><th>Reçu</th>")
+            head = (th("#") + th("Client") + th("Statut", "status") + th("Canal", "channel")
+                    + th("Hôtel / Dest.") + th("Conf.", "conf") + th("Prochaine étape")
+                    + th("Reçu", "recu"))
             ncol = 8
         empty = f"<tr><td colspan='{ncol}' class='muted'>Aucun dossier ici.</td></tr>"
         return f"<table><tr>{head}</tr>" + ("".join(rows) or empty) + "</table>"
@@ -1793,21 +1808,77 @@ def admin_cases(status: str = "all", view: str = "voyage"):
         )
         return render_page(body, nav_active)
 
-    # "Demandes": split between Voyage and Service client.
+    # "Demandes": split between Voyage and Service client, with filters + sort.
     view = "service" if view == "service" else "voyage"
     kind = "support" if view == "service" else "trip"
+    status_opts = SUPPORT_STATUSES if kind == "support" else STATUSES
+
+    # Validate inputs (defend the URL building; queries are parameterized anyway).
+    if fstatus not in status_opts:
+        fstatus = "all"
+    if fcanal not in ("messenger", "form"):
+        fcanal = "all"
+    if minconf not in ("0.5", "0.7", "0.9"):
+        minconf = "0"
+    if sort not in ("status", "channel", "conf", "recu"):
+        sort = "recu"
+    direction = "asc" if dir == "asc" else "desc"
+
+    sort_cols = {"status": Case.status, "channel": Case.channel,
+                 "conf": Case.parse_confidence, "recu": Case.created_at}
+    col = sort_cols.get(sort, Case.created_at)
     with SessionLocal() as db:
-        cases = (db.query(Case).filter(Case.kind == kind)
-                 .order_by(Case.created_at.desc()).limit(300).all())
+        q = db.query(Case).filter(Case.kind == kind)
+        if fstatus != "all":
+            q = q.filter(Case.status == fstatus)
+        if fcanal != "all":
+            q = q.filter(Case.channel == fcanal)
+        if minconf != "0":
+            q = q.filter(Case.parse_confidence >= float(minconf))
+        q = q.order_by(col.asc() if direction == "asc" else col.desc())
+        cases = q.limit(300).all()
         n_voyage = db.query(Case).filter(Case.kind == "trip").count()
         n_service = db.query(Case).filter(Case.kind == "support").count()
+
     subtabs = (
         f"<a class='tab{' active' if view == 'voyage' else ''}' href='/admin/cases?view=voyage'>"
         f"✈️ Voyage<span class='tab-n'>{n_voyage}</span></a>"
         f"<a class='tab{' active' if view == 'service' else ''}' href='/admin/cases?view=service'>"
         f"💬 Service client<span class='tab-n'>{n_service}</span></a>"
     )
-    body = f"<h2>Demandes</h2><div class='tabs'>{subtabs}</div>" + table(cases, support=(view == "service"))
+
+    def opt(value, label, current):
+        return f"<option value='{value}'{' selected' if value == current else ''}>{label}</option>"
+
+    status_sel = "".join([opt("all", "Tous les statuts", fstatus)]
+                         + [opt(s, s, fstatus) for s in status_opts])
+    canal_sel = "".join([opt("all", "Tous les canaux", fcanal),
+                         opt("messenger", "messenger", fcanal),
+                         opt("form", "formulaire", fcanal)])
+    conf_sel = "".join([opt("0", "Toute confiance", minconf),
+                        opt("0.5", "≥ 0,50", minconf),
+                        opt("0.7", "≥ 0,70", minconf),
+                        opt("0.9", "≥ 0,90", minconf)])
+    conf_filter = (f"<select name='minconf' onchange='this.form.submit()'>{conf_sel}</select>"
+                   if kind == "trip" else "")
+    filters = (
+        "<form method='get' class='filters'>"
+        f"<input type='hidden' name='view' value='{view}'>"
+        f"<input type='hidden' name='sort' value='{sort}'>"
+        f"<input type='hidden' name='dir' value='{direction}'>"
+        f"<select name='fstatus' onchange='this.form.submit()'>{status_sel}</select>"
+        f"<select name='fcanal' onchange='this.form.submit()'>{canal_sel}</select>"
+        f"{conf_filter}"
+        f"<a class='btn-ghost' href='/admin/cases?view={view}'>Réinitialiser</a>"
+        "<noscript><button>Filtrer</button></noscript>"
+        "</form>"
+    )
+
+    base = f"/admin/cases?view={view}&fstatus={fstatus}&fcanal={fcanal}&minconf={minconf}"
+    table_html = table(cases, support=(view == "service"), sort=(sort, direction, base))
+    count = (f"<span class='muted' style='margin-left:8px'>{len(cases)} dossier(s)</span>")
+    body = (f"<h2>Demandes</h2><div class='tabs'>{subtabs}</div>"
+            + filters + count + table_html)
     return render_page(body, "cases")
 
 
