@@ -515,6 +515,38 @@ def _service_form(cases) -> str:
         "</form>")
 
 
+def _msg_bubble(m) -> str:
+    out = m.get("dir") == "out"
+    who = "Du Voyageur" if out else "Toi"
+    at = _short_dt(m.get("at"))
+    return (f"<div class='msg {'out' if out else 'in'}'>"
+            f"<div class='msg-who'>{who} · {at}</div>"
+            f"<div class='msg-b'>{escape(m.get('text') or '')}</div></div>")
+
+
+def _service_threads(cases) -> str:
+    threads = sorted([c for c in cases if (c.kind or "") == "support"],
+                     key=lambda x: x.created_at or datetime.min, reverse=True)
+    if not threads:
+        return ""
+    out = ["<h3 class='acc-h'>Tes demandes</h3>"]
+    for c in threads:
+        msgs = c.messages or []
+        first = next((m.get("text") for m in msgs if m.get("dir") == "in"),
+                     c.raw_message or "Demande de service")
+        preview = escape((first or "").splitlines()[0][:70])
+        resolved = c.status == "resolved"
+        label, cls = ("Résolue", "done") if resolved else ("En cours", "quote")
+        bubbles = ("".join(_msg_bubble(m) for m in msgs)
+                   or "<div class='muted'>Demande envoyée. On te répond bientôt.</div>")
+        out.append(
+            "<details class='thread'><summary>"
+            f"<span class='th-sum'>{preview}</span>"
+            f"<span class='badge {cls}'>{label}</span></summary>"
+            f"<div class='msgs'>{bubbles}</div></details>")
+    return "".join(out)
+
+
 # --------------------------------------------------------------------------- #
 # Shell + nav
 # --------------------------------------------------------------------------- #
@@ -878,7 +910,7 @@ def portal_service(request: Request, sent: int = 0):
                 + "<div class='hello'><h2>Demande de service</h2>"
                 "<p class='lede'>Une question, un changement, un pépin ? Écris-nous, "
                 "un conseiller te répond.</p></div>"
-                + _service_form(cases))
+                + _service_form(cases) + _service_threads(cases))
         bell = _unread(client)
     resp = HTMLResponse(_shell("Aide", body, logged_in=True, nav=_nav("aide"), bell=bell))
     _set_session_cookie(resp, cid)
@@ -1018,6 +1050,23 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .nf.unread{{border-color:rgba(25,211,230,.5);background:linear-gradient(120deg, rgba(25,211,230,.1), rgba(8,33,47,.6))}}
  .nf-t{{font-size:14px;line-height:1.45}}
  .nf-at{{font-size:12px;color:var(--mist);margin-top:5px;font-family:"Space Grotesk",monospace}}
+ /* Service threads (toggle) */
+ .thread{{background:linear-gradient(180deg, rgba(20,62,82,.5), rgba(8,33,47,.6));
+   border:1px solid var(--line);border-radius:14px;margin-bottom:10px;overflow:hidden}}
+ .thread>summary{{list-style:none;cursor:pointer;display:flex;align-items:center;
+   justify-content:space-between;gap:12px;padding:15px 17px;font-size:14px}}
+ .thread>summary::-webkit-details-marker{{display:none}}
+ .thread>summary::after{{content:'⌄';color:var(--mist);font-size:18px;transition:transform .2s}}
+ .thread[open]>summary::after{{transform:rotate(180deg)}}
+ .th-sum{{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+ .thread>summary .badge{{flex:none}}
+ .msgs{{padding:4px 14px 16px;display:flex;flex-direction:column;gap:10px}}
+ .msg{{max-width:88%;padding:10px 13px;border-radius:14px;font-size:14px;line-height:1.45}}
+ .msg.in{{align-self:flex-start;background:rgba(155,246,236,.1);border:1px solid var(--line);border-bottom-left-radius:5px}}
+ .msg.out{{align-self:flex-end;background:linear-gradient(120deg, rgba(25,211,230,.18), rgba(61,240,197,.12));
+   border:1px solid rgba(61,240,197,.3);border-bottom-right-radius:5px}}
+ .msg-who{{font-size:11px;color:var(--mist);margin-bottom:4px;font-family:"Space Grotesk",monospace}}
+ .msg-b{{white-space:pre-wrap;word-break:break-word}}
  /* Pill nav */
  .pnav{{display:flex;gap:8px;overflow-x:auto;padding:12px 18px 0;max-width:980px;margin:0 auto;
    -webkit-overflow-scrolling:touch;scrollbar-width:none}}
