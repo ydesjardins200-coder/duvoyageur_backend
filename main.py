@@ -64,6 +64,7 @@ log = logging.getLogger("duvoyageur")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    _backfill_trip_contact()
     yield
 
 
@@ -741,6 +742,45 @@ def _close_returned_trips(db) -> None:
         r.awaiting_reply = False
     if rows:
         db.commit()
+
+
+def _backfill_trip_contact() -> None:
+    """Rescue trips stuck at needs_info only because their contact was missing,
+    when the client already has an email/phone on file. Recomputes status so
+    completed dossiers re-enter the 'new' priority queue."""
+    with SessionLocal() as db:
+        cases = db.query(Case).filter(Case.kind == "trip", Case.status == "needs_info").all()
+        changed = 0
+        for c in cases:
+            cl = db.get(Client, c.client_id) if c.client_id else None
+            if not cl:
+                continue
+            try:
+                trip = TripRequest.model_validate(c.trip)
+            except Exception:  # noqa: BLE001
+                continue
+            seeded = False
+            if not trip.customer_email and cl.primary_email:
+                trip.customer_email = cl.primary_email
+                seeded = True
+            if not trip.customer_phone and cl.primary_phone:
+                trip.customer_phone = cl.primary_phone
+                seeded = True
+            if not seeded:
+                continue
+            rem = trip.remaining_fields()
+            c.trip = trip.model_dump()
+            c.needs_clarification = rem
+            c.customer_email = trip.customer_email or c.customer_email
+            c.customer_phone = trip.customer_phone or c.customer_phone
+            if not rem:
+                c.status = "new"
+                log_activity(db, c.client_id, "status_change",
+                             "Statut : needs_info → new (contact récupéré de la fiche client)", c.id)
+            changed += 1
+        if changed:
+            db.commit()
+            log.info("Backfilled contact on %d trips stuck at needs_info", changed)
 
 
 def _handle_human_message(sender: str, text: str, shots: list | None) -> None:
@@ -2219,6 +2259,9 @@ async def admin_case_flights(case_id: int, request: Request):
     if not nxt.startswith("/admin/"):
         nxt = f"/admin/cases/{case_id}"
     return RedirectResponse(nxt, status_code=303)
+
+
+@app.get("/admin/cases/{case_id}/screenshot/{idx}", dependencies=[Depends(require_admin)])
 def admin_case_screenshot(case_id: int, idx: int):
     with SessionLocal() as db:
         c = db.get(Case, case_id)
