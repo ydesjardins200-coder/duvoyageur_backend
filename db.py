@@ -82,6 +82,9 @@ class Client(Base):
     # Single-use nonce for the current passwordless portal magic link (cleared
     # on first use). A fresh link overwrites it, so only the latest link works.
     portal_nonce: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Client-completed identity/KYC details (legal names, DOB, address, passport)
+    # captured in the portal — needed to actually book a trip.
+    kyc: Mapped[dict] = mapped_column(JSON, default=dict)
 
     identities = relationship(
         "ClientIdentity", back_populates="client",
@@ -223,6 +226,8 @@ def _ensure_columns() -> None:
                 "support_mode VARCHAR(20) DEFAULT 'profiling'"))
             conn.execute(text(
                 "ALTER TABLE clients ADD COLUMN IF NOT EXISTS portal_nonce VARCHAR(64)"))
+            conn.execute(text(
+                "ALTER TABLE clients ADD COLUMN IF NOT EXISTS kyc JSONB DEFAULT '{}'::jsonb"))
             has_kind = conn.execute(text(
                 "SELECT 1 FROM information_schema.columns "
                 "WHERE table_name='cases' AND column_name='kind'")).first()
@@ -268,6 +273,8 @@ def _ensure_columns() -> None:
                     "ALTER TABLE clients ADD COLUMN support_mode VARCHAR(20) DEFAULT 'profiling'"))
             if "portal_nonce" not in ccols:
                 conn.execute(text("ALTER TABLE clients ADD COLUMN portal_nonce VARCHAR(64)"))
+            if "kyc" not in ccols:
+                conn.execute(text("ALTER TABLE clients ADD COLUMN kyc JSON"))
             if "kind" not in cols:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN kind VARCHAR(20) DEFAULT 'trip'"))
                 conn.execute(text(

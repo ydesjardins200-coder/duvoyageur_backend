@@ -35,7 +35,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from config import settings
-from db import Case, Client, SessionLocal
+from db import Case, Client, SessionLocal, add_identity, log_activity, normalize_email, normalize_phone
 
 router = APIRouter()
 
@@ -190,16 +190,116 @@ def _dashboard(client, cases) -> str:
     return (
         f"<div class='hello'><h2>{hello}</h2>"
         "<p class='lede'>Voici tes demandes de voyage et leurs soumissions.</p></div>"
-        f"<div class='tgrid'>{cards}</div>")
+        + _kyc_banner(client)
+        + f"<div class='tgrid'>{cards}</div>")
+
+
+# --------------------------------------------------------------------------- #
+# Identity / KYC
+# --------------------------------------------------------------------------- #
+# (key, label, input type, required, half-width). email/phone live on the
+# Client; everything else is stored in the `kyc` JSON blob.
+_KYC_FIELDS = [
+    ("legal_first_name", "Prénom légal", "text", True, True),
+    ("legal_last_name", "Nom légal", "text", True, True),
+    ("date_of_birth", "Date de naissance", "date", True, True),
+    ("phone", "Téléphone", "tel", True, True),
+    ("email", "Courriel", "email", True, False),
+    ("address", "Adresse", "text", True, False),
+    ("city", "Ville", "text", True, True),
+    ("province", "Province / État", "text", True, True),
+    ("postal_code", "Code postal", "text", True, True),
+    ("country", "Pays", "text", True, True),
+    ("passport_number", "N° de passeport", "text", False, True),
+    ("passport_expiry", "Expiration du passeport", "date", False, True),
+]
+
+
+def _kyc_value(client, key):
+    if key == "email":
+        return client.primary_email
+    if key == "phone":
+        return client.primary_phone
+    return (client.kyc or {}).get(key)
+
+
+def kyc_status(client):
+    """(filled, total, [missing labels]) over the required identity fields."""
+    req = [f for f in _KYC_FIELDS if f[3]]
+    missing = [label for (k, label, _t, _r, _h) in req if not _kyc_value(client, k)]
+    return len(req) - len(missing), len(req), missing
+
+
+def _kyc_banner(client) -> str:
+    done, total, missing = kyc_status(client)
+    if not missing:
+        return ""
+    n = len(missing)
+    return (
+        "<a class='banner' href='/portail/profil'>"
+        "<div class='banner-txt'><b>Complète ton identité</b>"
+        f"<span>{n} champ{'s' if n > 1 else ''} à remplir pour qu'on puisse réserver tes voyages.</span></div>"
+        "<span class='banner-cta'>Compléter →</span></a>")
+
+
+def _profile_form(client, saved: bool = False) -> str:
+    done, total, _missing = kyc_status(client)
+    pct = int(done / total * 100) if total else 100
+    ok = "<div class='note ok'>Profil enregistré ✓</div>" if saved else ""
+    prog = (f"<div class='prog'><span style='width:{pct}%'></span></div>"
+            f"<p class='lede'>{done}/{total} champs essentiels remplis.</p>")
+
+    def field(k, label, typ, req, half):
+        val = escape(str(_kyc_value(client, k) or ""))
+        miss = req and not _kyc_value(client, k)
+        star = " <span class='req'>*</span>" if req else ""
+        cls = "field half" if half else "field"
+        if miss:
+            cls += " miss"
+        return (f"<div class='{cls}'><label>{label}{star}</label>"
+                f"<input name='{k}' type='{typ}' value=\"{val}\" inputmode='"
+                f"{'email' if typ == 'email' else ('tel' if typ == 'tel' else 'text')}'"
+                f"{' required' if req else ''}></div>")
+
+    def group(title, keys, sub=""):
+        fields = "".join(field(*f) for f in _KYC_FIELDS if f[0] in keys)
+        s = f" <span class='muted'>{sub}</span>" if sub else ""
+        return (f"<div class='fset'><h3>{title}{s}</h3>"
+                f"<div class='formgrid'>{fields}</div></div>")
+
+    return (
+        ok + prog
+        + "<form class='form' method='post' action='/portail/profil'>"
+        + group("Identité", ("legal_first_name", "legal_last_name", "date_of_birth"))
+        + group("Coordonnées", ("phone", "email", "address", "city",
+                                "province", "postal_code", "country"))
+        + group("Passeport", ("passport_number", "passport_expiry"),
+                "voyages internationaux")
+        + "<div class='actions'>"
+          "<button class='btn block' type='submit'>Enregistrer mon profil</button>"
+          "<a class='btn ghost' href='/portail'>Retour</a></div>"
+          "</form>")
+
+
+# --------------------------------------------------------------------------- #
+# Shell + nav
+# --------------------------------------------------------------------------- #
+def _nav(active: str) -> str:
+    items = [("voyages", "/portail", "Mes voyages"),
+             ("profil", "/portail/profil", "Mon profil")]
+    links = "".join(
+        f"<a class='pill{' on' if k == active else ''}' href='{href}'>{label}</a>"
+        for k, href, label in items)
+    return f"<nav class='pnav'>{links}</nav>"
 
 
 # --------------------------------------------------------------------------- #
 # Shell
 # --------------------------------------------------------------------------- #
-def _shell(title: str, body: str, logged_in: bool = False) -> str:
+def _shell(title: str, body: str, logged_in: bool = False, nav: str = "") -> str:
     logout = ("<a class='logout' href='/portail/logout'>Déconnexion</a>"
               if logged_in else "")
-    return _PORTAL_PAGE.format(title=escape(title), body=body, logout=logout)
+    return _PORTAL_PAGE.format(title=escape(title), body=body, logout=logout, nav=nav)
 
 
 def _info_page(title: str, message: str, logged_in: bool = False) -> str:
@@ -311,9 +411,64 @@ def portal_home(request: Request):
                 "On n'a pas retrouvé ton dossier. Écris-nous sur Messenger. 🙂"))
         cases = list(client.requests)
         body = _dashboard(client, cases)
-    resp = HTMLResponse(_shell("Mon espace", body, logged_in=True))
+    resp = HTMLResponse(_shell("Mon espace", body, logged_in=True, nav=_nav("voyages")))
     _set_session_cookie(resp, cid)          # sliding expiry on every visit
     return resp
+
+
+@router.get("/portail/profil", response_class=HTMLResponse)
+def portal_profile(request: Request, saved: int = 0):
+    cid = current_portal_client_id(request)
+    if not cid:
+        return HTMLResponse(_info_page(
+            "Espace client",
+            "Pour accéder à ton profil, ouvre ton lien personnel ou redemande-le "
+            "sur Messenger (menu ☰ → « 🔐 Mon espace client »). 🔐"))
+    with SessionLocal() as db:
+        client = db.get(Client, cid)
+        if not client:
+            return HTMLResponse(_info_page("Espace client", "Dossier introuvable. 🙂"))
+        body = ("<div class='hello'><h2>Mon profil</h2>"
+                "<p class='lede'>Ces infos nous servent à réserver tes voyages au bon nom.</p></div>"
+                + _profile_form(client, saved=bool(saved)))
+    resp = HTMLResponse(_shell("Mon profil", body, logged_in=True, nav=_nav("profil")))
+    _set_session_cookie(resp, cid)
+    return resp
+
+
+@router.post("/portail/profil")
+async def portal_profile_save(request: Request):
+    cid = current_portal_client_id(request)
+    if not cid:
+        return RedirectResponse("/portail", status_code=303)
+    form = await request.form()
+    with SessionLocal() as db:
+        client = db.get(Client, cid)
+        if client:
+            kyc = dict(client.kyc or {})
+            for k, _label, _typ, _req, _half in _KYC_FIELDS:
+                v = (form.get(k) or "").strip()
+                if k == "email":
+                    em = normalize_email(v)
+                    if em:
+                        client.primary_email = em
+                        add_identity(db, client, "email", em)
+                elif k == "phone":
+                    ph = normalize_phone(v)
+                    if ph:
+                        client.primary_phone = ph
+                        add_identity(db, client, "phone", ph)
+                else:
+                    kyc[k] = v or None
+            client.kyc = kyc
+            if not client.display_name:
+                full = " ".join(x for x in (kyc.get("legal_first_name"),
+                                            kyc.get("legal_last_name")) if x)
+                if full:
+                    client.display_name = full
+            log_activity(db, cid, "note", "Identité mise à jour (espace client)", None)
+            db.commit()
+    return RedirectResponse("/portail/profil?saved=1", status_code=303)
 
 
 @router.get("/portail/logout")
@@ -329,76 +484,149 @@ def portal_logout():
 # HTML shell template (standalone, client-facing brand — no admin nav)
 # --------------------------------------------------------------------------- #
 _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#03121b">
 <title>Du Voyageur — {title}</title>
 <link rel="icon" type="image/png" href="/static/logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet">
 <style>
  :root{{
    --abyss:#03121b;--deep:#0a3346;--pacific:#19d3e6;--lagoon:#3df0c5;
    --surf:#9bf6ec;--gold:#ffd23f;--foam:#eafcff;--mist:#94b8c6;
    --line:rgba(155,246,236,.16);--glow:rgba(25,211,230,.55);
+   --field:rgba(3,18,27,.55);
  }}
  *{{box-sizing:border-box}}
+ html{{-webkit-text-size-adjust:100%}}
  body{{margin:0;min-height:100vh;font-family:"Inter",system-ui,sans-serif;color:var(--foam);
+   font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased;
    background:
-     radial-gradient(80% 55% at 80% -5%, rgba(25,211,230,.18), transparent 60%),
-     linear-gradient(180deg, rgba(3,18,27,.92), rgba(3,18,27,.97)),
+     radial-gradient(90% 60% at 85% -8%, rgba(25,211,230,.18), transparent 60%),
+     linear-gradient(180deg, rgba(3,18,27,.93), rgba(3,18,27,.98)),
      url("/static/login-bg.webp") center/cover fixed no-repeat;}}
  a{{color:var(--pacific)}}
+ h1,h2,h3{{font-family:"Bricolage Grotesque",sans-serif;letter-spacing:-.02em}}
+ :focus-visible{{outline:2px solid var(--pacific);outline-offset:2px;border-radius:6px}}
+ /* Header */
  .top{{display:flex;align-items:center;justify-content:space-between;gap:12px;
-   padding:16px 22px;border-bottom:1px solid var(--line);
-   background:linear-gradient(180deg, rgba(8,33,47,.6), rgba(8,33,47,.25));
-   backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+   padding:14px 18px;padding-top:max(14px,env(safe-area-inset-top));
+   border-bottom:1px solid var(--line);
+   background:linear-gradient(180deg, rgba(8,33,47,.72), rgba(8,33,47,.35));
+   backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
    position:sticky;top:0;z-index:5}}
- .brand{{display:flex;align-items:center;gap:12px}}
- .brand img{{width:42px;height:42px;border-radius:50%;box-shadow:0 0 0 1px var(--line)}}
- .brand b{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:18px;letter-spacing:-.02em}}
+ .brand{{display:flex;align-items:center;gap:11px;min-width:0}}
+ .brand img{{width:40px;height:40px;border-radius:50%;box-shadow:0 0 0 1px var(--line);flex:none}}
+ .brand b{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:17px;display:block;line-height:1.1}}
  .brand span{{font-family:"Space Grotesk",monospace;text-transform:uppercase;letter-spacing:.2em;
    font-size:10px;color:var(--pacific);display:block;margin-top:2px}}
- .logout{{font-size:13px;color:var(--mist);text-decoration:none}}
- .logout:hover{{color:var(--foam)}}
- .wrap{{max-width:820px;margin:0 auto;padding:26px 20px 60px}}
- .hello h2{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:26px;
-   letter-spacing:-.02em;margin:6px 0 2px}}
- .lede{{color:var(--mist);margin:0 0 22px;font-size:14px}}
+ .logout{{font-size:13px;color:var(--mist);text-decoration:none;white-space:nowrap;
+   padding:8px 10px;border-radius:10px}}
+ .logout:hover,.logout:active{{color:var(--foam)}}
+ /* Pill nav */
+ .pnav{{display:flex;gap:8px;overflow-x:auto;padding:12px 18px 0;max-width:980px;margin:0 auto;
+   -webkit-overflow-scrolling:touch;scrollbar-width:none}}
+ .pnav::-webkit-scrollbar{{display:none}}
+ .pill{{flex:none;font-size:14px;font-weight:600;text-decoration:none;color:var(--mist);
+   padding:9px 16px;border-radius:999px;border:1px solid var(--line);
+   background:rgba(8,33,47,.4)}}
+ .pill.on{{color:#02161c;background:linear-gradient(120deg,var(--pacific),var(--lagoon));border-color:transparent}}
+ /* Layout */
+ .wrap{{max-width:980px;margin:0 auto;padding:22px 18px 64px;
+   padding-left:max(18px,env(safe-area-inset-left));padding-right:max(18px,env(safe-area-inset-right))}}
+ .hello h2{{font-weight:800;font-size:26px;margin:6px 0 2px}}
+ .lede{{color:var(--mist);margin:0 0 20px;font-size:14px}}
+ /* Banner */
+ .banner{{display:flex;align-items:center;justify-content:space-between;gap:14px;
+   text-decoration:none;color:var(--foam);margin:0 0 18px;
+   background:linear-gradient(120deg, rgba(255,210,63,.14), rgba(255,210,63,.06));
+   border:1px solid rgba(255,210,63,.42);border-radius:16px;padding:15px 18px}}
+ .banner-txt b{{display:block;font-family:"Bricolage Grotesque",sans-serif;font-weight:700;margin-bottom:2px}}
+ .banner-txt span{{color:var(--mist);font-size:13px}}
+ .banner-cta{{color:var(--gold);font-weight:600;white-space:nowrap;flex:none}}
+ /* Trip cards */
  .tgrid{{display:grid;gap:16px}}
  .tcard{{background:linear-gradient(180deg, rgba(20,62,82,.5), rgba(8,33,47,.6));
    border:1px solid var(--line);border-radius:18px;padding:20px 22px;
    box-shadow:0 24px 60px -28px rgba(0,0,0,.8)}}
  .tcard.empty{{color:var(--mist);text-align:center}}
  .tchdr{{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;flex-wrap:wrap}}
- .tchdr h3{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:19px;margin:0}}
+ .tchdr h3{{font-weight:700;font-size:19px;margin:0}}
  .badge{{font-family:"Space Grotesk",monospace;text-transform:uppercase;letter-spacing:.08em;
    font-size:11px;padding:5px 11px;border-radius:999px;white-space:nowrap}}
  .badge.prep{{background:rgba(148,184,198,.16);color:var(--surf)}}
  .badge.quote{{background:rgba(255,210,63,.16);color:var(--gold)}}
  .badge.booked{{background:rgba(61,240,197,.16);color:var(--lagoon)}}
  .badge.done{{background:rgba(148,184,198,.12);color:var(--mist)}}
- .row{{display:flex;justify-content:space-between;gap:14px;padding:7px 0;border-top:1px solid var(--line);font-size:14px}}
- .row .k{{color:var(--mist)}}
- .row .v{{font-weight:600;text-align:right}}
+ .row{{display:flex;justify-content:space-between;gap:14px;padding:8px 0;border-top:1px solid var(--line);font-size:14px}}
+ .row .k{{color:var(--mist);flex:none}}
+ .row .v{{font-weight:600;text-align:right;word-break:break-word}}
  .eco{{margin:12px 0 4px;font-size:15px}}
- .muted{{color:var(--mist);font-size:13px;margin-top:10px}}
- .btn{{display:inline-block;margin-top:14px;font-family:"Bricolage Grotesque",sans-serif;font-weight:700;
-   font-size:14px;padding:11px 18px;border-radius:999px;text-decoration:none;color:#02161c;
-   background:linear-gradient(120deg,var(--pacific),var(--lagoon));
-   box-shadow:0 12px 30px -12px var(--glow)}}
- .btn:hover{{transform:translateY(-1px)}}
- .infobox{{max-width:480px;margin:60px auto;text-align:center;
+ .muted{{color:var(--mist);font-size:13px;margin-top:10px;font-weight:400}}
+ /* Buttons */
+ .btn{{display:inline-flex;align-items:center;justify-content:center;gap:6px;
+   font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:15px;
+   min-height:48px;padding:12px 22px;border-radius:999px;text-decoration:none;cursor:pointer;
+   color:#02161c;border:0;background:linear-gradient(120deg,var(--pacific),var(--lagoon));
+   box-shadow:0 12px 30px -12px var(--glow);transition:transform .15s,box-shadow .15s}}
+ .btn:hover{{transform:translateY(-1px);box-shadow:0 16px 36px -12px var(--glow)}}
+ .btn.block{{width:100%}}
+ .btn.ghost{{background:transparent;color:var(--foam);border:1px solid var(--line);box-shadow:none}}
+ .actions{{display:flex;gap:12px;margin-top:22px;flex-wrap:wrap}}
+ .actions .btn{{flex:1;min-width:160px}}
+ /* Forms */
+ .form{{margin-top:6px}}
+ .fset{{background:linear-gradient(180deg, rgba(20,62,82,.4), rgba(8,33,47,.5));
+   border:1px solid var(--line);border-radius:18px;padding:18px 18px 20px;margin-bottom:16px}}
+ .fset>h3{{font-size:15px;margin:0 0 14px;font-weight:700}}
+ .fset>h3 .muted{{font-size:12px;margin:0}}
+ .formgrid{{display:grid;grid-template-columns:1fr 1fr;gap:14px}}
+ .field{{display:flex;flex-direction:column;min-width:0}}
+ .field.half{{grid-column:span 1}}
+ .field:not(.half){{grid-column:1 / -1}}
+ .field label{{font-size:12px;color:var(--mist);margin:0 0 6px;font-weight:500}}
+ .field .req{{color:var(--gold)}}
+ .field input{{width:100%;font:inherit;font-size:16px;color:var(--foam);
+   min-height:48px;padding:12px 13px;border-radius:12px;
+   border:1px solid var(--line);background:var(--field)}}
+ .field input::placeholder{{color:#6f93a3}}
+ .field input:focus{{outline:none;border-color:var(--pacific);box-shadow:0 0 0 3px rgba(25,211,230,.18)}}
+ .field.miss input{{border-color:rgba(255,210,63,.55)}}
+ /* Progress */
+ .prog{{height:8px;border-radius:999px;background:rgba(8,33,47,.7);overflow:hidden;margin:2px 0 6px}}
+ .prog span{{display:block;height:100%;border-radius:999px;
+   background:linear-gradient(90deg,var(--pacific),var(--lagoon));transition:width .4s ease}}
+ .note{{border-radius:12px;padding:11px 14px;font-size:14px;margin:0 0 16px}}
+ .note.ok{{background:rgba(61,240,197,.12);border:1px solid rgba(61,240,197,.4);color:var(--lagoon)}}
+ /* Info / confirm pages */
+ .infobox{{max-width:460px;margin:56px auto;text-align:center;
    background:linear-gradient(180deg, rgba(20,62,82,.5), rgba(8,33,47,.6));
-   border:1px solid var(--line);border-radius:20px;padding:34px 28px}}
- .infobox h2{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;margin:0 0 10px}}
+   border:1px solid var(--line);border-radius:20px;padding:34px 26px}}
+ .infobox h2{{font-weight:800;margin:0 0 10px}}
  .infobox p{{color:var(--mist);font-size:15px;line-height:1.55;margin:0}}
  .foot{{text-align:center;color:var(--mist);opacity:.7;font-size:11px;margin-top:34px}}
+ /* Mobile */
+ @media (max-width:560px){{
+   .wrap{{padding:18px 15px 56px}}
+   .hello h2{{font-size:23px}}
+   .tcard,.fset{{padding:17px 16px}}
+   .formgrid{{grid-template-columns:1fr;gap:13px}}
+   .field.half{{grid-column:1 / -1}}
+   .actions{{flex-direction:column-reverse}}
+   .actions .btn{{width:100%}}
+   .brand span{{font-size:9px;letter-spacing:.16em}}
+ }}
+ @media (prefers-reduced-motion: reduce){{
+   *{{transition:none !important;animation:none !important}}
+ }}
 </style></head><body>
  <div class="top">
    <div class="brand"><img src="/static/logo.png" alt="Du Voyageur">
      <div><b>Du Voyageur</b><span>Espace client</span></div></div>
    {logout}
  </div>
+ {nav}
  <div class="wrap">{body}
    <div class="foot">Du Voyageur · Permis d'agence 700495</div>
  </div>
