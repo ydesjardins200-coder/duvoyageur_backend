@@ -598,14 +598,14 @@ _BOARD_FR = {"all_inclusive": "Tout inclus", "breakfast": "Petit-déjeuner",
 _BASIS_FR = {"per_person": "par personne", "total": "pour le groupe", "unknown": None}
 
 
-def _trip_info_cards(c) -> str:
-    """Voyage / Voyageurs / Prix trouvé / Captures cards for a trip case — the
-    same structured layout as the case detail, reusable on the client fiche."""
+def _trip_info_cards(c, editable: bool = False) -> str:
+    """Voyage / Voyageurs / Prix trouvé / Captures cards for a trip case. When
+    editable, each card carries an inline edit form (toggled per voyagebox)."""
     t = c.trip or {}
 
     def val(x):
         if x in (None, "", [], "unknown"):
-            return "<span class='muted'>—</span>"
+            return "<span class='muted'>\u2014</span>"
         return escape(str(x))
 
     def kv(label, value, sub=None):
@@ -613,14 +613,31 @@ def _trip_info_cards(c) -> str:
         return (f"<div class='kv'><span class='k'>{label}</span>"
                 f"<span class='v'>{value}{sub_html}</span></div>")
 
-    def card(title, *rows):
-        return f"<div class='card'><h3>{title}</h3>{''.join(rows)}</div>"
+    def inp(label, name, value, typ="text"):
+        v = "" if value in (None, "") else escape(str(value))
+        return (f"<label class='flbl'>{label}</label>"
+                f"<input name='{name}' type='{typ}'" + (" step='any'" if typ == "number" else "")
+                + f" value=\"{v}\">")
+
+    def sel(label, name, value, options):
+        o = "".join(f"<option value='{ov}'{' selected' if str(value or '') == str(ov) else ''}>{ol}</option>"
+                    for ov, ol in options)
+        return f"<label class='flbl'>{label}</label><select name='{name}'>{o}</select>"
+
+    def card(title, view_rows, edit_rows=""):
+        hdr = f"<h3 style='margin:0'>{title}</h3>"
+        if editable and edit_rows:
+            hdr = ("<div class='cardhdr2'>" + hdr
+                   + f"<button type='button' class='editbtn' onclick='tripEdit({c.id},true)'>\u270f\ufe0f \u00c9diter</button></div>")
+            return (f"<div class='card'>{hdr}<div class='cardv'>{view_rows}</div>"
+                    f"<div class='carde'>{edit_rows}</div></div>")
+        return f"<div class='card'>{hdr}{view_rows}</div>"
 
     city, iata = t.get("origin_city"), t.get("origin_airport_iata")
     origin = f"{city} ({iata})" if city and iata else (city or iata)
     dep, ret, nights = t.get("departure_date"), t.get("return_date"), t.get("nights")
     if dep or ret:
-        dates = f"{dep or '?'} → {ret or '?'}" + (f" · {nights} nuits" if nights else "")
+        dates = f"{dep or '?'} \u2192 {ret or '?'}" + (f" \u00b7 {nights} nuits" if nights else "")
     else:
         dates = t.get("dates_raw")
     hotel = t.get("hotel_name_raw")
@@ -633,27 +650,60 @@ def _trip_info_cards(c) -> str:
     taxes = ps.get("taxes_included")
     taxes_str = "Oui" if taxes is True else ("Non" if taxes is False else None)
 
+    board_opts = [("", "\u2014")] + [(k, v) for k, v in _BOARD_FR.items() if k != "unknown"]
+    basis_opts = [("", "\u2014"), ("per_person", "par personne"), ("total", "pour le groupe")]
+    taxes_opts = [("", "\u2014"), ("true", "Oui"), ("false", "Non")]
+    taxes_val = "true" if taxes is True else ("false" if taxes is False else "")
+
+    voyage_view = (
+        kv("Destination", val(t.get("destination")))
+        + kv("H\u00f4tel", val(hotel), sub=hotel_sub)
+        + kv("D\u00e9part", val(origin))
+        + kv("Dates", val(dates))
+        + kv("Forfait", val(_BOARD_FR.get(t.get("board"))))
+        + kv("Transporteur", val(t.get("operator"))))
+    voyage_edit = (
+        inp("Destination", "destination", t.get("destination"))
+        + inp("H\u00f4tel", "hotel_name_raw", hotel)
+        + inp("Ville de d\u00e9part", "origin_city", city)
+        + inp("A\u00e9roport (IATA)", "origin_airport_iata", iata)
+        + inp("Date d\u00e9part", "departure_date", dep, "date")
+        + inp("Date retour", "return_date", ret, "date")
+        + inp("Nuits", "nights", nights, "number")
+        + sel("Forfait", "board", t.get("board"), board_opts)
+        + inp("Transporteur", "operator", t.get("operator")))
+
+    voyageurs_view = (
+        kv("Adultes", val(t.get("num_adults")))
+        + kv("Enfants", val(t.get("num_children")))
+        + kv("\u00c2ges", val(ages_str))
+        + kv("Chambres", val(t.get("num_rooms")))
+        + kv("Type de chambre", val(t.get("room_type"))))
+    voyageurs_edit = (
+        inp("Adultes", "num_adults", t.get("num_adults"), "number")
+        + inp("Enfants", "num_children", t.get("num_children"), "number")
+        + inp("Chambres", "num_rooms", t.get("num_rooms"), "number")
+        + inp("Type de chambre", "room_type", t.get("room_type")))
+
+    prix_view = (
+        kv("Montant", val(price_amt))
+        + kv("Base", val(_BASIS_FR.get(ps.get("basis"))))
+        + kv("Taxes incluses", val(taxes_str))
+        + kv("Source", val(t.get("source")))
+        + kv("Texte original", val(ps.get("raw"))))
+    prix_edit = (
+        inp("Montant", "price_amount", ps.get("amount"), "number")
+        + inp("Devise", "price_currency", ps.get("currency") or "CAD")
+        + sel("Base", "price_basis", ps.get("basis"), basis_opts)
+        + sel("Taxes incluses", "price_taxes", taxes_val, taxes_opts)
+        + inp("Source", "source", t.get("source"))
+        + inp("Texte original", "price_raw", ps.get("raw")))
+
     cards = (
-        card("Voyage",
-             kv("Destination", val(t.get("destination"))),
-             kv("Hôtel", val(hotel), sub=hotel_sub),
-             kv("Départ", val(origin)),
-             kv("Dates", val(dates)),
-             kv("Forfait", val(_BOARD_FR.get(t.get("board")))),
-             kv("Transporteur", val(t.get("operator")))) +
-        card("Voyageurs",
-             kv("Adultes", val(t.get("num_adults"))),
-             kv("Enfants", val(t.get("num_children"))),
-             kv("Âges", val(ages_str)),
-             kv("Chambres", val(t.get("num_rooms"))),
-             kv("Type de chambre", val(t.get("room_type")))) +
-        card("Prix trouvé",
-             kv("Montant", val(price_amt)),
-             kv("Base", val(_BASIS_FR.get(ps.get("basis")))),
-             kv("Taxes incluses", val(taxes_str)),
-             kv("Source", val(t.get("source"))),
-             kv("Texte original", val(ps.get("raw"))))
-    )
+        card("Voyage", voyage_view, voyage_edit)
+        + card("Voyageurs", voyageurs_view, voyageurs_edit)
+        + card("Prix trouv\u00e9", prix_view, prix_edit))
+
     shots = c.screenshots or []
     if shots:
         imgs = "".join(
@@ -662,16 +712,29 @@ def _trip_info_cards(c) -> str:
             "style='max-width:100%;max-height:460px;display:block;margin:0 auto 10px;"
             "border-radius:10px;border:1px solid var(--line);background:rgba(3,18,27,.4)'></a>"
             for i in range(len(shots)))
-        cards += (f"<div class='card'><h3>Capture(s) d'écran · {len(shots)}</h3>{imgs}"
+        cards += (f"<div class='card'><h3>Capture(s) d'\u00e9cran \u00b7 {len(shots)}</h3>{imgs}"
                   "<p class='sub'>Clique pour agrandir.</p></div>")
     return cards
 
 
 def _trip_fulfillment_section(c, redirect: str) -> str:
     """Status-driven action area shown at the bottom of a trip box:
-    needs_info -> missing fields; quoted -> quote URL; booked -> flight dates;
-    closed -> read-only summary (feedback later). new -> nothing."""
+    needs_info -> missing fields; quoted -> quote URL + savings; booked/closed ->
+    read-only summary (quote, savings, flights auto-captured from the trip)."""
     st = c.status
+    t = c.trip or {}
+
+    def link_row(label, url):
+        return (f"<div class='kv'><span class='k'>{label}</span><span class='v'>"
+                f"<a href=\"{escape(url)}\" target='_blank'>Ouvrir &rarr;</a></span></div>")
+
+    def info_row(label, value):
+        return (f"<div class='kv'><span class='k'>{label}</span>"
+                f"<span class='v'>{escape(str(value))}</span></div>")
+
+    # Flight dates are the trip's own dates (captured from the Voyage card).
+    dep, ret, draw = t.get("departure_date"), t.get("return_date"), t.get("dates_raw")
+    vols = (f"{dep or '?'} \u2192 {ret or '?'}") if (dep or ret) else (draw or None)
 
     if st == "needs_info":
         missing = c.needs_clarification or []
@@ -682,46 +745,44 @@ def _trip_fulfillment_section(c, redirect: str) -> str:
                 f"<div class='chips'>{chips}</div></div>")
 
     if st == "quoted":
-        cur = c.quote_url or ""
-        shown = (f"<div class='kv'><span class='k'>Quote déposée</span>"
-                 f"<span class='v'><a href=\"{escape(cur)}\" target='_blank'>Ouvrir la quote &rarr;</a>"
-                 "</span></div>") if cur else ""
-        return ("<div class='fbox'><div class='fhdr'>Quote du client (URL)</div>"
+        cur, sav = c.quote_url or "", c.savings or ""
+        shown = ""
+        if cur:
+            shown += link_row("Quote d\u00e9pos\u00e9e", cur) + info_row("Lien", cur)
+        if sav:
+            shown += info_row("\u00c9conomie", sav)
+        return ("<div class='fbox'><div class='fhdr'>Quote &amp; \u00e9conomie</div>"
                 f"{shown}"
                 f"<form method='post' action='/admin/cases/{c.id}/quote'>"
                 f"<input type='hidden' name='next' value=\"{escape(redirect)}\">"
-                f"<input name='quote_url' type='url' placeholder='https://…' "
+                "<label class='flbl'>Lien de la quote</label>"
+                f"<input name='quote_url' type='url' placeholder='https://\u2026' "
                 f"value=\"{escape(cur)}\" style='width:100%'>"
-                "<button style='margin-top:10px'>Enregistrer la quote</button></form></div>")
+                "<label class='flbl' style='margin-top:10px'>\u00c9conomie (rabais donn\u00e9 au client)</label>"
+                f"<input name='savings' placeholder='ex. 195 $' value=\"{escape(sav)}\" style='width:100%'>"
+                "<button style='margin-top:12px'>Enregistrer</button></form></div>")
 
     if st == "booked":
-        dd, rr = c.flight_depart or "", c.flight_return or ""
-        q = (f"<div class='kv'><span class='k'>Quote</span><span class='v'>"
-             f"<a href=\"{escape(c.quote_url)}\" target='_blank'>Ouvrir &rarr;</a></span></div>"
-             ) if c.quote_url else ""
-        return ("<div class='fbox'><div class='fhdr'>Dates de vol (selon la quote)</div>"
-                f"{q}"
-                f"<form method='post' action='/admin/cases/{c.id}/flights'>"
-                f"<input type='hidden' name='next' value=\"{escape(redirect)}\">"
-                "<div style='display:flex;gap:16px;flex-wrap:wrap'>"
-                "<div><label class='flbl'>Vol aller</label><br>"
-                f"<input name='flight_depart' type='date' value='{escape(dd)}'></div>"
-                "<div><label class='flbl'>Vol retour</label><br>"
-                f"<input name='flight_return' type='date' value='{escape(rr)}'></div></div>"
-                "<button style='margin-top:12px'>Enregistrer les vols</button></form>"
-                "<p class='sub'>Le dossier passera automatiquement à « closed » après la date "
-                "de retour.</p></div>")
+        bits = []
+        if c.quote_url:
+            bits.append(link_row("Quote", c.quote_url))
+        if c.savings:
+            bits.append(info_row("\u00c9conomie", c.savings))
+        bits.append(info_row("Vols", vols or "\u2014"))
+        return ("<div class='fbox'><div class='fhdr'>Quote, \u00e9conomie &amp; vols</div>"
+                + "".join(bits)
+                + "<p class='sub'>Les dates de vol proviennent de la carte Voyage. Le dossier "
+                "passera automatiquement \u00e0 \u00ab closed \u00bb apr\u00e8s la date de retour.</p></div>")
 
     if st == "closed":
         bits = []
         if c.quote_url:
-            bits.append(f"<div class='kv'><span class='k'>Quote</span><span class='v'>"
-                        f"<a href=\"{escape(c.quote_url)}\" target='_blank'>Ouvrir &rarr;</a></span></div>")
-        if c.flight_depart or c.flight_return:
-            bits.append("<div class='kv'><span class='k'>Vols</span><span class='v'>"
-                        f"{escape(c.flight_depart or '?')} → {escape(c.flight_return or '?')}</span></div>")
-        bits.append("<p class='sub'>Voyage terminé. La collecte de feedback s'affichera ici.</p>")
-        return f"<div class='fbox'><div class='fhdr'>Voyage complété</div>{''.join(bits)}</div>"
+            bits.append(link_row("Quote", c.quote_url))
+        if c.savings:
+            bits.append(info_row("\u00c9conomie", c.savings))
+        bits.append(info_row("Vols", vols or "\u2014"))
+        bits.append("<p class='sub'>Voyage termin\u00e9. La collecte de feedback s'affichera ici.</p>")
+        return f"<div class='fbox'><div class='fhdr'>Voyage compl\u00e9t\u00e9</div>{''.join(bits)}</div>"
 
     return ""  # new
 
@@ -1108,6 +1169,16 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .idtab>.col{{display:flex;flex-direction:column;gap:16px}}
  .voyagebox{{border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin:0 0 22px;background:rgba(255,255,255,.012)}}
  .voyagebox .grid2{{margin:14px 0}}
+ .cardhdr2{{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}}
+ .cardhdr2 h3{{margin:0}}
+ .voyagebox .carde{{display:none}}
+ .voyagebox.editing .cardv{{display:none}}
+ .voyagebox.editing .carde{{display:block}}
+ .carde .flbl{{display:block;margin-top:8px}}
+ .carde input,.carde select{{width:100%}}
+ .savebar{{display:none;margin-top:14px;gap:10px}}
+ .voyagebox.editing .savebar{{display:flex}}
+ .voyagebox.editing .editbtn{{display:none}}
  .fbox{{margin-top:8px;padding:16px 18px;border:1px solid var(--line);border-radius:12px;background:rgba(6,28,40,.45)}}
  .fhdr{{font-family:"Space Grotesk",monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--pacific);margin-bottom:10px}}
  .act-card{{position:relative;padding:0;min-height:320px}}
@@ -1720,18 +1791,27 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
             if trips:
                 blocks = []
                 for r in trips:
+                    nxt = f"{base}?tab=voyage"
                     blocks.append(
-                        "<div class='voyagebox'>"
+                        f"<div class='voyagebox' id='vb-{r.id}'>"
                         "<div class='pagehdr'>"
                         f"<h3 style='margin:0'>#{r.id} <span class='tag {r.status}'>{r.status}</span></h3>"
-                        + status_form(r.id, r.status, f"{base}?tab=voyage")
+                        + status_form(r.id, r.status, nxt)
                         + "</div>"
-                        f"<div class='grid2'>{_trip_info_cards(r)}</div>"
-                        + _trip_fulfillment_section(r, f"{base}?tab=voyage")
+                        f"<form method='post' action='/admin/cases/{r.id}/trip'>"
+                        f"<input type='hidden' name='next' value=\"{nxt}\">"
+                        f"<div class='grid2'>{_trip_info_cards(r, editable=True)}</div>"
+                        "<div class='savebar'><button>Enregistrer les modifications</button> "
+                        f"<button type='button' class='btn-ghost' onclick='tripEdit({r.id},false)'>Annuler</button></div>"
+                        "</form>"
+                        + _trip_fulfillment_section(r, nxt)
                         + f"<div style='margin-top:14px'><a href='/admin/cases/{r.id}'>Ouvrir le dossier &rarr;</a></div>"
                         "</div>"
                     )
-                content = "".join(blocks)
+                content = "".join(blocks) + (
+                    "<script>function tripEdit(i,on){var b=document.getElementById('vb-'+i);"
+                    "if(b)b.classList[on?'add':'remove']('editing');}</script>"
+                )
             else:
                 content = "<div class='card full'><div class='muted'>Aucune demande de voyage.</div></div>"
 
@@ -2223,6 +2303,10 @@ async def admin_update_status(case_id: int, request: Request):
                          f"Statut : {c.status} → {new_status}", c.id)
             c.status = new_status
             c.awaiting_reply = False                    # we triaged it
+            if new_status == "booked":                  # capture flight dates from the trip
+                tt = c.trip or {}
+                c.flight_depart = c.flight_depart or tt.get("departure_date")
+                c.flight_return = c.flight_return or tt.get("return_date")
             db.commit()
     if not nxt.startswith("/admin/"):                   # only allow internal redirects
         nxt = f"/admin/cases/{case_id}"
@@ -2237,9 +2321,83 @@ async def admin_case_quote(case_id: int, request: Request):
         c = db.get(Case, case_id)
         if c:
             c.quote_url = (form.get("quote_url") or "").strip() or None
+            c.savings = (form.get("savings") or "").strip() or None
             log_activity(db, c.client_id, "note",
                          "Quote déposée" if c.quote_url else "Quote retirée", c.id)
             db.commit()
+    if not nxt.startswith("/admin/"):
+        nxt = f"/admin/cases/{case_id}"
+    return RedirectResponse(nxt, status_code=303)
+
+
+@app.post("/admin/cases/{case_id}/trip", dependencies=[Depends(require_admin)])
+async def admin_case_trip(case_id: int, request: Request):
+    """Update the trip's Voyage / Voyageurs / Prix fields from the inline editor,
+    then recompute what's still missing and the (non-terminal) status."""
+    form = await request.form()
+    nxt = form.get("next") or f"/admin/cases/{case_id}"
+
+    def g(k):
+        return (form.get(k) or "").strip() or None
+
+    def gi(k):
+        v = (form.get(k) or "").strip()
+        try:
+            return int(float(v)) if v else None
+        except ValueError:
+            return None
+
+    def gf(k):
+        v = (form.get(k) or "").strip()
+        try:
+            return float(v) if v else None
+        except ValueError:
+            return None
+
+    taxes_raw = (form.get("price_taxes") or "").strip()
+    taxes = True if taxes_raw == "true" else (False if taxes_raw == "false" else None)
+    with SessionLocal() as db:
+        c = db.get(Case, case_id)
+        if c:
+            d = dict(c.trip or {})
+            d.update({
+                "destination": g("destination"),
+                "hotel_name_raw": g("hotel_name_raw"),
+                "origin_city": g("origin_city"),
+                "origin_airport_iata": g("origin_airport_iata"),
+                "departure_date": g("departure_date"),
+                "return_date": g("return_date"),
+                "nights": gi("nights"),
+                "board": g("board") or "unknown",
+                "operator": g("operator"),
+                "num_adults": gi("num_adults"),
+                "num_children": gi("num_children"),
+                "num_rooms": gi("num_rooms"),
+                "room_type": g("room_type"),
+                "source": g("source"),
+            })
+            ps = dict(d.get("price_seen") or {})
+            ps.update({"amount": gf("price_amount"), "currency": g("price_currency") or "CAD",
+                       "basis": g("price_basis") or "unknown", "taxes_included": taxes,
+                       "raw": g("price_raw")})
+            d["price_seen"] = ps
+            try:
+                trip = TripRequest.model_validate(d)
+            except Exception:  # noqa: BLE001
+                trip = None
+            if trip is not None:
+                rem = trip.remaining_fields()
+                c.trip = trip.model_dump()
+                c.needs_clarification = rem
+                c.customer_email = trip.customer_email or c.customer_email
+                c.customer_phone = trip.customer_phone or c.customer_phone
+                if c.status in ("new", "needs_info"):
+                    c.status = "new" if not rem else "needs_info"
+                if c.status == "booked":               # keep flights synced with trip dates
+                    c.flight_depart = trip.departure_date
+                    c.flight_return = trip.return_date
+                log_activity(db, c.client_id, "note", "Dossier modifié (cartes voyage)", c.id)
+                db.commit()
     if not nxt.startswith("/admin/"):
         nxt = f"/admin/cases/{case_id}"
     return RedirectResponse(nxt, status_code=303)

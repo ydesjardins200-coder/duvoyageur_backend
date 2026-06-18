@@ -164,6 +164,7 @@ class Case(Base):
 
     # Fulfillment fields, filled as the trip moves through the pipeline.
     quote_url: Mapped[Optional[str]] = mapped_column(String(600), nullable=True)   # quoted
+    savings: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)        # quoted
     flight_depart: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)  # booked
     flight_return: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)  # booked
 
@@ -191,6 +192,7 @@ def _ensure_columns() -> None:
                 "ALTER TABLE cases ADD COLUMN IF NOT EXISTS messages JSONB DEFAULT '[]'::jsonb"
             ))
             conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS quote_url VARCHAR(600)"))
+            conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS savings VARCHAR(60)"))
             conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS flight_depart VARCHAR(40)"))
             conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS flight_return VARCHAR(40)"))
             # Support cases use open/resolved; remap any legacy trip-statuses.
@@ -233,6 +235,8 @@ def _ensure_columns() -> None:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN messages JSON"))
             if "quote_url" not in cols:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN quote_url VARCHAR(600)"))
+            if "savings" not in cols:
+                conn.execute(text("ALTER TABLE cases ADD COLUMN savings VARCHAR(60)"))
             if "flight_depart" not in cols:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN flight_depart VARCHAR(40)"))
             if "flight_return" not in cols:
