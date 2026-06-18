@@ -763,26 +763,28 @@ def _trip_fulfillment_section(c, redirect: str) -> str:
                 "<button style='margin-top:12px'>Enregistrer</button></form></div>")
 
     if st == "booked":
-        bits = []
+        items = []
         if c.quote_url:
-            bits.append(link_row("Quote", c.quote_url))
+            items.append(f"<span class='k'>Quote</span> <a href=\"{escape(c.quote_url)}\" "
+                         "target='_blank'>Ouvrir &rarr;</a>")
         if c.savings:
-            bits.append(info_row("\u00c9conomie", c.savings))
-        bits.append(info_row("Vols", vols or "\u2014"))
-        return ("<div class='fbox'><div class='fhdr'>Quote, \u00e9conomie &amp; vols</div>"
-                + "".join(bits)
-                + "<p class='sub'>Les dates de vol proviennent de la carte Voyage. Le dossier "
-                "passera automatiquement \u00e0 \u00ab closed \u00bb apr\u00e8s la date de retour.</p></div>")
+            items.append(f"<span class='k'>Économie</span> {escape(c.savings)}")
+        items.append(f"<span class='k'>Vols</span> {escape(vols or '—')}")
+        line = "".join(f"<span class='fitem'>{it}</span>" for it in items)
+        return (f"<div class='fline'>{line}<span class='fitem fnote' "
+                "title='Dates de vol issues de la carte Voyage · passe à closed après le retour'>ⓘ</span></div>")
 
     if st == "closed":
-        bits = []
+        items = []
         if c.quote_url:
-            bits.append(link_row("Quote", c.quote_url))
+            items.append(f"<span class='k'>Quote</span> <a href=\"{escape(c.quote_url)}\" "
+                         "target='_blank'>Ouvrir &rarr;</a>")
         if c.savings:
-            bits.append(info_row("\u00c9conomie", c.savings))
-        bits.append(info_row("Vols", vols or "\u2014"))
-        bits.append("<p class='sub'>Voyage termin\u00e9. La collecte de feedback s'affichera ici.</p>")
-        return f"<div class='fbox'><div class='fhdr'>Voyage compl\u00e9t\u00e9</div>{''.join(bits)}</div>"
+            items.append(f"<span class='k'>Économie</span> {escape(c.savings)}")
+        items.append(f"<span class='k'>Vols</span> {escape(vols or '—')}")
+        items.append("<span class='muted'>Voyage terminé · feedback à venir</span>")
+        line = "".join(f"<span class='fitem'>{it}</span>" for it in items)
+        return f"<div class='fline'>{line}</div>"
 
     return ""  # new
 
@@ -1181,6 +1183,10 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .voyagebox.editing .editbtn{{display:none}}
  .fbox{{margin-top:8px;padding:16px 18px;border:1px solid var(--line);border-radius:12px;background:rgba(6,28,40,.45)}}
  .fhdr{{font-family:"Space Grotesk",monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--pacific);margin-bottom:10px}}
+ .fline{{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 22px;padding:11px 16px;margin-top:8px;
+   border:1px solid var(--line);border-radius:12px;background:rgba(6,28,40,.45)}}
+ .fline .k{{color:var(--mist);font-size:13px;margin-right:6px}}
+ .fnote{{color:var(--mist);cursor:help;margin-left:auto}}
  .act-card{{position:relative;padding:0;min-height:320px}}
  .act-inner{{position:absolute;inset:0;display:flex;flex-direction:column;padding:18px 20px}}
  .act-inner>h3{{margin:0 0 12px}}
