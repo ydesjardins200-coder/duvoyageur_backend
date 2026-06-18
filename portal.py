@@ -199,27 +199,86 @@ def _info_page(title: str, message: str, logged_in: bool = False) -> str:
     return _shell(title, body, logged_in)
 
 
-# --------------------------------------------------------------------------- #
-# Routes
-# --------------------------------------------------------------------------- #
-@router.get("/portail/login", response_class=HTMLResponse)
-def portal_login(request: Request, token: str = ""):
+def _confirm_page(token: str, name) -> str:
+    """Interstitial shown on the GET — a human clicks the button to POST and log
+    in. Link-preview crawlers do GET only, so they never consume the token."""
+    hello = f"Bonjour {escape(name)} 👋" if name else "Bienvenue 👋"
+    body = (
+        "<div class='infobox'>"
+        f"<h2>{hello}</h2>"
+        "<p>Clique ci-dessous pour ouvrir ton espace client en toute sécurité.</p>"
+        "<form method='post' action='/portail/login' style='margin-top:18px'>"
+        f"<input type='hidden' name='token' value=\"{escape(token)}\">"
+        "<button class='btn' type='submit'>Accéder à mon espace →</button>"
+        "</form></div>")
+    return _shell("Connexion", body)
+
+
+def _expired_page():
+    return HTMLResponse(_info_page(
+        "Lien expiré",
+        "Ce lien n'est plus valide (il a peut-être expiré ou déjà été "
+        "utilisé). Écris-nous sur Messenger et on t'en renvoie un tout neuf. 🙂"))
+
+
+def _invalid_page():
+    return HTMLResponse(_info_page(
+        "Lien invalide",
+        "Ce lien n'est plus valide. Écris-nous sur Messenger pour en "
+        "recevoir un nouveau. 🙂"))
+
+
+def _check_token(token: str):
+    """Return (client_id, client_name) if the token is signed, unexpired AND its
+    nonce still matches the client; else None. Does NOT consume the nonce."""
     data = _read_login_token(token) if token else None
     if not data:
-        return HTMLResponse(_info_page(
-            "Lien expiré",
-            "Ce lien n'est plus valide (il a peut-être expiré ou déjà été "
-            "utilisé). Écris-nous sur Messenger et on t'en renvoie un tout neuf. 🙂"))
+        return None
     cid, nonce = data.get("cid"), data.get("n")
     with SessionLocal() as db:
         client = db.get(Client, cid) if cid else None
         if not client or not client.portal_nonce or not secrets.compare_digest(
                 client.portal_nonce, nonce or ""):
-            return HTMLResponse(_info_page(
-                "Lien invalide",
-                "Ce lien n'est plus valide. Écris-nous sur Messenger pour en "
-                "recevoir un nouveau. 🙂"))
-        client.portal_nonce = None          # single use — burn it
+            return None
+        return cid, client.display_name
+
+
+# --------------------------------------------------------------------------- #
+# Routes
+# --------------------------------------------------------------------------- #
+@router.get("/portail/login", response_class=HTMLResponse)
+def portal_login_confirm(request: Request, token: str = ""):
+    """GET shows a confirmation page (no consumption) so link-preview bots that
+    only fetch the URL can't burn the single-use token before the human clicks."""
+    if not token or not _read_login_token(token):
+        # Already logged in? Send them straight in. Otherwise it's a dead link.
+        if current_portal_client_id(request):
+            return RedirectResponse("/portail", status_code=303)
+        return _expired_page()
+    checked = _check_token(token)
+    if not checked:
+        if current_portal_client_id(request):
+            return RedirectResponse("/portail", status_code=303)
+        return _invalid_page()
+    _cid, name = checked
+    return HTMLResponse(_confirm_page(token, name))
+
+
+@router.post("/portail/login")
+async def portal_login_consume(request: Request):
+    """POST consumes the single-use token (only a human clicking the button gets
+    here), burns the nonce, and establishes the portal session."""
+    form = await request.form()
+    token = (form.get("token") or "").strip()
+    if not token or not _read_login_token(token):
+        return _expired_page()
+    cid, nonce = (_read_login_token(token) or {}).get("cid"), (_read_login_token(token) or {}).get("n")
+    with SessionLocal() as db:
+        client = db.get(Client, cid) if cid else None
+        if not client or not client.portal_nonce or not secrets.compare_digest(
+                client.portal_nonce, nonce or ""):
+            return _invalid_page()
+        client.portal_nonce = None          # single use — burn it now
         db.commit()
     resp = RedirectResponse("/portail", status_code=303)
     resp.set_cookie(
