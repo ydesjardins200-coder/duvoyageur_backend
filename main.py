@@ -52,7 +52,7 @@ from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLoca
                 add_identity, find_client_by_identity, find_duplicate_groups,
                 find_open_case_for_sender, find_open_request_for_client, init_db, log_activity,
                 merge_clients, normalize_email, normalize_phone, push_notification,
-                resolve_or_create_client, SUPPORT_STATUSES)
+                replace_primary_identity, resolve_or_create_client, SUPPORT_STATUSES)
 from facebook import (extract_messages, extract_postbacks, extract_quick_replies,
                       get_user_name, send_quick_replies, send_text, set_ice_breakers,
                       set_messenger_profile, set_persistent_menu, valid_signature,
@@ -2303,7 +2303,14 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
             identity_card = (
                 "<div class='card'>"
                 "<div class='cardhdr'>"
+                "<div style='display:flex;gap:8px'>"
                 "<button type='button' class='editbtn' onclick='idEdit(true)'>\u270f\ufe0f \u00c9diter</button>"
+                f"<form method='post' action='/admin/clients/{cl.id}/dedup-identities' "
+                "style='display:inline' onsubmit=\"return confirm('Garder seulement le "
+                "courriel et le t\u00e9l\u00e9phone principaux (+ identifiants Messenger) ? "
+                "Les autres courriels/t\u00e9l\u00e9phones de ce client seront retir\u00e9s.')\">"
+                "<button class='editbtn' title='Retirer les anciens courriels/t\u00e9l\u00e9phones en double'>"
+                "\U0001f9f9 Nettoyer doublons</button></form></div>"
                 "<span class='eyebrow'>Identit\u00e9</span></div>"
                 + view_block + edit_block
                 + "<script>function idEdit(o){var v=document.getElementById('idview'),"
@@ -2483,8 +2490,18 @@ async def admin_client_update(client_id: int, request: Request):
     return RedirectResponse(f"/admin/clients/{client_id}", status_code=303)
 
 
-@app.post("/admin/clients/{client_id}/portal-link", dependencies=[Depends(require_admin)])
-def admin_send_portal_link(client_id: int):
+@app.post("/admin/clients/{client_id}/dedup-identities", dependencies=[Depends(require_admin)])
+def admin_client_dedup_identities(client_id: int):
+    """Keep only the client's primary email + primary phone (plus Messenger and
+    any other identity kinds); drop accumulated old/typo email & phone rows."""
+    with SessionLocal() as db:
+        cl = db.get(Client, client_id)
+        if cl:
+            replace_primary_identity(db, cl, "email", cl.primary_email)
+            replace_primary_identity(db, cl, "phone", cl.primary_phone)
+            log_activity(db, cl.id, "note", "Identifiants en double nettoyés")
+            db.commit()
+    return RedirectResponse(f"/admin/clients/{client_id}?tab=identite", status_code=303)
     """Issue a fresh magic link and send it to the client on their channel."""
     url = build_portal_login_url(client_id)
     if url:
