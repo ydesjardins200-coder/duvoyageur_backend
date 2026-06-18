@@ -49,6 +49,16 @@ class Settings:
     # Comma-separated, e.g. "https://duvoyageur.netlify.app,https://duvoyageur.ca"
     ALLOWED_ORIGINS: list[str] = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 
+    # --- Cloudflare R2 (screenshot object storage; S3-compatible) ---
+    # When set, screenshots are uploaded to R2 instead of stored as base64 in
+    # the DB. Leave unset to keep the inline-base64 fallback (local/tests).
+    R2_ACCOUNT_ID: str = os.getenv("R2_ACCOUNT_ID", "")
+    R2_ACCESS_KEY_ID: str = os.getenv("R2_ACCESS_KEY_ID", "")
+    R2_SECRET_ACCESS_KEY: str = os.getenv("R2_SECRET_ACCESS_KEY", "")
+    R2_BUCKET: str = os.getenv("R2_BUCKET", "")
+    # Optional explicit endpoint; otherwise derived from the account id.
+    R2_ENDPOINT: str = os.getenv("R2_ENDPOINT", "")
+
     # Testing only: when truthy, enables POST /admin/reset to wipe all cases.
     # Leave UNSET in production so the wipe is fully disabled.
     ALLOW_RESET: str = os.getenv("ALLOW_RESET", "")

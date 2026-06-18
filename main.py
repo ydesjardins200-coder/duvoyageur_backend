@@ -46,6 +46,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from auth import NotAuthenticated, check_credentials, require_admin
 from concierge import concierge_reply
 from config import settings
+import storage
 from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLocal, engine,
                 add_identity, find_client_by_identity, find_duplicate_groups,
                 find_open_case_for_sender, find_open_request_for_client, init_db, log_activity,
@@ -65,6 +66,7 @@ log = logging.getLogger("duvoyageur")
 async def lifespan(app: FastAPI):
     init_db()
     _backfill_trip_contact()
+    _migrate_screenshots_to_r2()
     yield
 
 
@@ -237,12 +239,8 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
         if b:
             downloaded.append((b, mt or "image/png"))
 
-    # Persistable screenshot records (base64 survives Facebook's expiring URLs).
-    shots = [{
-        "media_type": mt,
-        "b64": base64.b64encode(b).decode("ascii"),
-        "received_at": datetime.utcnow().isoformat(timespec="seconds"),
-    } for (b, mt) in downloaded]
+    # Persistable screenshot records (uploaded to R2 when configured, else b64).
+    shots = [storage.make_screenshot(b, mt) for (b, mt) in downloaded]
 
     # Route by the conversation lane chosen via the ice-breaker bubbles. Human and
     # concierge lanes skip the trip-parsing AI entirely.
@@ -846,6 +844,38 @@ def _backfill_trip_contact() -> None:
             log.info("Backfilled contact on %d trips stuck at needs_info", changed)
 
 
+def _migrate_screenshots_to_r2() -> None:
+    """One-time (idempotent): move screenshots still stored as inline base64 into
+    R2, keeping only the object key in the DB. No-op when R2 isn't configured."""
+    if not storage.r2_enabled():
+        return
+    with SessionLocal() as db:
+        cases = db.query(Case).all()
+        moved = 0
+        for c in cases:
+            shots = c.screenshots or []
+            if not any(s.get("b64") and not s.get("key") for s in shots):
+                continue
+            new_shots = []
+            for s in shots:
+                if s.get("b64") and not s.get("key"):
+                    try:
+                        data = base64.b64decode(s["b64"])
+                        rec = storage.make_screenshot(data, s.get("media_type", "image/png"))
+                        if rec.get("key"):                  # uploaded successfully
+                            rec["received_at"] = s.get("received_at", rec["received_at"])
+                            new_shots.append(rec)
+                            moved += 1
+                            continue
+                    except Exception:  # noqa: BLE001 — keep the original on any error
+                        pass
+                new_shots.append(s)
+            c.screenshots = new_shots
+        if moved:
+            db.commit()
+            log.info("Migrated %d screenshots from base64 to R2", moved)
+
+
 def _handle_human_message(sender: str, text: str, shots: list | None) -> None:
     """Human-support lane: NO AI. Store the message on a support case, record it
     in the conversation thread, flag it for the agent (bell), and stay silent."""
@@ -1048,11 +1078,7 @@ async def intake_screenshot(
     if trip.preferred_channel == ContactChannel.unknown and trip.customer_email:
         trip.preferred_channel = ContactChannel.email
 
-    shots = [{
-        "media_type": media,
-        "b64": base64.b64encode(img_bytes).decode("ascii"),
-        "received_at": datetime.utcnow().isoformat(timespec="seconds"),
-    }]
+    shots = [storage.make_screenshot(img_bytes, media)]
     case_id = store_case("form", trip, shots=shots)
     return {"ok": True, "case_id": case_id,
             "trip": trip.model_dump(), "needs": trip.remaining_fields()}
@@ -2433,11 +2459,10 @@ def admin_case_screenshot(case_id: int, idx: int):
         if not c or idx < 0 or idx >= len(shots):
             raise HTTPException(status_code=404, detail="Capture introuvable")
         shot = shots[idx]
-    try:
-        data = base64.b64decode(shot["b64"])
-    except Exception:  # noqa: BLE001
+    data, media_type = storage.read_screenshot(shot)
+    if data is None:
         raise HTTPException(status_code=404, detail="Capture illisible")
-    return Response(content=data, media_type=shot.get("media_type", "image/png"))
+    return Response(content=data, media_type=media_type)
 
 
 @app.post("/admin/setup-greeting", dependencies=[Depends(require_admin)])
@@ -2507,6 +2532,11 @@ def admin_reset():
         raise HTTPException(status_code=403,
                             detail="Reset désactivé. Mettre ALLOW_RESET=1 pour activer.")
     with SessionLocal() as db:
+        # Best-effort: drop screenshot objects from R2 before wiping rows.
+        if storage.r2_enabled():
+            for c in db.query(Case).all():
+                for s in (c.screenshots or []):
+                    storage.delete_screenshot(s)
         if engine.dialect.name == "postgresql":
             db.execute(text(
                 "TRUNCATE TABLE interactions, client_identities, cases, clients RESTART IDENTITY CASCADE"))
