@@ -253,14 +253,18 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                 mode = cl.support_mode or "profiling"
                 is_cold = find_open_request_for_client(db, cl.id) is None
     if mode == "human":
-        # Always record the message for the agent. If the customer signals rebate
-        # intent, OFFER (once) to hand them to the profiling bot — their choice.
-        _handle_human_message(sender, text, shots)
-        if sender and _wants_rebate(text) and sender not in _rebate_offered:
-            _rebate_offered.add(sender)
-            send_quick_replies(sender, REBATE_OFFER_TEXT, REBATE_OFFER_QR,
-                               settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
-            log.info("Rebate-switch offer sent to %s", sender)
+        # Record the message for the agent, then ALWAYS acknowledge receipt and
+        # keep offering the self-serve lanes (concierge / rebate). Debounced so a
+        # burst (text + screenshot) yields a single ack on the final message.
+        cid = _handle_human_message(sender, text, shots)
+        if sender and settings.FB_PAGE_TOKEN:
+            time.sleep(settings.ACK_DEBOUNCE_SECONDS)
+            if _last_msg_at.get(sender) == my_stamp:     # latest in the burst
+                ok = send_quick_replies(sender, HUMAN_ACK_TEXT, HUMAN_ACK_QR,
+                                        settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+                if ok and cid:
+                    _record_message(cid, "out", HUMAN_ACK_TEXT)
+                log.info("Human ack to %s: %s", sender, "sent" if ok else "skipped (superseded)")
         return
     if mode == "concierge":
         _handle_concierge_message(sender, text)
@@ -468,6 +472,16 @@ REBATE_OFFER_TEXT = ("On dirait que tu cherches un rabais sur un voyage 🌴 "
 REBATE_OFFER_QR = [
     {"content_type": "text", "title": "✈️ Oui, mon rabais", "payload": IB_PROFILING},
     {"content_type": "text", "title": "👤 Un conseiller", "payload": IB_HUMAN},
+]
+
+# Human-support lane: acknowledge every message and keep offering the self-serve
+# lanes (concierge AI / rebate profiling) so the customer can switch any time.
+HUMAN_ACK_TEXT = ("Bien reçu 🙏 un conseiller te répond ici dès que possible. "
+                  "En attendant, je peux aussi t'aider tout de suite si tu veux :")
+HUMAN_ACK_QR = [
+    {"content_type": "text", "title": "💬 Questions générales (IA)", "payload": IB_CONCIERGE},
+    {"content_type": "text", "title": "✈️ Trouver un rabais", "payload": IB_PROFILING},
+    {"content_type": "text", "title": "👤 Rester avec un conseiller", "payload": IB_HUMAN},
 ]
 _rebate_offered: set[str] = set()
 
@@ -920,8 +934,10 @@ def _handle_human_message(sender: str, text: str, shots: list | None) -> None:
         case.awaiting_reply = True
         if text:
             log_activity(db, client.id, "message_in", "Message reçu (support humain)", case.id)
+        cid = case.id
         db.commit()
     log.info("Human-support message stored for %s (no AI reply)", sender)
+    return cid
 
 
 def process_postback(sender: str | None, payload: str) -> None:
@@ -1603,14 +1619,65 @@ def admin_cases(status: str = "all", view: str = "voyage"):
         empty = f"<tr><td colspan='{ncol}' class='muted'>Aucun dossier ici.</td></tr>"
         return f"<table><tr>{head}</tr>" + ("".join(rows) or empty) + "</table>"
 
-    # Focused service-client queue: support cases awaiting our reply.
+    # Focused service-client queue: support cases awaiting our reply — each row
+    # opens a modal with the conversation + a quick reply (like the client fiche).
     if nav_active == "queue_service":
         with SessionLocal() as db:
             cases = (db.query(Case)
                      .filter(Case.kind == "support", Case.awaiting_reply.is_(True),
                              Case.status.notin_(("closed", "resolved")))
                      .order_by(Case.created_at.desc()).limit(200).all())
-        body = page_header(SEC_TITLE[nav_active], "/admin/cases?status=service") + table(cases, support=True)
+            nxt = "/admin/cases?status=service"
+            rows, modals = [], []
+            for c in cases:
+                t = c.trip or {}
+                name = escape(str(t.get("customer_name") or "Client"))
+                msgs = _conversation(c)
+                last_in = next((m for m in reversed(msgs) if m.get("dir") == "in"), None)
+                preview = (last_in.get("text") if last_in else (c.raw_message or "")) or "—"
+                if len(preview) > 90:
+                    preview = preview[:90] + "…"
+                opts = "".join(f"<option value='{s}'{' selected' if s == c.status else ''}>{s}</option>"
+                               for s in SUPPORT_STATUSES)
+                sform = (f"<form method='post' action='/admin/cases/{c.id}/status' "
+                         "style='display:flex;gap:8px;align-items:center;margin:0'>"
+                         f"<input type='hidden' name='next' value=\"{nxt}\">"
+                         f"<select name='status'>{opts}</select>"
+                         "<button>Mettre à jour</button></form>")
+                rows.append(
+                    f"<tr onclick=\"openSvc({c.id})\" style='cursor:pointer'>"
+                    f"<td>#{c.id}</td><td><b>{name}</b></td>"
+                    f"<td><span class='tag {c.status}'>{c.status}</span></td>"
+                    f"<td>{escape(c.channel)}</td>"
+                    f"<td>{escape(preview)}</td>"
+                    f"<td class='muted'>{c.created_at:%Y-%m-%d %H:%M}</td></tr>"
+                )
+                modals.append(
+                    f"<div class='modal-ov' id='svc-{c.id}'><div class='modal'>"
+                    "<div class='modal-hd'>"
+                    f"<h3 style='margin:0'>#{c.id} · {name} <span class='tag {c.status}'>{c.status}</span></h3>"
+                    + sform
+                    + "<button type='button' class='modal-x' onclick='closeSvc()'>✕</button></div>"
+                    f"<div class='modal-bd'>{_render_thread(c, name)}</div>"
+                    "<div class='modal-ft'>"
+                    f"<form method='post' action='/admin/cases/{c.id}/send'>"
+                    f"<input type='hidden' name='next' value=\"{nxt}\">"
+                    "<textarea name='message' rows='3' placeholder='Répondre au client…' "
+                    "style='width:100%'></textarea>"
+                    "<button style='margin-top:10px'>Répondre au client</button></form>"
+                    "</div></div></div>"
+                )
+        empty = "<tr><td colspan='6' class='muted'>Aucune demande de service.</td></tr>"
+        table_html = ("<table class='svc'><tr><th>#</th><th>Client</th><th>Statut</th>"
+                      "<th>Canal</th><th>Message</th><th>Reçu</th></tr>"
+                      + ("".join(rows) or empty) + "</table>")
+        js = ("<script>function openSvc(i){document.getElementById('svc-'+i).classList.add('open');}"
+              "function closeSvc(){document.querySelectorAll('.modal-ov.open').forEach("
+              "function(m){m.classList.remove('open');});}"
+              "document.addEventListener('click',function(e){if(e.target.classList&&"
+              "e.target.classList.contains('modal-ov'))closeSvc();});</script>")
+        body = (page_header(SEC_TITLE[nav_active], nxt)
+                + table_html + "".join(modals) + js)
         return render_page(body, nav_active)
 
     # Focused travel sections (trip only) — rows expand into the full card.
