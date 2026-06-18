@@ -308,6 +308,59 @@ def _screenshot_recap_message(trip) -> str:
     return head + miss + (("\n\n" + q) if q else "")
 
 
+def _quote_message(name, url, savings) -> str:
+    """Informal customer-facing message announcing a ready quote + the savings."""
+    greet = f"Salut {name} ! " if name else "Salut ! "
+    eco = f" Tu économises {savings} 💸." if savings else ""
+    return (greet + "🌴 Bonne nouvelle — ta soumission est prête avec ton rabais ! 🎉" + eco
+            + f"\n\nVoici ta quote 👉 {url}"
+            + "\n\nSi ça te convient ou si t'as des questions, écris-moi ici et on s'occupe de la suite ! 👍")
+
+
+def _send_email_stub(to, subject, body) -> bool:
+    """Placeholder until a transactional email provider (Postmark/Resend/SES) is
+    wired. For now it only logs; returns False so callers flag a manual follow-up."""
+    if not to:
+        log.warning("Quote email skipped: no email on file")
+        return False
+    log.info("[EMAIL STUB] would send quote to %s (subject=%s)", to, subject)
+    return False
+
+
+def _dispatch_quote_notification(info: dict) -> None:
+    """Notify the client that their quote is ready, on their own channel:
+    messenger -> Messenger now; form -> email (stub); other -> client portal (TODO)."""
+    msg = _quote_message(info.get("name"), info["url"], info.get("savings"))
+    ch = info.get("channel")
+    cid, client_id = info["case_id"], info.get("client_id")
+
+    if ch == "messenger" and info.get("sender") and settings.FB_PAGE_TOKEN:
+        ok = send_text(info["sender"], msg, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+        with SessionLocal() as db:
+            if ok:
+                _record_message(cid, "out", msg)
+            log_activity(db, client_id, "reply_out" if ok else "note",
+                         "Quote envoyée sur Messenger" if ok
+                         else "Échec envoi quote Messenger (fenêtre 24 h fermée ?)", cid)
+            db.commit()
+        log.info("Quote notif (messenger) case #%s: %s", cid, "sent" if ok else "failed")
+    elif ch == "form":
+        sent = _send_email_stub(info.get("email"), "Ta soumission Du Voyageur 🌴", msg)
+        with SessionLocal() as db:
+            log_activity(db, client_id, "reply_out" if sent else "note",
+                         "Quote envoyée par courriel" if sent
+                         else f"Quote à envoyer par courriel à {info.get('email') or '?'} "
+                              "(fournisseur courriel non configuré)", cid)
+            db.commit()
+        log.info("Quote notif (email stub) case #%s to %s", cid, info.get("email"))
+    else:
+        with SessionLocal() as db:
+            log_activity(db, client_id, "note",
+                         "Quote prête — notification portail client à venir", cid)
+            db.commit()
+        log.info("Quote notif for channel %r not yet supported (case #%s)", ch, cid)
+
+
 def process_messenger_message(sender: str | None, text: str, image_urls: list[str]) -> None:
     # Mark this as the latest message from this sender (for reply debouncing).
     my_stamp = time.monotonic()
@@ -2656,9 +2709,11 @@ async def admin_update_status(case_id: int, request: Request):
 async def admin_case_quote(case_id: int, request: Request):
     form = await request.form()
     nxt = form.get("next") or f"/admin/cases/{case_id}"
+    notify = None
     with SessionLocal() as db:
         c = db.get(Case, case_id)
         if c:
+            old_url, old_sav = c.quote_url, c.savings
             c.quote_url = (form.get("quote_url") or "").strip() or None
             c.savings = (form.get("savings") or "").strip() or None
             # Saving a quote link promotes a still-open trip to "quoted".
@@ -2668,7 +2723,21 @@ async def admin_case_quote(case_id: int, request: Request):
                 c.status = "quoted"
             log_activity(db, c.client_id, "note",
                          "Quote déposée" if c.quote_url else "Quote retirée", c.id)
+            # Notify the client on their own channel when a quote is newly set or
+            # its link / savings changed (not on a no-op re-save).
+            if c.quote_url and (c.quote_url != old_url or (c.savings or "") != (old_sav or "")):
+                client = db.get(Client, c.client_id) if c.client_id else None
+                name = (c.trip or {}).get("customer_name") or (client.display_name if client else None)
+                email = c.customer_email or (client.primary_email if client else None)
+                notify = {"channel": c.channel, "sender": c.sender_ref, "name": name,
+                          "email": email, "url": c.quote_url, "savings": c.savings,
+                          "case_id": c.id, "client_id": c.client_id}
             db.commit()
+    if notify:
+        try:
+            _dispatch_quote_notification(notify)
+        except Exception as e:  # noqa: BLE001 — never break the save over a send
+            log.exception("Quote notification failed for case #%s: %s", case_id, e)
     if not nxt.startswith("/admin/"):
         nxt = f"/admin/cases/{case_id}"
     return RedirectResponse(nxt, status_code=303)
