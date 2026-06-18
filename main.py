@@ -163,6 +163,8 @@ SCREENSHOT_FIRST_THRESHOLD = 5
 _last_msg_at: dict[str, float] = {}
 # Per-sender metadata about the latest message: did it add info, and its text.
 _last_msg_meta: dict[str, dict] = {}
+# Per-sender timestamp of the last human-lane acknowledgment (rate-limited).
+_human_ack_at: dict[str, float] = {}
 
 _TRIP_NOISE = {"raw_message", "needs_clarification", "parse_confidence", "agent_notes",
                "source", "customer_name"}
@@ -181,6 +183,7 @@ def _send_debounced_reply(sender: str, my_stamp: float) -> bool:
     meta = _last_msg_meta.get(sender, {})
     text = meta.get("text", "") or ""
     advanced = meta.get("advanced", True)
+    had_shot = meta.get("had_shot", False)
     with SessionLocal() as db:
         case = find_open_case_for_sender(db, sender)
         if not case:
@@ -189,8 +192,15 @@ def _send_debounced_reply(sender: str, my_stamp: float) -> bool:
         has_shot = bool(case.screenshots)
         case_id = case.id
 
-    # The message brought new info (or was a screenshot) -> keep profiling.
+    # A screenshot just landed -> confirm what we read + what's missing + ask.
     rem = trip.remaining_fields()
+    if had_shot:
+        reply = _screenshot_recap_message(trip)
+        sent = send_text(sender, reply, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+        if sent:
+            _record_message(case_id, "out", reply)
+        return bool(sent)
+
     # Treat as a general question only if it looks like one, or there's nothing
     # left to profile (so a vague opener still gets the screenshot-first prompt).
     is_question = ("?" in text) or (not rem)
@@ -226,6 +236,76 @@ def _ack_message(trip: TripRequest, has_screenshot: bool = False) -> str:
     return "Merci ! 🌴 " + trip.next_question()
 
 
+def _trip_found_pairs(trip) -> list:
+    """(label, value) pairs for everything we managed to read off a trip —
+    used to confirm back to the customer (Messenger) and the form."""
+    pairs = []
+    city, iata = trip.origin_city, trip.origin_airport_iata
+    origin = f"{city} ({iata})" if city and iata else (city or iata)
+    dep, ret, nights = trip.departure_date, trip.return_date, trip.nights
+    if dep or ret:
+        dates = f"{dep or '?'} → {ret or '?'}" + (f" · {nights} nuits" if nights else "")
+    else:
+        dates = trip.dates_raw
+    pax = None
+    if trip.num_adults or trip.num_children:
+        bits = []
+        if trip.num_adults:
+            bits.append(f"{trip.num_adults} adulte(s)")
+        if trip.num_children:
+            bits.append(f"{trip.num_children} enfant(s)")
+        pax = ", ".join(bits)
+    rooms = None
+    if trip.num_rooms:
+        rooms = f"{trip.num_rooms}" + (f" ({trip.room_type})" if trip.room_type else "")
+    board = _BOARD_FR.get(getattr(trip.board, "value", trip.board))
+    ps = trip.price_seen
+    price = None
+    if ps and ps.amount is not None:
+        basis = _BASIS_FR.get(getattr(ps.basis, "value", ps.basis))
+        price = f"{ps.amount} {ps.currency or 'CAD'}" + (f" ({basis})" if basis else "")
+
+    for label, value in (
+        ("Destination", trip.destination),
+        ("Hôtel", trip.hotel_name_raw),
+        ("Départ", origin),
+        ("Dates", dates),
+        ("Voyageurs", pax),
+        ("Chambres", rooms),
+        ("Forfait", board),
+        ("Prix", price),
+        ("Voyagiste", trip.operator),
+        ("Courriel", trip.customer_email),
+    ):
+        if value:
+            pairs.append((label, str(value)))
+    return pairs
+
+
+_RECAP_EMOJI = {
+    "Destination": "📍", "Hôtel": "🏨", "Départ": "🛫", "Dates": "📅",
+    "Voyageurs": "👥", "Chambres": "🛏️", "Forfait": "🍽️", "Prix": "💰",
+    "Voyagiste": "🏢", "Courriel": "✉️",
+}
+
+
+def _screenshot_recap_message(trip) -> str:
+    """Confirm what we read off the screenshot, list what's still missing, and
+    ask the next question — the customer-facing reply after a screenshot."""
+    pairs = _trip_found_pairs(trip)
+    if pairs:
+        lines = "\n".join(f"{_RECAP_EMOJI.get(l, '•')} {l} : {v}" for l, v in pairs)
+        head = "Merci ! 🌴 Voici ce que j'ai lu sur ta capture :\n" + lines
+    else:
+        head = "Hmm, je n'ai pas réussi à lire grand-chose sur cette capture 😅"
+    rem = trip.remaining_fields()
+    if not rem:
+        return head + "\n\n✅ J'ai tout ce qu'il me faut ! On regarde ton forfait et on te revient bientôt avec ton rabais. 👍"
+    miss = "\n\nIl me manque encore : " + ", ".join(rem) + "."
+    q = trip.next_question()
+    return head + miss + (("\n\n" + q) if q else "")
+
+
 def process_messenger_message(sender: str | None, text: str, image_urls: list[str]) -> None:
     # Mark this as the latest message from this sender (for reply debouncing).
     my_stamp = time.monotonic()
@@ -259,12 +339,17 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
         cid = _handle_human_message(sender, text, shots)
         if sender and settings.FB_PAGE_TOKEN:
             time.sleep(settings.ACK_DEBOUNCE_SECONDS)
-            if _last_msg_at.get(sender) == my_stamp:     # latest in the burst
+            now = time.monotonic()
+            last_ack = _human_ack_at.get(sender)
+            if (_last_msg_at.get(sender) == my_stamp                # latest in the burst
+                    and (last_ack is None or now - last_ack >= settings.HUMAN_ACK_INTERVAL)):
                 ok = send_quick_replies(sender, HUMAN_ACK_TEXT, HUMAN_ACK_QR,
                                         settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
-                if ok and cid:
-                    _record_message(cid, "out", HUMAN_ACK_TEXT)
-                log.info("Human ack to %s: %s", sender, "sent" if ok else "skipped (superseded)")
+                if ok:
+                    _human_ack_at[sender] = now
+                    if cid:
+                        _record_message(cid, "out", HUMAN_ACK_TEXT)
+                log.info("Human ack to %s: %s", sender, "sent" if ok else "skipped")
         return
     if mode == "concierge":
         _handle_concierge_message(sender, text)
@@ -399,10 +484,13 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
     if sender:
         prev = _last_msg_meta.get(sender)
         adv, txt = advanced, text
+        shot_now = bool(shots)
         if prev and (my_stamp - prev.get("at", 0)) < settings.ACK_DEBOUNCE_SECONDS + 2:
             adv = adv or prev.get("advanced", False)
             txt = text or prev.get("text", "")
-        _last_msg_meta[sender] = {"text": txt, "advanced": adv, "at": my_stamp}
+            shot_now = shot_now or prev.get("had_shot", False)
+        _last_msg_meta[sender] = {"text": txt, "advanced": adv, "at": my_stamp,
+                                  "had_shot": shot_now}
 
     # Debounced acknowledgment: wait briefly so a burst (text + screenshot as
     # separate events) produces ONE reply built on the final merged state. Only
@@ -1098,8 +1186,15 @@ async def intake_screenshot(
 
     shots = [storage.make_screenshot(img_bytes, media)]
     case_id = store_case("form", trip, shots=shots)
+    rem = trip.remaining_fields()
     return {"ok": True, "case_id": case_id,
-            "trip": trip.model_dump(), "needs": trip.remaining_fields()}
+            "trip": trip.model_dump(), "needs": rem,
+            "summary": {
+                "found": [{"label": l, "value": v} for l, v in _trip_found_pairs(trip)],
+                "missing": rem,
+                "complete": not rem,
+                "recap": _screenshot_recap_message(trip),
+            }}
 
 
 # --------------------------------------------------------------------------- #

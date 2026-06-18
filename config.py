@@ -37,6 +37,9 @@ class Settings:
     # Wait this many seconds before replying, so a burst of messages (e.g. text
     # then screenshot as separate events) yields ONE reply on the merged state.
     ACK_DEBOUNCE_SECONDS: float = float(os.getenv("ACK_DEBOUNCE_SECONDS", "5"))
+    # In the human-support lane, acknowledge receipt at most once per this many
+    # seconds per customer (default 1 hour) so a chatty client isn't spammed.
+    HUMAN_ACK_INTERVAL: float = float(os.getenv("HUMAN_ACK_INTERVAL", "3600"))
     # Answer general questions (weather, season…) with a short concierge reply
     # instead of repeating the profiling line. Set to "0" to disable.
     CONCIERGE_ENABLED: bool = os.getenv("CONCIERGE_ENABLED", "1") not in ("0", "false", "False", "")
