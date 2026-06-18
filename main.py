@@ -302,6 +302,13 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
             email=new_trip.customer_email, phone=new_trip.customer_phone,
             name=new_trip.customer_name, channel="messenger",
         ) if sender else None
+        # A returning client already gave us their contact on a past request —
+        # carry it onto this new one so the bot doesn't ask again (email OR phone
+        # satisfies the requirement).
+        if client and not new_trip.customer_email and client.primary_email:
+            new_trip.customer_email = client.primary_email
+        if client and not new_trip.customer_phone and client.primary_phone:
+            new_trip.customer_phone = client.primary_phone
         existing = find_open_request_for_client(db, client.id if client else None)
         if existing:
             before_trip = TripRequest.model_validate(existing.trip)
