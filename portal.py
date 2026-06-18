@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import re
 import secrets
+from datetime import datetime
 from html import escape
 
 from fastapi import APIRouter, Request
@@ -169,7 +170,8 @@ def _trip_card(c) -> str:
                if c.savings else "")
         action = f"{ref}{eco}<div class='muted'>Confirmation détaillée envoyée par Tripbook. Bon voyage ! 🌴</div>"
     elif c.status == "closed":
-        action = "<div class='muted'>Voyage terminé — merci de voyager avec nous ! 🙌</div>"
+        action = ("<div class='muted'>Voyage terminé — merci de voyager avec nous ! 🙌</div>"
+                  + _review_block(c))
     else:  # new / needs_info
         action = "<div class='muted'>On prépare ta meilleure offre — on te revient très vite. ✈️</div>"
 
@@ -180,7 +182,31 @@ def _trip_card(c) -> str:
         "</div>")
 
 
-def _dashboard(client, cases, just_created: bool = False) -> str:
+def _review_block(c) -> str:
+    """Either the submitted review (read-only) or a star-rating form for a
+    finished trip."""
+    rev = c.review or {}
+    if rev.get("rating"):
+        n = int(rev["rating"])
+        stars = "★" * n + "☆" * (5 - n)
+        txt = escape(rev.get("text") or "")
+        body = f"<p class='rv-txt'>{txt}</p>" if txt else ""
+        return (f"<div class='rv'><div class='rv-head'>Ton avis "
+                f"<span class='rv-stars on'>{stars}</span></div>{body}</div>")
+    radios = "".join(
+        f"<input type='radio' id='r{c.id}_{n}' name='rating' value='{n}' required>"
+        f"<label for='r{c.id}_{n}' title='{n}/5'>★</label>"
+        for n in range(5, 0, -1))
+    return (
+        f"<form class='rv rvform' method='post' action='/portail/voyage/{c.id}/avis'>"
+        "<div class='rv-head'>Comment s'est passé ton voyage ?</div>"
+        f"<div class='stars'>{radios}</div>"
+        "<textarea name='text' rows='2' placeholder='Raconte-nous (optionnel)…'></textarea>"
+        "<button class='btn small' type='submit'>Publier mon avis</button>"
+        "</form>")
+
+
+def _dashboard(client, cases, flash: str = "") -> str:
     name = escape(client.display_name or "")
     hello = f"Bonjour {name} 👋" if name else "Bonjour 👋"
     trips = [c for c in cases if (c.kind or "trip") == "trip"]
@@ -189,8 +215,7 @@ def _dashboard(client, cases, just_created: bool = False) -> str:
     else:
         cards = ("<div class='tcard empty'>Aucune demande pour l'instant. "
                  "Lance ta première recherche de voyage à rabais ci-dessus ! 🌴</div>")
-    note = ("<div class='note ok'>Demande envoyée ✓ — on te revient bientôt avec ton rabais !</div>"
-            if just_created else "")
+    note = f"<div class='note ok'>{flash}</div>" if flash else ""
     cta = ("<div style='margin:0 0 18px'>"
            "<a class='btn' href='/portail/nouveau-voyage'>+ Nouvelle demande de voyage</a></div>")
     return (
@@ -340,11 +365,39 @@ def _new_trip_form() -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Service request
+# --------------------------------------------------------------------------- #
+def _service_form(cases) -> str:
+    trips = [c for c in cases if (c.kind or "trip") == "trip"]
+    rel = ""
+    if trips:
+        opts = "<option value=''>— Aucun en particulier —</option>" + "".join(
+            f"<option value=\"{escape(_trip_where(c.trip or {}))}\">"
+            f"{escape(_trip_where(c.trip or {}))}</option>" for c in trips)
+        rel = ("<div class='field'><label>Concernant un voyage ?</label>"
+               f"<select name='related'>{opts}</select></div>")
+    return (
+        "<form class='form' method='post' action='/portail/service'>"
+        "<div class='fset'><h3>Ton message</h3><div class='formgrid'>"
+        "<div class='field'><label>Sujet</label>"
+        "<input name='subject' placeholder='ex. Changement de dates, question sur ma soumission…'></div>"
+        + rel +
+        "<div class='field'><label>Message <span class='req'>*</span></label>"
+        "<textarea name='message' rows='4' placeholder='Décris ta demande…' required></textarea></div>"
+        "</div></div>"
+        "<div class='actions'>"
+        "<button class='btn block' type='submit'>Envoyer ma demande</button>"
+        "<a class='btn ghost' href='/portail'>Retour</a></div>"
+        "</form>")
+
+
+# --------------------------------------------------------------------------- #
 # Shell + nav
 # --------------------------------------------------------------------------- #
 def _nav(active: str) -> str:
     items = [("voyages", "/portail", "Mes voyages"),
              ("nouveau", "/portail/nouveau-voyage", "Nouveau voyage"),
+             ("aide", "/portail/service", "Aide"),
              ("profil", "/portail/profil", "Mon profil")]
     links = "".join(
         f"<a class='pill{' on' if k == active else ''}' href='{href}'>{label}</a>"
@@ -454,7 +507,7 @@ async def portal_login_consume(request: Request):
 
 
 @router.get("/portail", response_class=HTMLResponse)
-def portal_home(request: Request, new: int = 0):
+def portal_home(request: Request, new: int = 0, avis: int = 0):
     cid = current_portal_client_id(request)
     if not cid:
         return HTMLResponse(_info_page(
@@ -462,6 +515,11 @@ def portal_home(request: Request, new: int = 0):
             "Pour accéder à ton espace, ouvre le lien personnel qu'on t'a "
             "envoyé. Tu peux aussi le redemander à tout moment sur Messenger : "
             "menu ☰ → « 🔐 Mon espace client ». 🔐"))
+    flash = ""
+    if new:
+        flash = "Demande envoyée ✓ — on te revient bientôt avec ton rabais !"
+    elif avis:
+        flash = "Merci pour ton avis ✓"
     with SessionLocal() as db:
         client = db.get(Client, cid)
         if not client:
@@ -469,7 +527,7 @@ def portal_home(request: Request, new: int = 0):
                 "Espace client",
                 "On n'a pas retrouvé ton dossier. Écris-nous sur Messenger. 🙂"))
         cases = list(client.requests)
-        body = _dashboard(client, cases, just_created=bool(new))
+        body = _dashboard(client, cases, flash=flash)
     resp = HTMLResponse(_shell("Mon espace", body, logged_in=True, nav=_nav("voyages")))
     _set_session_cookie(resp, cid)          # sliding expiry on every visit
     return resp
@@ -618,6 +676,105 @@ async def portal_new_trip_save(request: Request):
     return RedirectResponse("/portail?new=1", status_code=303)
 
 
+@router.post("/portail/voyage/{case_id}/avis")
+async def portal_review_save(case_id: int, request: Request):
+    cid = current_portal_client_id(request)
+    if not cid:
+        return RedirectResponse("/portail", status_code=303)
+    form = await request.form()
+    try:
+        rating = int((form.get("rating") or "").strip())
+    except ValueError:
+        rating = 0
+    text = (form.get("text") or "").strip()
+    if rating < 1 or rating > 5:
+        return RedirectResponse("/portail", status_code=303)
+    with SessionLocal() as db:
+        case = db.get(Case, case_id)
+        # Ownership + state guard: must be this client's own, finished trip.
+        if (case and case.client_id == cid and case.status == "closed"
+                and not (case.review or {}).get("rating")):
+            case.review = {"rating": rating, "text": text or None,
+                           "at": datetime.utcnow().isoformat(timespec="seconds")}
+            log_activity(db, cid, "note",
+                         f"Avis client : {rating}/5 (espace client)", case_id)
+            db.commit()
+    return RedirectResponse("/portail?avis=1", status_code=303)
+
+
+@router.get("/portail/service", response_class=HTMLResponse)
+def portal_service(request: Request, sent: int = 0):
+    cid = current_portal_client_id(request)
+    if not cid:
+        return HTMLResponse(_info_page(
+            "Espace client",
+            "Pour nous écrire, ouvre ton lien personnel ou redemande-le sur "
+            "Messenger (menu ☰ → « 🔐 Mon espace client »). 🔐"))
+    with SessionLocal() as db:
+        client = db.get(Client, cid)
+        if not client:
+            return HTMLResponse(_info_page("Espace client", "Dossier introuvable. 🙂"))
+        cases = list(client.requests)
+        body = (("<div class='note ok'>Message envoyé ✓ — on te répond bientôt.</div>"
+                 if sent else "")
+                + "<div class='hello'><h2>Demande de service</h2>"
+                "<p class='lede'>Une question, un changement, un pépin ? Écris-nous, "
+                "un conseiller te répond.</p></div>"
+                + _service_form(cases))
+    resp = HTMLResponse(_shell("Aide", body, logged_in=True, nav=_nav("aide")))
+    _set_session_cookie(resp, cid)
+    return resp
+
+
+@router.post("/portail/service")
+async def portal_service_save(request: Request):
+    cid = current_portal_client_id(request)
+    if not cid:
+        return RedirectResponse("/portail", status_code=303)
+    form = await request.form()
+    subject = (form.get("subject") or "").strip()
+    message = (form.get("message") or "").strip()
+    related = (form.get("related") or "").strip()
+    if not message:
+        return RedirectResponse("/portail/service", status_code=303)
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    parts = []
+    if subject:
+        parts.append(f"Sujet : {subject}")
+    if related:
+        parts.append(f"Concernant : {related}")
+    parts.append(message)
+    body_text = "\n".join(parts)
+    with SessionLocal() as db:
+        client = db.get(Client, cid)
+        if not client:
+            return RedirectResponse("/portail", status_code=303)
+        # Append to an open support case if one exists, else open a new one.
+        case = (db.query(Case)
+                .filter(Case.client_id == cid, Case.kind == "support",
+                        Case.status != "resolved")
+                .order_by(Case.created_at.desc()).first())
+        if case is None:
+            case = Case(
+                client_id=cid, channel="portal", status="open", kind="support",
+                raw_message=body_text,
+                trip={"customer_name": client.display_name} if client.display_name else {},
+                needs_clarification=[], screenshots=[],
+                messages=[{"dir": "in", "text": body_text, "at": now}])
+            db.add(case)
+            db.flush()
+            log_activity(db, cid, "request_created",
+                         "Demande de service (espace client)", case.id)
+        else:
+            case.messages = (case.messages or []) + [{"dir": "in", "text": body_text, "at": now}]
+            case.raw_message = (case.raw_message + "\n---\n" + body_text
+                                if case.raw_message else body_text)
+            log_activity(db, cid, "note", "Nouveau message de service (espace client)", case.id)
+        case.awaiting_reply = True
+        db.commit()
+    return RedirectResponse("/portail/service?sent=1", status_code=303)
+
+
 @router.get("/portail/logout")
 def portal_logout():
     resp = HTMLResponse(_info_page(
@@ -750,6 +907,20 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
    background:linear-gradient(90deg,var(--pacific),var(--lagoon));transition:width .4s ease}}
  .note{{border-radius:12px;padding:11px 14px;font-size:14px;margin:0 0 16px}}
  .note.ok{{background:rgba(61,240,197,.12);border:1px solid rgba(61,240,197,.4);color:var(--lagoon)}}
+ /* Reviews */
+ .btn.small{{min-height:42px;padding:10px 18px;font-size:14px;margin-top:12px;width:auto}}
+ .rv{{margin-top:12px;border-top:1px solid var(--line);padding-top:13px}}
+ .rv-head{{font-size:13px;color:var(--mist);margin-bottom:8px}}
+ .rv-stars.on{{color:var(--gold);letter-spacing:3px;font-size:15px}}
+ .rv-txt{{margin:6px 0 0;font-size:14px;line-height:1.5}}
+ .rvform textarea{{width:100%;font:inherit;font-size:16px;color:var(--foam);min-height:64px;
+   padding:11px 12px;border-radius:12px;border:1px solid var(--line);background:var(--field);resize:vertical}}
+ .rvform textarea:focus{{outline:none;border-color:var(--pacific);box-shadow:0 0 0 3px rgba(25,211,230,.18)}}
+ .stars{{display:inline-flex;flex-direction:row-reverse;justify-content:flex-end;margin-bottom:10px}}
+ .stars input{{position:absolute;width:1px;height:1px;opacity:0}}
+ .stars label{{font-size:32px;line-height:1;color:rgba(155,246,236,.22);cursor:pointer;padding:2px 3px;transition:color .12s}}
+ .stars label:hover,.stars label:hover ~ label,.stars input:checked ~ label{{color:var(--gold)}}
+ .stars input:focus-visible + label{{outline:2px solid var(--pacific);outline-offset:2px;border-radius:5px}}
  /* Info / confirm pages */
  .infobox{{max-width:460px;margin:56px auto;text-align:center;
    background:linear-gradient(180deg, rgba(20,62,82,.5), rgba(8,33,47,.6));

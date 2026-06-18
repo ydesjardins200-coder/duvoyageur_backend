@@ -175,6 +175,8 @@ class Case(Base):
     flight_return: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)  # booked
     # Tripbook booking confirmation number — required to move a trip to "booked".
     booking_ref: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)    # booked
+    # Client-submitted review on a finished trip: {rating:int, text:str, at:iso}
+    review: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 def init_db() -> None:
@@ -204,6 +206,7 @@ def _ensure_columns() -> None:
             conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS flight_depart VARCHAR(40)"))
             conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS flight_return VARCHAR(40)"))
             conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS booking_ref VARCHAR(80)"))
+            conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS review JSONB DEFAULT '{}'::jsonb"))
             # Support cases use open/resolved; remap any legacy trip-statuses.
             conn.execute(text(
                 "UPDATE cases SET status='resolved' "
@@ -256,6 +259,8 @@ def _ensure_columns() -> None:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN flight_return VARCHAR(40)"))
             if "booking_ref" not in cols:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN booking_ref VARCHAR(80)"))
+            if "review" not in cols:
+                conn.execute(text("ALTER TABLE cases ADD COLUMN review JSON"))
             conn.execute(text(
                 "UPDATE cases SET status='resolved' "
                 "WHERE kind='support' AND status IN ('closed','resolved')"))
