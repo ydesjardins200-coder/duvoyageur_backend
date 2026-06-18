@@ -83,13 +83,16 @@ def extract_postbacks(payload: dict) -> list[tuple[Optional[str], str]]:
 
 
 def send_text(recipient_id: Optional[str], text: str, page_token: str,
-              graph_version: str = "v21.0", timeout: int = 8) -> bool:
+              graph_version: str = "v21.0", timeout: int = 8, tag: Optional[str] = None) -> bool:
     """
     Send a plain-text reply to a user via the Send API.
 
     Built to NEVER raise: on any problem it logs and returns False, so a failed
     reply can never break webhook processing or cause Meta to retry the event.
-    Only fires inside the 24-hour window (messaging_type RESPONSE).
+
+    Without a tag this is messaging_type RESPONSE (24-hour window only). Pass
+    tag="HUMAN_AGENT" for a human-composed message up to 7 days after the user's
+    last message (requires the Human Agent permission on the Meta app).
     """
     if not (page_token and recipient_id and text):
         return False
@@ -97,11 +100,16 @@ def send_text(recipient_id: Optional[str], text: str, page_token: str,
         f"https://graph.facebook.com/{graph_version}/me/messages"
         f"?access_token={urllib.parse.quote(page_token)}"
     )
-    body = json.dumps({
+    payload = {
         "recipient": {"id": recipient_id},
-        "messaging_type": "RESPONSE",
         "message": {"text": text},
-    }).encode("utf-8")
+    }
+    if tag:
+        payload["messaging_type"] = "MESSAGE_TAG"
+        payload["tag"] = tag
+    else:
+        payload["messaging_type"] = "RESPONSE"
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url, data=body, headers={"Content-Type": "application/json"}, method="POST"
     )

@@ -34,6 +34,10 @@ class Settings:
     FB_APP_SECRET: str = os.getenv("FB_APP_SECRET", "")   # used to verify payloads
     FB_PAGE_TOKEN: str = os.getenv("FB_PAGE_TOKEN", "")   # used later to send replies
     FB_GRAPH_VERSION: str = os.getenv("FB_GRAPH_VERSION", "v21.0")  # Send API version
+    # Tag manual agent replies with HUMAN_AGENT to reach the customer up to 7
+    # days after their last message (instead of 24h). Turn ON only AFTER the
+    # "Human Agent" permission is approved on the Meta app, else sends error out.
+    HUMAN_AGENT_ENABLED: bool = os.getenv("HUMAN_AGENT_ENABLED", "") not in ("", "0", "false", "False")
     # Wait this many seconds before replying, so a burst of messages (e.g. text
     # then screenshot as separate events) yields ONE reply on the merged state.
     ACK_DEBOUNCE_SECONDS: float = float(os.getenv("ACK_DEBOUNCE_SECONDS", "5"))

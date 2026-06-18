@@ -335,7 +335,8 @@ def _dispatch_quote_notification(info: dict) -> None:
     cid, client_id = info["case_id"], info.get("client_id")
 
     if ch == "messenger" and info.get("sender") and settings.FB_PAGE_TOKEN:
-        ok = send_text(info["sender"], msg, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+        ok = send_quick_replies(info["sender"], msg, QUOTE_QR,
+                                settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
         with SessionLocal() as db:
             if ok:
                 _record_message(cid, "out", msg)
@@ -627,6 +628,17 @@ HUMAN_ACK_QR = [
     {"content_type": "text", "title": "👤 Rester avec un conseiller", "payload": IB_HUMAN},
 ]
 _rebate_offered: set[str] = set()
+
+# After a quote is sent, CTA chips turn a one-way message into a reply: the tap
+# is a USER message (reopens the 24h window) AND tells us the customer's intent.
+Q_BOOK = "Q_BOOK"          # ready to book
+Q_QUESTION = "Q_QUESTION"  # has a question about the quote
+Q_THINK = "Q_THINK"        # wants to think about it (flag for follow-up)
+QUOTE_QR = [
+    {"content_type": "text", "title": "📅 Je veux réserver", "payload": Q_BOOK},
+    {"content_type": "text", "title": "❓ J'ai une question", "payload": Q_QUESTION},
+    {"content_type": "text", "title": "🕒 J'y pense", "payload": Q_THINK},
+]
 
 _HUMAN_RE = re.compile(
     r"(agent|conseill\w+|repr[ée]sentant|humain|une personne|vraie personne|"
@@ -1107,6 +1119,44 @@ def process_postback(sender: str | None, payload: str) -> None:
                   "Écris-nous ta question, on revient vite !",
                   settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
         log.info("Human-support lane set for %s", sender)
+    elif payload == Q_BOOK:
+        _flag_quote_intent(sender, "📅 Je veux réserver", "Client veut réserver")
+        send_text(sender,
+                  "Super, on est partis ! 🙌 Un conseiller confirme les détails avec "
+                  "toi et t'envoie la marche à suivre. 🎉",
+                  settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+        log.info("Quote intent BOOK from %s", sender)
+    elif payload == Q_QUESTION:
+        _flag_quote_intent(sender, "❓ J'ai une question", "Client a une question sur la quote")
+        send_text(sender,
+                  "Bien sûr ! 👇 Pose ta question ici, on te répond.",
+                  settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+        log.info("Quote intent QUESTION from %s", sender)
+    elif payload == Q_THINK:
+        _flag_quote_intent(sender, "🕒 J'y pense", "Client réfléchit — à relancer")
+        send_text(sender,
+                  "Pas de presse 🌴 Je garde ta quote ici. Reviens quand tu veux, "
+                  "on est là ! 😊",
+                  settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+        log.info("Quote intent THINK from %s", sender)
+
+
+def _flag_quote_intent(sender: str, thread_label: str, activity_note: str) -> None:
+    """A quote CTA was tapped: record it on the customer's latest trip case,
+    flag it for the agent (awaiting_reply), and log the intent."""
+    with SessionLocal() as db:
+        client = find_client_by_identity(db, "messenger_psid", sender)
+        if not client:
+            return
+        case = (db.query(Case)
+                .filter(Case.client_id == client.id, Case.kind == "trip")
+                .order_by(Case.created_at.desc()).first())
+        if not case:
+            return
+        case.awaiting_reply = True
+        log_activity(db, client.id, "message_in", activity_note, case.id)
+        db.commit()
+        _record_message(case.id, "in", thread_label)
 
 
 @app.get("/webhook")
@@ -2888,8 +2938,13 @@ async def admin_case_send(case_id: int, request: Request):
         sender = c.sender_ref if c else None
         client_id = c.client_id if c else None
     if sender and message and settings.FB_PAGE_TOKEN:
-        ok = send_text(sender, message, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
-        log.info("Manual reply to case #%s: %s", case_id, "sent" if ok else "failed")
+        # Manual, human-composed reply -> HUMAN_AGENT tag (7-day window) when the
+        # Meta permission is enabled; otherwise a standard RESPONSE (24h).
+        tag = "HUMAN_AGENT" if settings.HUMAN_AGENT_ENABLED else None
+        ok = send_text(sender, message, settings.FB_PAGE_TOKEN,
+                       settings.FB_GRAPH_VERSION, tag=tag)
+        log.info("Manual reply to case #%s: %s%s", case_id, "sent" if ok else "failed",
+                 " [HUMAN_AGENT]" if tag else "")
         if ok:
             preview = message if len(message) <= 80 else message[:77] + "…"
             now = datetime.utcnow().isoformat(timespec="seconds")
