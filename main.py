@@ -1408,13 +1408,6 @@ def admin_cases(status: str = "all", view: str = "voyage"):
         f"💬 Service client<span class='tab-n'>{n_service}</span></a>"
     )
     body = f"<h2>Demandes</h2><div class='tabs'>{subtabs}</div>" + table(cases, support=(view == "service"))
-    if view == "voyage":
-        body += (
-            "<form method='post' action='/admin/setup-greeting' style='margin-top:24px;display:inline-block'>"
-            "<button>Configurer l'accueil Messenger</button></form>"
-            "<p class='sub'>Définit la salutation, le bouton « Démarrer », les 3 bulles "
-            "d'accueil et le menu ☰ de ta page.</p>"
-        )
     return render_page(body, "cases")
 
 
@@ -1858,7 +1851,14 @@ def admin_system():
 
 @app.get("/admin/config", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 def admin_config():
-    body = page_header("System Config") + "<div class='card'><p class='muted'>Section à venir.</p></div>"
+    body = (
+        page_header("System Config")
+        + "<div class='card'><h3>Configurer l'accueil Messenger</h3>"
+        "<p class='sub'>Définit la salutation, le bouton « Démarrer », les 3 bulles "
+        "d'accueil et le menu ☰ de ta page.</p>"
+        "<form method='post' action='/admin/setup-greeting' style='margin-top:14px'>"
+        "<button>Configurer l'accueil Messenger</button></form></div>"
+    )
     return render_page(body, "config")
 
 
@@ -2202,7 +2202,7 @@ def admin_setup_greeting():
     title = "✅ Accueil Messenger configuré" if ok else "❌ Configuration partielle / échec"
     bubbles = "".join(f"<li>{escape(ib['question'])}</li>" for ib in ICE_BREAKERS)
     body = (
-        "<p><a href='/admin/cases'>&larr; Retour aux dossiers</a></p>"
+        "<p><a href='/admin/config'>&larr; Retour à System Config</a></p>"
         f"<h2>{title}</h2>"
         "<p class='sub'>Salutation + bouton « Démarrer » + 3 bulles d'accueil + menu ☰ "
         "permanent envoyés à Meta. Ouvre la conversation avec ta page (ou efface "
@@ -2215,7 +2215,7 @@ def admin_setup_greeting():
         f"<details><summary>Réponse de Meta</summary><pre>greeting/get_started : {escape(d1)}\n\n"
         f"ice_breakers : {escape(d2)}\n\npersistent_menu : {escape(d3)}</pre></details>"
     )
-    return render_page(body, "cases")
+    return render_page(body, "config")
 
 
 @app.post("/admin/cases/{case_id}/send", dependencies=[Depends(require_admin)])
