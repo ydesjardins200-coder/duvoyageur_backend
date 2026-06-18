@@ -82,9 +82,13 @@ class Client(Base):
     # Single-use nonce for the current passwordless portal magic link (cleared
     # on first use). A fresh link overwrites it, so only the latest link works.
     portal_nonce: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    # Client-completed identity/KYC details (legal names, DOB, address, passport)
-    # captured in the portal — needed to actually book a trip.
+    # Client-completed identity/KYC details (legal names, DOB, address)
+    # captured in the portal — needed to actually book a trip. No passport data.
     kyc: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Portal notification feed: list of {id, text, href, at, read}. Newest last.
+    notifications: Mapped[list] = mapped_column(JSON, default=list)
+    # Did the client allow us to use their reviews to improve the service?
+    review_consent: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
 
     identities = relationship(
         "ClientIdentity", back_populates="client",
@@ -231,6 +235,10 @@ def _ensure_columns() -> None:
                 "ALTER TABLE clients ADD COLUMN IF NOT EXISTS portal_nonce VARCHAR(64)"))
             conn.execute(text(
                 "ALTER TABLE clients ADD COLUMN IF NOT EXISTS kyc JSONB DEFAULT '{}'::jsonb"))
+            conn.execute(text(
+                "ALTER TABLE clients ADD COLUMN IF NOT EXISTS notifications JSONB DEFAULT '[]'::jsonb"))
+            conn.execute(text(
+                "ALTER TABLE clients ADD COLUMN IF NOT EXISTS review_consent BOOLEAN"))
             has_kind = conn.execute(text(
                 "SELECT 1 FROM information_schema.columns "
                 "WHERE table_name='cases' AND column_name='kind'")).first()
@@ -280,6 +288,10 @@ def _ensure_columns() -> None:
                 conn.execute(text("ALTER TABLE clients ADD COLUMN portal_nonce VARCHAR(64)"))
             if "kyc" not in ccols:
                 conn.execute(text("ALTER TABLE clients ADD COLUMN kyc JSON"))
+            if "notifications" not in ccols:
+                conn.execute(text("ALTER TABLE clients ADD COLUMN notifications JSON"))
+            if "review_consent" not in ccols:
+                conn.execute(text("ALTER TABLE clients ADD COLUMN review_consent BOOLEAN"))
             if "kind" not in cols:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN kind VARCHAR(20) DEFAULT 'trip'"))
                 conn.execute(text(
@@ -431,6 +443,27 @@ def log_activity(db, client_id: Optional[int], kind: str, summary: str,
         return
     db.add(Interaction(client_id=client_id, kind=kind,
                        summary=(summary or "")[:500], request_id=request_id))
+
+
+def push_notification(db, client_id: Optional[int], text_: str,
+                      href: Optional[str] = None) -> None:
+    """Append an unread notification to a client's portal feed (capped at 50).
+    Used for trip status changes and replies to help requests."""
+    if not client_id:
+        return
+    import secrets
+    cl = db.get(Client, client_id)
+    if not cl:
+        return
+    items = list(cl.notifications or [])
+    items.append({
+        "id": secrets.token_hex(6),
+        "text": (text_ or "")[:300],
+        "href": href,
+        "at": datetime.utcnow().isoformat(timespec="seconds"),
+        "read": False,
+    })
+    cl.notifications = items[-50:]
 
 
 def _backfill_clients() -> None:

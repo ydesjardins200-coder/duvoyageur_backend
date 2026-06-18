@@ -189,8 +189,7 @@ def _trip_card(c) -> str:
                if c.savings else "")
         action = f"{ref}{eco}<div class='muted'>Confirmation détaillée envoyée par Tripbook. Bon voyage ! 🌴</div>"
     elif c.status == "closed":
-        action = ("<div class='muted'>Voyage terminé — merci de voyager avec nous ! 🙌</div>"
-                  + _review_block(c))
+        action = "<div class='muted'>Voyage terminé — merci de voyager avec nous ! 🙌</div>"
     else:  # new / needs_info
         action = "<div class='muted'>On prépare ta meilleure offre — on te revient très vite. ✈️</div>"
 
@@ -225,23 +224,123 @@ def _review_block(c) -> str:
         "</form>")
 
 
-def _dashboard(client, cases, flash: str = "") -> str:
+def _unread(client) -> int:
+    return sum(1 for n in (client.notifications or []) if not n.get("read"))
+
+
+_MONEY_RE = re.compile(r"(\d[\d\s\u202f,.]*)")
+
+
+def _parse_money(s) -> float:
+    """Pull a numeric amount out of a savings string like '195 $' or '1 200,50$'."""
+    if not s:
+        return 0.0
+    m = _MONEY_RE.search(str(s))
+    if not m:
+        return 0.0
+    raw = m.group(1).replace("\u202f", "").replace(" ", "")
+    # If both separators present, the last one is the decimal sep.
+    if "," in raw and "." in raw:
+        raw = raw.replace("." if raw.rfind(",") > raw.rfind(".") else ",", "")
+        raw = raw.replace(",", ".")
+    else:
+        raw = raw.replace(",", ".")
+    try:
+        return float(raw)
+    except ValueError:
+        return 0.0
+
+
+def _savings_total(cases) -> float:
+    """Sum realized savings across booked + completed trips."""
+    total = 0.0
+    for c in cases:
+        if (c.kind or "trip") == "trip" and c.status in ("booked", "closed"):
+            total += _parse_money(c.savings)
+    return total
+
+
+def _fmt_money(v: float) -> str:
+    return (f"{v:,.0f}".replace(",", "\u202f") if v == int(v)
+            else f"{v:,.2f}".replace(",", "\u202f").replace(".", ",")) + " $"
+
+
+def _identity_card(client) -> str:
+    rows = []
+    if client.display_name:
+        rows.append(("Nom", escape(client.display_name)))
+    if client.primary_email:
+        rows.append(("Courriel", escape(client.primary_email)))
+    if client.primary_phone:
+        rows.append(("Téléphone", escape(client.primary_phone)))
+    city = (client.kyc or {}).get("city")
+    if city:
+        rows.append(("Ville", escape(str(city))))
+    body = "".join(f"<div class='idrow'><span class='ik'>{k}</span><span>{v}</span></div>"
+                   for k, v in rows)
+    return ("<div class='idcard'>"
+            "<div class='idtop'><h3>Mon identité</h3>"
+            "<a class='edit' href='/portail/profil'>Modifier</a></div>"
+            f"{body}</div>")
+
+
+def _accueil(client, cases, flash: str = "") -> str:
     name = escape(client.display_name or "")
     hello = f"Bonjour {name} 👋" if name else "Bonjour 👋"
     trips = [c for c in cases if (c.kind or "trip") == "trip"]
-    if trips:
-        cards = "".join(_trip_card(c) for c in trips)
-    else:
-        cards = ("<div class='tcard empty'>Aucune demande pour l'instant. "
-                 "Lance ta première recherche de voyage à rabais ci-dessus ! 🌴</div>")
+    future = [c for c in trips if c.status != "closed"]
+    past = [c for c in trips if c.status == "closed"]
+    total = _savings_total(trips)
     note = f"<div class='note ok'>{flash}</div>" if flash else ""
-    cta = ("<div style='margin:0 0 18px'>"
+
+    sav = ("<div class='savings'><div><div class='sv-l'>Tes économies</div>"
+           f"<div class='sv-n'>{_fmt_money(total)}</div></div>"
+           "<div style='font-size:30px'>💸</div></div>") if total > 0 else ""
+
+    cta = ("<div style='margin:0 0 6px'>"
            "<a class='btn' href='/portail/nouveau-voyage'>+ Nouvelle demande de voyage</a></div>")
+
+    fut = ("<h3 class='acc-h'>Voyages à venir</h3><div class='tgrid'>"
+           + "".join(_trip_card(c) for c in future) + "</div>") if future else (
+           "<h3 class='acc-h'>Voyages à venir</h3>"
+           "<div class='tcard empty'>Aucun voyage en cours. Lance une demande ci-dessus ! 🌴</div>")
+    pst = ("<h3 class='acc-h'>Voyages passés</h3><div class='tgrid'>"
+           + "".join(_trip_card(c) for c in past) + "</div>") if past else ""
+
     return (
-        f"<div class='hello'><h2>{hello}</h2>"
-        "<p class='lede'>Voici tes demandes de voyage et leurs soumissions.</p></div>"
-        + note + _kyc_banner(client) + cta
-        + f"<div class='tgrid'>{cards}</div>")
+        f"<div class='hello'><h2>{hello}</h2></div>"
+        + note + _identity_card(client) + sav + cta + fut + pst)
+
+
+_MONTHS_FR = ["", "janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.",
+              "août", "sept.", "oct.", "nov.", "déc."]
+
+
+def _short_dt(iso) -> str:
+    try:
+        d = datetime.fromisoformat(iso)
+        return f"{d.day} {_MONTHS_FR[d.month]} · {d.hour:02d}:{d.minute:02d}"
+    except (ValueError, TypeError, IndexError):
+        return ""
+
+
+def _notifications_page(items) -> str:
+    if not items:
+        return ("<div class='hello'><h2>Notifications</h2></div>"
+                "<div class='tcard empty'>Aucune notification pour l'instant. 🔔</div>")
+    rows = []
+    for n in items:
+        text = escape(n.get("text") or "")
+        at = _short_dt(n.get("at"))
+        unread = "" if n.get("read") else " unread"
+        inner = f"<div class='nf-t'>{text}</div><div class='nf-at'>{at}</div>"
+        href = n.get("href")
+        if href:
+            rows.append(f"<a class='nf{unread}' href='{escape(href)}'>{inner}</a>")
+        else:
+            rows.append(f"<div class='nf{unread}'>{inner}</div>")
+    return ("<div class='hello'><h2>Notifications</h2></div>"
+            f"<div class='nflist'>{''.join(rows)}</div>")
 
 
 # --------------------------------------------------------------------------- #
@@ -422,9 +521,10 @@ def _service_form(cases) -> str:
 def _nav(active: str, locked: bool = False) -> str:
     if locked:                       # KYC incomplete -> no tabs, profile only
         return ""
-    items = [("voyages", "/portail", "Mes voyages"),
+    items = [("accueil", "/portail", "Accueil"),
              ("nouveau", "/portail/nouveau-voyage", "Nouveau voyage"),
              ("aide", "/portail/service", "Aide"),
+             ("avis", "/portail/avis", "Mes avis"),
              ("profil", "/portail/profil", "Mon profil")]
     links = "".join(
         f"<a class='pill{' on' if k == active else ''}' href='{href}'>{label}</a>"
@@ -435,10 +535,17 @@ def _nav(active: str, locked: bool = False) -> str:
 # --------------------------------------------------------------------------- #
 # Shell
 # --------------------------------------------------------------------------- #
-def _shell(title: str, body: str, logged_in: bool = False, nav: str = "") -> str:
+def _shell(title: str, body: str, logged_in: bool = False, nav: str = "",
+           bell: int = 0) -> str:
+    bell_html = ""
+    if logged_in:
+        badge = f"<span class='bdot'>{bell if bell < 10 else '9+'}</span>" if bell else ""
+        bell_html = ("<a class='bell' href='/portail/notifications' "
+                     f"aria-label='Notifications'>🔔{badge}</a>")
     logout = ("<a class='logout' href='/portail/logout'>Déconnexion</a>"
               if logged_in else "")
-    return _PORTAL_PAGE.format(title=escape(title), body=body, logout=logout, nav=nav)
+    actions = f"<div class='topact'>{bell_html}{logout}</div>" if logged_in else logout
+    return _PORTAL_PAGE.format(title=escape(title), body=body, logout=actions, nav=nav)
 
 
 def _info_page(title: str, message: str, logged_in: bool = False) -> str:
@@ -556,9 +663,31 @@ def portal_home(request: Request, new: int = 0, avis: int = 0):
         cases = list(client.requests)
         if not kyc_complete(client):
             return RedirectResponse("/portail/profil", status_code=303)
-        body = _dashboard(client, cases, flash=flash)
-    resp = HTMLResponse(_shell("Mon espace", body, logged_in=True, nav=_nav("voyages")))
+        body = _accueil(client, cases, flash=flash)
+        bell = _unread(client)
+    resp = HTMLResponse(_shell("Accueil", body, logged_in=True,
+                               nav=_nav("accueil"), bell=bell))
     _set_session_cookie(resp, cid)          # sliding expiry on every visit
+    return resp
+
+
+@router.get("/portail/notifications", response_class=HTMLResponse)
+def portal_notifications(request: Request):
+    cid, gate = _gate(request)
+    if gate:
+        return gate
+    with SessionLocal() as db:
+        client = db.get(Client, cid)
+        notifs = list(client.notifications or [])
+        if any(not n.get("read") for n in notifs):       # mark all read on view
+            client.notifications = [{**n, "read": True} for n in notifs]
+            db.commit()
+            notifs = client.notifications
+        items = list(reversed(notifs))                   # newest first
+        body = _notifications_page(items)
+    resp = HTMLResponse(_shell("Notifications", body, logged_in=True,
+                               nav=_nav("accueil"), bell=0))
+    _set_session_cookie(resp, cid)
     return resp
 
 
@@ -579,8 +708,9 @@ def portal_profile(request: Request, saved: int = 0):
                 if locked else "Ces infos nous servent à réserver tes voyages au bon nom.")
         body = (f"<div class='hello'><h2>Mon profil</h2><p class='lede'>{lede}</p></div>"
                 + _profile_form(client, saved=bool(saved), locked=locked))
+        bell = _unread(client)
     resp = HTMLResponse(_shell("Mon profil", body, logged_in=True,
-                               nav=_nav("profil", locked=locked)))
+                               nav=_nav("profil", locked=locked), bell=bell))
     _set_session_cookie(resp, cid)
     return resp
 
@@ -626,10 +756,13 @@ def portal_new_trip(request: Request):
     cid, gate = _gate(request)
     if gate:
         return gate
+    with SessionLocal() as db:
+        bell = _unread(db.get(Client, cid))
     body = ("<div class='hello'><h2>Nouvelle demande de voyage</h2>"
             "<p class='lede'>Dis-nous ce que tu cherches — on retrouve le même "
             "forfait avec ton rabais. 🌴</p></div>" + _new_trip_form())
-    resp = HTMLResponse(_shell("Nouveau voyage", body, logged_in=True, nav=_nav("nouveau")))
+    resp = HTMLResponse(_shell("Nouveau voyage", body, logged_in=True,
+                               nav=_nav("nouveau"), bell=bell))
     _set_session_cookie(resp, cid)
     return resp
 
@@ -746,7 +879,8 @@ def portal_service(request: Request, sent: int = 0):
                 "<p class='lede'>Une question, un changement, un pépin ? Écris-nous, "
                 "un conseiller te répond.</p></div>"
                 + _service_form(cases))
-    resp = HTMLResponse(_shell("Aide", body, logged_in=True, nav=_nav("aide")))
+        bell = _unread(client)
+    resp = HTMLResponse(_shell("Aide", body, logged_in=True, nav=_nav("aide"), bell=bell))
     _set_session_cookie(resp, cid)
     return resp
 
@@ -853,6 +987,37 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .logout{{font-size:13px;color:var(--mist);text-decoration:none;white-space:nowrap;
    padding:8px 10px;border-radius:10px}}
  .logout:hover,.logout:active{{color:var(--foam)}}
+ .topact{{display:flex;align-items:center;gap:6px}}
+ .bell{{position:relative;text-decoration:none;font-size:20px;line-height:1;
+   padding:8px 8px;border-radius:10px;display:inline-flex}}
+ .bdot{{position:absolute;top:1px;right:0;min-width:17px;height:17px;padding:0 4px;
+   border-radius:999px;background:#ff5a6e;color:#fff;font-size:10px;font-weight:700;
+   font-family:"Space Grotesk",monospace;display:flex;align-items:center;justify-content:center;
+   box-shadow:0 0 0 2px rgba(8,33,47,.9)}}
+ /* Accueil */
+ .idcard{{background:linear-gradient(180deg, rgba(20,62,82,.5), rgba(8,33,47,.6));
+   border:1px solid var(--line);border-radius:18px;padding:18px 20px;margin-bottom:22px}}
+ .idcard .idtop{{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}}
+ .idcard h3{{font-size:18px;margin:0}}
+ .idcard .edit{{font-size:13px;color:var(--pacific);text-decoration:none;white-space:nowrap}}
+ .idrow{{display:flex;gap:8px;font-size:14px;padding:5px 0;color:var(--foam)}}
+ .idrow .ik{{color:var(--mist);min-width:88px;flex:none}}
+ .savings{{display:flex;align-items:center;justify-content:space-between;gap:14px;
+   background:linear-gradient(120deg, rgba(61,240,197,.14), rgba(25,211,230,.06));
+   border:1px solid rgba(61,240,197,.4);border-radius:18px;padding:18px 22px;margin-bottom:22px}}
+ .savings .sv-l{{color:var(--surf);font-size:13px;text-transform:uppercase;letter-spacing:.12em;font-family:"Space Grotesk",monospace}}
+ .savings .sv-n{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:26px;color:var(--lagoon)}}
+ .acc-h{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:15px;
+   margin:24px 0 12px;color:var(--surf);letter-spacing:-.01em}}
+ .acc-h:first-of-type{{margin-top:8px}}
+ /* Notifications */
+ .nflist{{display:grid;gap:10px}}
+ .nf{{display:block;text-decoration:none;color:var(--foam);
+   background:linear-gradient(180deg, rgba(20,62,82,.5), rgba(8,33,47,.6));
+   border:1px solid var(--line);border-radius:14px;padding:14px 16px}}
+ .nf.unread{{border-color:rgba(25,211,230,.5);background:linear-gradient(120deg, rgba(25,211,230,.1), rgba(8,33,47,.6))}}
+ .nf-t{{font-size:14px;line-height:1.45}}
+ .nf-at{{font-size:12px;color:var(--mist);margin-top:5px;font-family:"Space Grotesk",monospace}}
  /* Pill nav */
  .pnav{{display:flex;gap:8px;overflow-x:auto;padding:12px 18px 0;max-width:980px;margin:0 auto;
    -webkit-overflow-scrolling:touch;scrollbar-width:none}}

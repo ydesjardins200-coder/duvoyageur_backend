@@ -51,8 +51,8 @@ import storage
 from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLocal, engine,
                 add_identity, find_client_by_identity, find_duplicate_groups,
                 find_open_case_for_sender, find_open_request_for_client, init_db, log_activity,
-                merge_clients, normalize_email, normalize_phone, resolve_or_create_client,
-                SUPPORT_STATUSES)
+                merge_clients, normalize_email, normalize_phone, push_notification,
+                resolve_or_create_client, SUPPORT_STATUSES)
 from facebook import (extract_messages, extract_postbacks, extract_quick_replies,
                       get_user_name, send_quick_replies, send_text, set_ice_breakers,
                       set_messenger_profile, set_persistent_menu, valid_signature,
@@ -2892,6 +2892,22 @@ def admin_case_detail(case_id: int, warn: str = ""):
     return render_page(body, "cases")
 
 
+_STATUS_NOTIF = {
+    "new": "ta demande est reçue, on cherche ton rabais 🔎",
+    "needs_info": "on a besoin d'une petite précision",
+    "quoted": "ta soumission est prête 🎉",
+    "booked": "c'est réservé ! ✈️",
+    "closed": "voyage complété — merci ! 🌴",
+}
+
+
+def _notify_trip_status(db, case, new_status: str) -> None:
+    where = (case.trip or {}).get("destination") or (case.trip or {}).get("hotel_name_raw")
+    tail = _STATUS_NOTIF.get(new_status, f"statut : {new_status}")
+    msg = f"{where} — {tail}" if where else f"Ton voyage : {tail}"
+    push_notification(db, case.client_id, msg, "/portail")
+
+
 @app.post("/admin/cases/{case_id}/status", dependencies=[Depends(require_admin)])
 async def admin_update_status(case_id: int, request: Request):
     form = await request.form()
@@ -2916,6 +2932,12 @@ async def admin_update_status(case_id: int, request: Request):
                 tt = c.trip or {}
                 c.flight_depart = c.flight_depart or tt.get("departure_date")
                 c.flight_return = c.flight_return or tt.get("return_date")
+            # Client portal notification.
+            if c.kind == "support" and new_status == "resolved":
+                push_notification(db, c.client_id,
+                                  "Ta demande de service a été traitée ✓", "/portail/service")
+            elif c.kind == "trip":
+                _notify_trip_status(db, c, new_status)
             db.commit()
     if not nxt.startswith("/admin/"):                   # only allow internal redirects
         nxt = f"/admin/cases/{case_id}"
@@ -2938,6 +2960,7 @@ async def admin_case_quote(case_id: int, request: Request):
                 log_activity(db, c.client_id, "status_change",
                              f"Statut : {c.status} → quoted", c.id)
                 c.status = "quoted"
+                _notify_trip_status(db, c, "quoted")
             log_activity(db, c.client_id, "note",
                          "Quote déposée" if c.quote_url else "Quote retirée", c.id)
             # Notify the client on their own channel when a quote is newly set or
@@ -2983,6 +3006,7 @@ async def admin_case_book(case_id: int, request: Request):
                 tt = c.trip or {}
                 c.flight_depart = c.flight_depart or tt.get("departure_date")
                 c.flight_return = c.flight_return or tt.get("return_date")
+                _notify_trip_status(db, c, "booked")
             log_activity(db, c.client_id, "note", f"Réservation confirmée · n° {ref}", c.id)
             if was != "booked" or ref_changed:
                 client = db.get(Client, c.client_id) if c.client_id else None
@@ -3135,32 +3159,38 @@ def admin_setup_greeting():
 
 @app.post("/admin/cases/{case_id}/send", dependencies=[Depends(require_admin)])
 async def admin_case_send(case_id: int, request: Request):
-    """Agent sends a personalized message straight to the Messenger customer."""
+    """Agent reply. Delivered via Messenger when the case has a PSID; always
+    recorded on the case thread (so portal clients see it in their Aide toggle)
+    and, for support cases, pushed as a portal notification."""
     form = await request.form()
     message = (form.get("message") or "").strip()
     nxt = form.get("next") or f"/admin/cases/{case_id}"
-    with SessionLocal() as db:
-        c = db.get(Case, case_id)
-        sender = c.sender_ref if c else None
-        client_id = c.client_id if c else None
-    if sender and message and settings.FB_PAGE_TOKEN:
-        # Manual, human-composed reply -> HUMAN_AGENT tag (7-day window) when the
-        # Meta permission is enabled; otherwise a standard RESPONSE (24h).
-        tag = "HUMAN_AGENT" if settings.HUMAN_AGENT_ENABLED else None
-        ok = send_text(sender, message, settings.FB_PAGE_TOKEN,
-                       settings.FB_GRAPH_VERSION, tag=tag)
-        log.info("Manual reply to case #%s: %s%s", case_id, "sent" if ok else "failed",
-                 " [HUMAN_AGENT]" if tag else "")
-        if ok:
-            preview = message if len(message) <= 80 else message[:77] + "…"
-            now = datetime.utcnow().isoformat(timespec="seconds")
-            with SessionLocal() as db:
-                c = db.get(Case, case_id)
-                if c:
-                    c.awaiting_reply = False            # we replied
+    if message:
+        with SessionLocal() as db:
+            c = db.get(Case, case_id)
+            if c:
+                sender = c.sender_ref
+                sent = False
+                if sender and settings.FB_PAGE_TOKEN:
+                    tag = "HUMAN_AGENT" if settings.HUMAN_AGENT_ENABLED else None
+                    sent = send_text(sender, message, settings.FB_PAGE_TOKEN,
+                                     settings.FB_GRAPH_VERSION, tag=tag)
+                    log.info("Manual reply to case #%s: %s%s", case_id,
+                             "sent" if sent else "failed",
+                             " [HUMAN_AGENT]" if tag else "")
+                # Record when delivered by Messenger, or always for portal/no-PSID.
+                if sent or not sender:
+                    now = datetime.utcnow().isoformat(timespec="seconds")
                     c.messages = _conversation(c) + [{"dir": "out", "text": message, "at": now}]
-                log_activity(db, client_id, "reply_out", f"Message envoyé : {preview}", case_id)
-                db.commit()
+                    c.awaiting_reply = False
+                    preview = message if len(message) <= 80 else message[:77] + "…"
+                    log_activity(db, c.client_id, "reply_out",
+                                 f"Message envoyé : {preview}", case_id)
+                    if c.kind == "support":
+                        push_notification(db, c.client_id,
+                                          "Nouvelle réponse à ta demande d'aide 💬",
+                                          "/portail/service")
+                    db.commit()
     if not nxt.startswith("/admin/"):
         nxt = f"/admin/cases/{case_id}"
     return RedirectResponse(nxt, status_code=303)
