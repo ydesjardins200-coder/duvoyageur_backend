@@ -657,6 +657,7 @@ GREETING_TEXT = (
 IB_PROFILING = "IB_PROFILING"   # trip-rebate progressive profiling (default)
 IB_CONCIERGE = "IB_CONCIERGE"   # general-info AI concierge
 IB_HUMAN = "IB_HUMAN"           # human support, no AI, notify the backend
+IB_PORTAL = "IB_PORTAL"         # send a fresh magic link to the client's space
 
 ICE_BREAKERS = [
     {"question": "✈️ Trouver un rabais sur mon voyage", "payload": IB_PROFILING},
@@ -678,6 +679,7 @@ PERSISTENT_MENU = [
     {"type": "postback", "title": "✈️ Trouver un rabais", "payload": IB_PROFILING},
     {"type": "postback", "title": "❓ Question générale", "payload": IB_CONCIERGE},
     {"type": "postback", "title": "👤 Parler à un conseiller", "payload": IB_HUMAN},
+    {"type": "postback", "title": "🔐 Mon espace client", "payload": IB_PORTAL},
 ]
 
 # Senders already shown the triage chips (once per process lifetime, avoids spam).
@@ -1215,6 +1217,26 @@ def process_postback(sender: str | None, payload: str) -> None:
                   "Écris-nous ta question, on revient vite !",
                   settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
         log.info("Human-support lane set for %s", sender)
+    elif payload == IB_PORTAL:
+        # Self-service: the client asks for their space -> send a fresh magic
+        # link right in the thread (their tap kept the 24h window open).
+        with SessionLocal() as db:
+            cl = find_client_by_identity(db, "messenger_psid", sender)
+            if not cl:
+                cl = resolve_or_create_client(db, messenger_psid=sender, channel="messenger")
+                db.commit()
+            cid, name = cl.id, cl.display_name
+        url = build_portal_login_url(cid)
+        ok = False
+        if url:
+            ok = send_text(sender, _portal_link_message(name, url),
+                           settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+        with SessionLocal() as db:
+            log_activity(db, cid, "reply_out" if ok else "note",
+                         "Lien espace client envoyé (menu)" if ok
+                         else "Échec envoi lien espace client (menu)", None)
+            db.commit()
+        log.info("Portal link (menu) to %s: %s", sender, "sent" if ok else "failed")
     elif payload == Q_BOOK:
         _flag_quote_intent(sender, "📅 Je veux réserver", "Client veut réserver")
         send_text(sender,

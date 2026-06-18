@@ -65,6 +65,15 @@ def _make_session_value(client_id: int) -> str:
     return _session_signer.dumps({"cid": client_id})
 
 
+def _set_session_cookie(resp, client_id: int) -> None:
+    """Set/refresh the signed portal cookie (sliding expiry: each visit renews
+    it, so an active client effectively stays logged in)."""
+    resp.set_cookie(
+        PORTAL_COOKIE, _make_session_value(client_id),
+        max_age=settings.PORTAL_SESSION_MAX_AGE, path=_COOKIE_PATH,
+        httponly=True, samesite="lax", secure=settings.SECURE_COOKIES)
+
+
 def current_portal_client_id(request: Request):
     """Client id from the signed portal cookie, or None if absent/invalid."""
     raw = request.cookies.get(PORTAL_COOKIE)
@@ -281,10 +290,7 @@ async def portal_login_consume(request: Request):
         client.portal_nonce = None          # single use — burn it now
         db.commit()
     resp = RedirectResponse("/portail", status_code=303)
-    resp.set_cookie(
-        PORTAL_COOKIE, _make_session_value(cid),
-        max_age=settings.PORTAL_SESSION_MAX_AGE, path=_COOKIE_PATH,
-        httponly=True, samesite="lax", secure=settings.SECURE_COOKIES)
+    _set_session_cookie(resp, cid)
     return resp
 
 
@@ -295,7 +301,8 @@ def portal_home(request: Request):
         return HTMLResponse(_info_page(
             "Espace client",
             "Pour accéder à ton espace, ouvre le lien personnel qu'on t'a "
-            "envoyé sur Messenger ou par courriel. 🔐"))
+            "envoyé. Tu peux aussi le redemander à tout moment sur Messenger : "
+            "menu ☰ → « 🔐 Mon espace client ». 🔐"))
     with SessionLocal() as db:
         client = db.get(Client, cid)
         if not client:
@@ -304,7 +311,9 @@ def portal_home(request: Request):
                 "On n'a pas retrouvé ton dossier. Écris-nous sur Messenger. 🙂"))
         cases = list(client.requests)
         body = _dashboard(client, cases)
-    return HTMLResponse(_shell("Mon espace", body, logged_in=True))
+    resp = HTMLResponse(_shell("Mon espace", body, logged_in=True))
+    _set_session_cookie(resp, cid)          # sliding expiry on every visit
+    return resp
 
 
 @router.get("/portail/logout")
