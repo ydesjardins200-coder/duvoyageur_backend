@@ -27,6 +27,7 @@ Security notes
 """
 from __future__ import annotations
 
+import re
 import secrets
 from html import escape
 
@@ -36,6 +37,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from config import settings
 from db import Case, Client, SessionLocal, add_identity, log_activity, normalize_email, normalize_phone
+from trip_schema import TripRequest
 
 router = APIRouter()
 
@@ -178,7 +180,7 @@ def _trip_card(c) -> str:
         "</div>")
 
 
-def _dashboard(client, cases) -> str:
+def _dashboard(client, cases, just_created: bool = False) -> str:
     name = escape(client.display_name or "")
     hello = f"Bonjour {name} 👋" if name else "Bonjour 👋"
     trips = [c for c in cases if (c.kind or "trip") == "trip"]
@@ -186,11 +188,15 @@ def _dashboard(client, cases) -> str:
         cards = "".join(_trip_card(c) for c in trips)
     else:
         cards = ("<div class='tcard empty'>Aucune demande pour l'instant. "
-                 "Écris-nous sur Messenger pour trouver ton prochain voyage à rabais ! 🌴</div>")
+                 "Lance ta première recherche de voyage à rabais ci-dessus ! 🌴</div>")
+    note = ("<div class='note ok'>Demande envoyée ✓ — on te revient bientôt avec ton rabais !</div>"
+            if just_created else "")
+    cta = ("<div style='margin:0 0 18px'>"
+           "<a class='btn' href='/portail/nouveau-voyage'>+ Nouvelle demande de voyage</a></div>")
     return (
         f"<div class='hello'><h2>{hello}</h2>"
         "<p class='lede'>Voici tes demandes de voyage et leurs soumissions.</p></div>"
-        + _kyc_banner(client)
+        + note + _kyc_banner(client) + cta
         + f"<div class='tgrid'>{cards}</div>")
 
 
@@ -282,10 +288,63 @@ def _profile_form(client, saved: bool = False) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# New trip request
+# --------------------------------------------------------------------------- #
+_BOARD_OPTS = [("", "Peu importe"), ("all_inclusive", "Tout inclus"),
+               ("breakfast", "Petit-déjeuner"), ("half_board", "Demi-pension"),
+               ("full_board", "Pension complète"), ("room_only", "Chambre seulement")]
+_BASIS_OPTS = [("", "—"), ("per_person", "par personne"), ("total", "pour le groupe")]
+
+
+def _new_trip_form() -> str:
+    bsel = "".join(f"<option value='{v}'>{l}</option>" for v, l in _BOARD_OPTS)
+    psel = "".join(f"<option value='{v}'>{l}</option>" for v, l in _BASIS_OPTS)
+    return (
+        "<form class='form' method='post' action='/portail/nouveau-voyage'>"
+        "<div class='fset'><h3>Destination</h3><div class='formgrid'>"
+        "<div class='field'><label>Où veux-tu aller ? <span class='req'>*</span></label>"
+        "<input name='destination' placeholder='ex. Punta Cana, Cancún, Varadero…' required></div>"
+        "<div class='field'><label>Un hôtel en particulier ?</label>"
+        "<input name='hotel_name_raw' placeholder='optionnel'></div>"
+        "</div></div>"
+        "<div class='fset'><h3>Quand &amp; d'où</h3><div class='formgrid'>"
+        "<div class='field'><label>Tu pars d'où ? <span class='req'>*</span></label>"
+        "<input name='origin_city' placeholder='ville ou aéroport (ex. Montréal)' required></div>"
+        "<div class='field half'><label>Date de départ <span class='req'>*</span></label>"
+        "<input name='departure_date' type='date' required></div>"
+        "<div class='field half'><label>Date de retour <span class='req'>*</span></label>"
+        "<input name='return_date' type='date' required></div>"
+        "</div></div>"
+        "<div class='fset'><h3>Voyageurs</h3><div class='formgrid'>"
+        "<div class='field half'><label>Adultes <span class='req'>*</span></label>"
+        "<input name='num_adults' type='number' min='1' value='2' inputmode='numeric' required></div>"
+        "<div class='field half'><label>Enfants</label>"
+        "<input name='num_children' type='number' min='0' value='0' inputmode='numeric'></div>"
+        "<div class='field half'><label>Âges des enfants</label>"
+        "<input name='children_ages' placeholder='ex. 4, 9'></div>"
+        "<div class='field half'><label>Chambres</label>"
+        "<input name='num_rooms' type='number' min='1' inputmode='numeric'></div>"
+        "</div></div>"
+        "<div class='fset'><h3>Détails <span class='muted'>(optionnel)</span></h3><div class='formgrid'>"
+        f"<div class='field half'><label>Type de forfait</label><select name='board'>{bsel}</select></div>"
+        "<div class='field half'><label>Prix que t'as vu</label>"
+        "<input name='price_amount' type='number' inputmode='decimal' placeholder='ex. 1450'></div>"
+        f"<div class='field half'><label>Ce prix, c'est…</label><select name='price_basis'>{psel}</select></div>"
+        "<div class='field'><label>Autre chose à nous dire ?</label>"
+        "<textarea name='notes' placeholder='préférences, occasion spéciale, budget…'></textarea></div>"
+        "</div></div>"
+        "<div class='actions'>"
+        "<button class='btn block' type='submit'>Envoyer ma demande</button>"
+        "<a class='btn ghost' href='/portail'>Annuler</a></div>"
+        "</form>")
+
+
+# --------------------------------------------------------------------------- #
 # Shell + nav
 # --------------------------------------------------------------------------- #
 def _nav(active: str) -> str:
     items = [("voyages", "/portail", "Mes voyages"),
+             ("nouveau", "/portail/nouveau-voyage", "Nouveau voyage"),
              ("profil", "/portail/profil", "Mon profil")]
     links = "".join(
         f"<a class='pill{' on' if k == active else ''}' href='{href}'>{label}</a>"
@@ -395,7 +454,7 @@ async def portal_login_consume(request: Request):
 
 
 @router.get("/portail", response_class=HTMLResponse)
-def portal_home(request: Request):
+def portal_home(request: Request, new: int = 0):
     cid = current_portal_client_id(request)
     if not cid:
         return HTMLResponse(_info_page(
@@ -410,7 +469,7 @@ def portal_home(request: Request):
                 "Espace client",
                 "On n'a pas retrouvé ton dossier. Écris-nous sur Messenger. 🙂"))
         cases = list(client.requests)
-        body = _dashboard(client, cases)
+        body = _dashboard(client, cases, just_created=bool(new))
     resp = HTMLResponse(_shell("Mon espace", body, logged_in=True, nav=_nav("voyages")))
     _set_session_cookie(resp, cid)          # sliding expiry on every visit
     return resp
@@ -469,6 +528,94 @@ async def portal_profile_save(request: Request):
             log_activity(db, cid, "note", "Identité mise à jour (espace client)", None)
             db.commit()
     return RedirectResponse("/portail/profil?saved=1", status_code=303)
+
+
+@router.get("/portail/nouveau-voyage", response_class=HTMLResponse)
+def portal_new_trip(request: Request):
+    cid = current_portal_client_id(request)
+    if not cid:
+        return HTMLResponse(_info_page(
+            "Espace client",
+            "Pour faire une demande, ouvre ton lien personnel ou redemande-le "
+            "sur Messenger (menu ☰ → « 🔐 Mon espace client »). 🔐"))
+    body = ("<div class='hello'><h2>Nouvelle demande de voyage</h2>"
+            "<p class='lede'>Dis-nous ce que tu cherches — on retrouve le même "
+            "forfait avec ton rabais. 🌴</p></div>" + _new_trip_form())
+    resp = HTMLResponse(_shell("Nouveau voyage", body, logged_in=True, nav=_nav("nouveau")))
+    _set_session_cookie(resp, cid)
+    return resp
+
+
+@router.post("/portail/nouveau-voyage")
+async def portal_new_trip_save(request: Request):
+    cid = current_portal_client_id(request)
+    if not cid:
+        return RedirectResponse("/portail", status_code=303)
+    form = await request.form()
+
+    def g(k):
+        return (form.get(k) or "").strip() or None
+
+    def gi(k):
+        v = (form.get(k) or "").strip()
+        try:
+            return int(float(v)) if v else None
+        except ValueError:
+            return None
+
+    def gf(k):
+        v = (form.get(k) or "").strip()
+        try:
+            return float(v) if v else None
+        except ValueError:
+            return None
+
+    with SessionLocal() as db:
+        client = db.get(Client, cid)
+        if not client:
+            return RedirectResponse("/portail", status_code=303)
+        d = {
+            "source": "portail",
+            "customer_name": client.display_name,
+            "customer_email": client.primary_email,
+            "customer_phone": client.primary_phone,
+            "destination": g("destination"),
+            "hotel_name_raw": g("hotel_name_raw"),
+            "origin_city": g("origin_city"),
+            "departure_date": g("departure_date"),
+            "return_date": g("return_date"),
+            "board": g("board") or "unknown",
+            "num_adults": gi("num_adults"),
+            "num_children": gi("num_children"),
+            "num_rooms": gi("num_rooms"),
+            "raw_message": g("notes"),
+        }
+        ages = [int(a) for a in re.split(r"[,\s]+", form.get("children_ages", "") or "")
+                if a.strip().isdigit()]
+        if ages:
+            d["passengers"] = [{"age": a} for a in ages]
+        amt = gf("price_amount")
+        if amt is not None:
+            d["price_seen"] = {"amount": amt, "currency": "CAD",
+                               "basis": g("price_basis") or "unknown"}
+        try:
+            trip = TripRequest.model_validate({k: v for k, v in d.items() if v is not None})
+        except Exception:  # noqa: BLE001
+            return RedirectResponse("/portail/nouveau-voyage", status_code=303)
+        rem = trip.remaining_fields()
+        case = Case(
+            client_id=client.id, channel="portal",
+            status="new",                      # a fresh lead the agent must action
+            customer_email=client.primary_email, customer_phone=client.primary_phone,
+            parse_confidence=1.0, raw_message=g("notes"),
+            trip=trip.model_dump(), needs_clarification=rem,
+            screenshots=[], messages=[])
+        db.add(case)
+        db.flush()
+        log_activity(db, client.id, "request_created",
+                     "Nouvelle demande via espace client", case.id)
+        db.commit()
+    return RedirectResponse("/portail?new=1", status_code=303)
 
 
 @router.get("/portail/logout")
@@ -587,12 +734,16 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .field:not(.half){{grid-column:1 / -1}}
  .field label{{font-size:12px;color:var(--mist);margin:0 0 6px;font-weight:500}}
  .field .req{{color:var(--gold)}}
- .field input{{width:100%;font:inherit;font-size:16px;color:var(--foam);
+ .field input,.field select,.field textarea{{width:100%;font:inherit;font-size:16px;color:var(--foam);
    min-height:48px;padding:12px 13px;border-radius:12px;
-   border:1px solid var(--line);background:var(--field)}}
- .field input::placeholder{{color:#6f93a3}}
- .field input:focus{{outline:none;border-color:var(--pacific);box-shadow:0 0 0 3px rgba(25,211,230,.18)}}
- .field.miss input{{border-color:rgba(255,210,63,.55)}}
+   border:1px solid var(--line);background:var(--field);appearance:none;-webkit-appearance:none}}
+ .field textarea{{min-height:96px;resize:vertical;line-height:1.5}}
+ .field select{{background-image:linear-gradient(45deg,transparent 50%,var(--mist) 50%),linear-gradient(135deg,var(--mist) 50%,transparent 50%);
+   background-position:calc(100% - 18px) 21px,calc(100% - 13px) 21px;background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:36px}}
+ .field input::placeholder,.field textarea::placeholder{{color:#6f93a3}}
+ .field input:focus,.field select:focus,.field textarea:focus{{outline:none;border-color:var(--pacific);box-shadow:0 0 0 3px rgba(25,211,230,.18)}}
+ .field.miss input,.field.miss select{{border-color:rgba(255,210,63,.55)}}
+ .hint{{font-size:12px;color:var(--mist);margin:6px 0 0}}
  /* Progress */
  .prog{{height:8px;border-radius:999px;background:rgba(8,33,47,.7);overflow:hidden;margin:2px 0 6px}}
  .prog span{{display:block;height:100%;border-radius:999px;

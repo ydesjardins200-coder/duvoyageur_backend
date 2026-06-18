@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 # Source values that are generic plumbing, not a real retailer/site the customer
 # named — these should NOT satisfy the "where did you find it" question.
 _GENERIC_SOURCES = {"messenger", "screenshot", "form", "capture", "capture d'écran",
-                    "sms", "email", "courriel", "facebook", "fb"}
+                    "sms", "email", "courriel", "facebook", "fb", "portail", "portal"}
 
 
 def _meaningful_source(s: Optional[str]) -> bool:
