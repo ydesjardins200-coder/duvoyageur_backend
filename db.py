@@ -79,6 +79,9 @@ class Client(Base):
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tags: Mapped[list] = mapped_column(JSON, default=list)
     last_contact_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Single-use nonce for the current passwordless portal magic link (cleared
+    # on first use). A fresh link overwrites it, so only the latest link works.
+    portal_nonce: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     identities = relationship(
         "ClientIdentity", back_populates="client",
@@ -218,6 +221,8 @@ def _ensure_columns() -> None:
             conn.execute(text(
                 "ALTER TABLE clients ADD COLUMN IF NOT EXISTS "
                 "support_mode VARCHAR(20) DEFAULT 'profiling'"))
+            conn.execute(text(
+                "ALTER TABLE clients ADD COLUMN IF NOT EXISTS portal_nonce VARCHAR(64)"))
             has_kind = conn.execute(text(
                 "SELECT 1 FROM information_schema.columns "
                 "WHERE table_name='cases' AND column_name='kind'")).first()
@@ -261,6 +266,8 @@ def _ensure_columns() -> None:
             if "support_mode" not in ccols:
                 conn.execute(text(
                     "ALTER TABLE clients ADD COLUMN support_mode VARCHAR(20) DEFAULT 'profiling'"))
+            if "portal_nonce" not in ccols:
+                conn.execute(text("ALTER TABLE clients ADD COLUMN portal_nonce VARCHAR(64)"))
             if "kind" not in cols:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN kind VARCHAR(20) DEFAULT 'trip'"))
                 conn.execute(text(

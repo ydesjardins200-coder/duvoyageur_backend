@@ -46,6 +46,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from auth import NotAuthenticated, check_credentials, require_admin
 from concierge import concierge_reply
 from config import settings
+from portal import router as portal_router, build_portal_login_url
 import storage
 from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLocal, engine,
                 add_identity, find_client_by_identity, find_duplicate_groups,
@@ -88,6 +89,9 @@ app.add_middleware(
     same_site="lax",
     https_only=settings.SECURE_COOKIES,
 )
+
+# Client-facing portal (espace client) — passwordless magic links, separate auth.
+app.include_router(portal_router)
 
 
 @app.exception_handler(NotAuthenticated)
@@ -397,6 +401,39 @@ def _dispatch_booking_notification(info: dict) -> None:
         with SessionLocal() as db:
             log_activity(db, client_id, "note", "Confirmation prête — portail client à venir", cid)
             db.commit()
+
+
+def _portal_link_message(name, url) -> str:
+    """Friendly message delivering the client's personal portal magic link."""
+    greet = f"Salut {name} ! " if name else "Salut ! "
+    return (greet + "🔐 Voici ton accès personnel à ton espace client Du Voyageur — "
+            "tu y retrouves tes demandes, tes soumissions et tes rabais 👇\n\n"
+            f"{url}\n\n(Lien personnel et temporaire — ne le partage pas.)")
+
+
+def _dispatch_portal_link(info: dict) -> None:
+    """Send the portal magic link on the client's channel (messenger now;
+    form -> email stub; otherwise log)."""
+    msg = _portal_link_message(info.get("name"), info["url"])
+    ch, client_id = info.get("channel"), info.get("client_id")
+    if ch == "messenger" and info.get("sender") and settings.FB_PAGE_TOKEN:
+        ok = send_text(info["sender"], msg, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+        with SessionLocal() as db:
+            log_activity(db, client_id, "reply_out" if ok else "note",
+                         "Lien espace client envoyé sur Messenger" if ok
+                         else "Échec envoi lien espace client (fenêtre 24 h ?)", None)
+            db.commit()
+        log.info("Portal link (messenger) client #%s: %s", client_id, "sent" if ok else "failed")
+    elif ch == "form" or info.get("email"):
+        sent = _send_email_stub(info.get("email"), "Ton espace client Du Voyageur 🔐", msg)
+        with SessionLocal() as db:
+            log_activity(db, client_id, "reply_out" if sent else "note",
+                         "Lien espace client envoyé par courriel" if sent
+                         else f"Lien espace client à envoyer par courriel à {info.get('email') or '?'}",
+                         None)
+            db.commit()
+    else:
+        log.info("Portal link: no channel for client #%s", client_id)
 
 
 def process_messenger_message(sender: str | None, text: str, image_urls: list[str]) -> None:
@@ -2367,7 +2404,11 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
 
         body = (
             "<p><a href='/admin/clients'>&larr; Tous les clients</a></p>"
-            f"<h2>{name}</h2>"
+            "<div class='pagehdr'>"
+            f"<h2 style='margin:0'>{name}</h2>"
+            f"<form method='post' action='/admin/clients/{cl.id}/portal-link' style='margin:0'>"
+            "<button class='btn-ghost'>🔐 Envoyer le lien espace client</button></form>"
+            "</div>"
             f"{stats}{tabs}{content}"
         )
     return render_page(body, "clients")
@@ -2399,6 +2440,28 @@ async def admin_client_update(client_id: int, request: Request):
                 cl.tags = [t.strip() for t in (form.get("tags") or "").split(",") if t.strip()]
             log_activity(db, cl.id, "note", "Fiche client modifiée")
             db.commit()
+    return RedirectResponse(f"/admin/clients/{client_id}", status_code=303)
+
+
+@app.post("/admin/clients/{client_id}/portal-link", dependencies=[Depends(require_admin)])
+def admin_send_portal_link(client_id: int):
+    """Issue a fresh magic link and send it to the client on their channel."""
+    url = build_portal_login_url(client_id)
+    if url:
+        with SessionLocal() as db:
+            cl = db.get(Client, client_id)
+            psid = (db.query(ClientIdentity)
+                    .filter_by(client_id=client_id, kind="messenger_psid").first())
+            sender = psid.value if psid else None
+            email = cl.primary_email if cl else None
+            name = cl.display_name if cl else None
+        channel = "messenger" if sender else ("form" if email else "other")
+        info = {"name": name, "channel": channel, "sender": sender,
+                "email": email, "url": url, "client_id": client_id}
+        try:
+            _dispatch_portal_link(info)
+        except Exception as e:  # noqa: BLE001
+            log.exception("Portal link dispatch failed for client #%s: %s", client_id, e)
     return RedirectResponse(f"/admin/clients/{client_id}", status_code=303)
 
 
@@ -2538,9 +2601,18 @@ def admin_reports():
 
 @app.get("/admin/espace-client", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 def admin_espace_client():
-    body = (page_header("Espace client")
-            + "<div class='card'><p class='muted'>Le portail self-service pour les clients "
-              "sera bâti plus tard.</p></div>")
+    body = (
+        page_header("Espace client")
+        + "<div class='card'>"
+        "<p>Le portail self-service est <b>actif</b>. Les clients y voient leurs demandes, "
+        "leurs soumissions et leurs rabais — sans mot de passe.</p>"
+        "<p class='muted'>Connexion par <b>lien magique</b> (à usage unique, temporaire) : "
+        "depuis une fiche client, clique <b>« 🔐 Envoyer le lien espace client »</b>. "
+        "Le lien part sur le canal du client (Messenger maintenant ; courriel à venir).</p>"
+        f"<p style='margin-top:14px'><a class='btn-ghost' href='/admin/clients'>Aller aux clients →</a> "
+        f"<a class='btn-ghost' href='{escape(settings.PUBLIC_BASE_URL)}/portail' target='_blank'>"
+        "Voir le portail →</a></p>"
+        "</div>")
     return render_page(body, "")
 
 

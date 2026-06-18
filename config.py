@@ -63,6 +63,15 @@ class Settings:
     # leave unset locally so http://localhost keeps you logged in.
     SECURE_COOKIES: bool = os.getenv("SECURE_COOKIES", "") not in ("", "0", "false", "False")
 
+    # --- Client portal (espace client, passwordless magic links) ---
+    # Absolute base URL used to build magic links sent over Messenger/email.
+    PUBLIC_BASE_URL: str = os.getenv(
+        "PUBLIC_BASE_URL", "https://duvoyageurbackend-production.up.railway.app").rstrip("/")
+    # How long a magic login link stays valid (default 30 minutes).
+    PORTAL_LINK_MAX_AGE: int = int(os.getenv("PORTAL_LINK_MAX_AGE", str(60 * 30)))
+    # How long a portal session lasts once logged in (default 30 days).
+    PORTAL_SESSION_MAX_AGE: int = int(os.getenv("PORTAL_SESSION_MAX_AGE", str(60 * 60 * 24 * 30)))
+
     # --- CORS: the Netlify domain(s) allowed to POST the intake form ---
     # Comma-separated, e.g. "https://duvoyageur.netlify.app,https://duvoyageur.ca"
     ALLOWED_ORIGINS: list[str] = os.getenv("ALLOWED_ORIGINS", "*").split(",")
