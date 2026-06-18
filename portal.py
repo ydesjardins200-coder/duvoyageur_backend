@@ -1309,10 +1309,20 @@ def _signup_form(values=None, error: str = "") -> str:
 
 
 @router.get("/portail/inscription", response_class=HTMLResponse)
-def portal_signup_page(request: Request):
+def portal_signup_page(request: Request, email: str = "", name: str = "",
+                       prenom: str = "", nom: str = "", phone: str = ""):
     if current_portal_client_id(request):
         return RedirectResponse("/portail", status_code=303)
-    return HTMLResponse(_shell("Inscription", _signup_form(), logged_in=False))
+    # Prefill from a /demande hand-off (?email=&name=…): a single "name" is split
+    # into prénom/nom as a starting point the client can adjust.
+    if name and not (prenom or nom):
+        parts = name.split()
+        prenom = parts[0] if parts else ""
+        nom = " ".join(parts[1:]) if len(parts) > 1 else ""
+    values = {"email": email.strip(), "phone": phone.strip(),
+              "legal_first_name": prenom.strip(), "legal_last_name": nom.strip()}
+    values = {k: v for k, v in values.items() if v}
+    return HTMLResponse(_shell("Inscription", _signup_form(values), logged_in=False))
 
 
 @router.post("/portail/inscription")
@@ -1340,25 +1350,41 @@ async def portal_signup_save(request: Request):
             values, "Remplis tous les champs requis."), logged_in=False))
 
     with SessionLocal() as db:
-        # Don't create a duplicate: an existing email belongs to an account.
         existing = (db.query(Client).filter(Client.primary_email == email).first()
                     or find_client_by_identity(db, "email", email))
-        if existing:
+        # An existing email with a COMPLETED profile is a real account -> log in.
+        if existing and kyc_complete(existing):
             return HTMLResponse(_shell("Inscription", _signup_form(
                 values, "Ce courriel a déjà un compte. Connecte-toi avec ton "
                 "courriel et ta date de naissance."), logged_in=False))
+
         kyc = {k: (values.get(k) or None) for k, *_ in _KYC_FIELDS
                if k not in ("email", "phone")}
         legal = " ".join(x for x in (kyc.get("legal_first_name"),
                                      kyc.get("legal_last_name")) if x)
-        client = Client(display_name=legal or None, primary_email=email,
-                        primary_phone=phone, preferred_channel="email", kyc=kyc)
-        db.add(client)
-        db.flush()
-        add_identity(db, client, "email", email)
-        add_identity(db, client, "phone", phone)
-        log_activity(db, client.id, "request_created",
-                     "Compte créé (inscription espace client)")
+        if existing:
+            # Guest dossier (created by a /demande submission, no KYC yet):
+            # claim it — fill the identity, keep their existing request(s).
+            client = existing
+            client.kyc = kyc
+            client.primary_email = email
+            client.primary_phone = phone
+            if legal:
+                client.display_name = legal
+            client.preferred_channel = client.preferred_channel or "email"
+            replace_primary_identity(db, client, "email", email)
+            replace_primary_identity(db, client, "phone", phone)
+            log_activity(db, client.id, "note",
+                         "Compte réclamé via inscription (dossier invité existant)")
+        else:
+            client = Client(display_name=legal or None, primary_email=email,
+                            primary_phone=phone, preferred_channel="email", kyc=kyc)
+            db.add(client)
+            db.flush()
+            add_identity(db, client, "email", email)
+            add_identity(db, client, "phone", phone)
+            log_activity(db, client.id, "request_created",
+                         "Compte créé (inscription espace client)")
         db.commit()
         cid = client.id
     _signup_hit(ip)
