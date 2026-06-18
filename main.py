@@ -583,6 +583,81 @@ def _render_thread(case, name: str = "Client") -> str:
     return "".join(bubbles)
 
 
+_BOARD_FR = {"all_inclusive": "Tout inclus", "breakfast": "Petit-déjeuner",
+             "half_board": "Demi-pension", "full_board": "Pension complète",
+             "room_only": "Sans repas", "unknown": None}
+_BASIS_FR = {"per_person": "par personne", "total": "pour le groupe", "unknown": None}
+
+
+def _trip_info_cards(c) -> str:
+    """Voyage / Voyageurs / Prix trouvé / Captures cards for a trip case — the
+    same structured layout as the case detail, reusable on the client fiche."""
+    t = c.trip or {}
+
+    def val(x):
+        if x in (None, "", [], "unknown"):
+            return "<span class='muted'>—</span>"
+        return escape(str(x))
+
+    def kv(label, value, sub=None):
+        sub_html = f"<div class='sub'>{escape(sub)}</div>" if sub else ""
+        return (f"<div class='kv'><span class='k'>{label}</span>"
+                f"<span class='v'>{value}{sub_html}</span></div>")
+
+    def card(title, *rows):
+        return f"<div class='card'><h3>{title}</h3>{''.join(rows)}</div>"
+
+    city, iata = t.get("origin_city"), t.get("origin_airport_iata")
+    origin = f"{city} ({iata})" if city and iata else (city or iata)
+    dep, ret, nights = t.get("departure_date"), t.get("return_date"), t.get("nights")
+    if dep or ret:
+        dates = f"{dep or '?'} → {ret or '?'}" + (f" · {nights} nuits" if nights else "")
+    else:
+        dates = t.get("dates_raw")
+    hotel = t.get("hotel_name_raw")
+    norm = t.get("hotel_name_normalized")
+    hotel_sub = norm if norm and norm != hotel else None
+    ages = [str(p.get("age")) for p in (t.get("passengers") or []) if p.get("age") is not None]
+    ages_str = ", ".join(ages) if ages else None
+    ps = t.get("price_seen") or {}
+    price_amt = f"{ps.get('amount')} {ps.get('currency', 'CAD')}" if ps.get("amount") is not None else None
+    taxes = ps.get("taxes_included")
+    taxes_str = "Oui" if taxes is True else ("Non" if taxes is False else None)
+
+    cards = (
+        card("Voyage",
+             kv("Destination", val(t.get("destination"))),
+             kv("Hôtel", val(hotel), sub=hotel_sub),
+             kv("Départ", val(origin)),
+             kv("Dates", val(dates)),
+             kv("Forfait", val(_BOARD_FR.get(t.get("board")))),
+             kv("Transporteur", val(t.get("operator")))) +
+        card("Voyageurs",
+             kv("Adultes", val(t.get("num_adults"))),
+             kv("Enfants", val(t.get("num_children"))),
+             kv("Âges", val(ages_str)),
+             kv("Chambres", val(t.get("num_rooms"))),
+             kv("Type de chambre", val(t.get("room_type")))) +
+        card("Prix trouvé",
+             kv("Montant", val(price_amt)),
+             kv("Base", val(_BASIS_FR.get(ps.get("basis")))),
+             kv("Taxes incluses", val(taxes_str)),
+             kv("Source", val(t.get("source"))),
+             kv("Texte original", val(ps.get("raw"))))
+    )
+    shots = c.screenshots or []
+    if shots:
+        imgs = "".join(
+            f"<a href='/admin/cases/{c.id}/screenshot/{i}' target='_blank'>"
+            f"<img src='/admin/cases/{c.id}/screenshot/{i}' alt='capture {i+1}' "
+            "style='max-width:100%;max-height:460px;display:block;margin:0 auto 10px;"
+            "border-radius:10px;border:1px solid var(--line);background:rgba(3,18,27,.4)'></a>"
+            for i in range(len(shots)))
+        cards += (f"<div class='card'><h3>Capture(s) d'écran · {len(shots)}</h3>{imgs}"
+                  "<p class='sub'>Clique pour agrandir.</p></div>")
+    return cards
+
+
 def _handle_human_message(sender: str, text: str, shots: list | None) -> None:
     """Human-support lane: NO AI. Store the message on a support case, record it
     in the conversation thread, flag it for the agent (bell), and stay silent."""
@@ -1505,26 +1580,19 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
             )
         elif tab == "voyage":
             if trips:
-                cards = []
+                blocks = []
                 for r in trips:
-                    t = r.trip or {}
-                    dep, ret = t.get("departure_date"), t.get("return_date")
-                    dates = (f"{dep or '?'} → {ret or '?'}" if (dep or ret) else (t.get("dates_raw") or "—"))
-                    cards.append(
-                        "<div class='card'>"
+                    blocks.append(
+                        "<div style='margin-bottom:24px'>"
                         "<div class='pagehdr'>"
                         f"<h3 style='margin:0'>#{r.id} <span class='tag {r.status}'>{r.status}</span></h3>"
                         + status_form(r.id, r.status, f"{base}?tab=voyage")
                         + "</div>"
-                        + kv("Destination", val(t.get("destination")))
-                        + kv("Hôtel", val(t.get("hotel_name_raw")))
-                        + kv("Dates", val(dates))
-                        + kv("Canal", val(r.channel))
-                        + kv("Reçu", r.created_at.strftime("%Y-%m-%d %H:%M"))
-                        + f"<div style='margin-top:10px'><a href='/admin/cases/{r.id}'>Ouvrir le dossier &rarr;</a></div>"
+                        f"<div class='grid2'>{_trip_info_cards(r)}</div>"
+                        f"<div style='margin-top:4px'><a href='/admin/cases/{r.id}'>Ouvrir le dossier &rarr;</a></div>"
                         "</div>"
                     )
-                content = f"<div class='grid2'>{''.join(cards)}</div>"
+                content = "".join(blocks)
             else:
                 content = "<div class='card full'><div class='muted'>Aucune demande de voyage.</div></div>"
 
