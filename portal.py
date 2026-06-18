@@ -35,7 +35,7 @@ from datetime import datetime
 from html import escape
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from config import settings
@@ -50,6 +50,7 @@ router = APIRouter()
 log = logging.getLogger("duvoyageur.portal")
 
 PORTAL_COOKIE = "dv_portal"
+HINT_COOKIE = "dv_portal_hint"          # non-authoritative "session present" flag
 _COOKIE_PATH = "/portail"
 
 _login_signer = URLSafeTimedSerializer(settings.SECRET_KEY, salt="dv-portal-login")
@@ -77,11 +78,19 @@ def _make_session_value(client_id: int) -> str:
 
 def _set_session_cookie(resp, client_id: int) -> None:
     """Set/refresh the signed portal cookie (sliding expiry: each visit renews
-    it, so an active client effectively stays logged in)."""
+    it, so an active client effectively stays logged in). Also sets a small
+    non-authoritative 'hint' cookie (SameSite=None in prod) so the Netlify site,
+    on another origin, can ask /portail/whoami whether to show 'Mon compte'."""
     resp.set_cookie(
         PORTAL_COOKIE, _make_session_value(client_id),
         max_age=settings.PORTAL_SESSION_MAX_AGE, path=_COOKIE_PATH,
         httponly=True, samesite="lax", secure=settings.SECURE_COOKIES)
+    resp.set_cookie(
+        HINT_COOKIE, "1",
+        max_age=settings.PORTAL_SESSION_MAX_AGE, path=_COOKIE_PATH,
+        httponly=False,
+        samesite="none" if settings.SECURE_COOKIES else "lax",
+        secure=settings.SECURE_COOKIES)
 
 
 def current_portal_client_id(request: Request):
@@ -1140,7 +1149,36 @@ def portal_logout():
         "Tu es déconnecté de ton espace client. "
         "<a href='/portail/connexion'>Me reconnecter</a>.", logged_in=False))
     resp.delete_cookie(PORTAL_COOKIE, path=_COOKIE_PATH)
+    resp.delete_cookie(HINT_COOKIE, path=_COOKIE_PATH)
     return resp
+
+
+def _is_logged_in(request: Request) -> bool:
+    return (request.cookies.get(HINT_COOKIE) == "1"
+            or bool(current_portal_client_id(request)))
+
+
+@router.get("/portail/whoami")
+def portal_whoami(request: Request):
+    """Plain JSON login state (same-origin use / debugging)."""
+    resp = JSONResponse({"logged_in": _is_logged_in(request)})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+_CB_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]{0,40}")
+
+
+@router.get("/portail/whoami.js")
+def portal_whoami_js(request: Request, cb: str = "__dvAuth"):
+    """JSONP: the Netlify site (another origin) loads this as a <script>. The
+    SameSite=None hint cookie rides along cross-site, so we can tell it whether
+    to show 'Connexion' or 'Mon compte' — without depending on CORS."""
+    cb = cb if _CB_RE.fullmatch(cb or "") else "__dvAuth"
+    state = "true" if _is_logged_in(request) else "false"
+    js = f"window.{cb}&&window.{cb}({state});"
+    return Response(js, media_type="application/javascript",
+                    headers={"Cache-Control": "no-store"})
 
 
 # --------------------------------------------------------------------------- #
