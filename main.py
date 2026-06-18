@@ -705,10 +705,10 @@ def _trip_info_cards(c, editable: bool = False) -> str:
     shots = c.screenshots or []
     if shots:
         imgs = "".join(
-            f"<a href='/admin/cases/{c.id}/screenshot/{i}' target='_blank'>"
-            f"<img src='/admin/cases/{c.id}/screenshot/{i}' alt='capture {i+1}' "
-            "style='max-width:100%;max-height:460px;display:block;margin:0 auto 10px;"
-            "border-radius:10px;border:1px solid var(--line);background:rgba(3,18,27,.4)'></a>"
+                        f"<img src='/admin/cases/{c.id}/screenshot/{i}' alt='capture {i+1}' "
+            f"onclick=\"lightbox('/admin/cases/{c.id}/screenshot/{i}')\" "
+            "style='max-width:100%;max-height:460px;display:block;margin:0 auto 10px;cursor:zoom-in;"
+            "border-radius:10px;border:1px solid var(--line);background:rgba(3,18,27,.4)'>"
             for i in range(len(shots)))
         cards += (f"<div class='card'><h3>Capture(s) d'\u00e9cran \u00b7 {len(shots)}</h3>{imgs}"
                   "<p class='sub'>Clique pour agrandir.</p></div>")
@@ -1190,6 +1190,13 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .modal-ft{{padding:14px 18px;border-top:1px solid var(--line)}}
  .modal-x{{background:rgba(3,18,27,.4);border:1px solid var(--line);color:var(--foam);
    box-shadow:none;border-radius:9px;padding:6px 11px;cursor:pointer;font-size:14px}}
+ .lightbox{{position:fixed;inset:0;background:rgba(2,11,16,.85);display:none;z-index:120;
+   align-items:center;justify-content:center;padding:30px}}
+ .lightbox.open{{display:flex}}
+ .lightbox img{{max-width:95vw;max-height:90vh;border-radius:12px;border:1px solid var(--line);
+   box-shadow:0 24px 64px rgba(0,0,0,.6)}}
+ .lightbox .lb-x{{position:absolute;top:18px;right:22px;background:rgba(3,18,27,.6);
+   border:1px solid var(--line);color:var(--foam);border-radius:9px;padding:8px 13px;cursor:pointer;font-size:16px}}
  .muted{{color:var(--mist)}} code{{background:rgba(3,18,27,.6);padding:1px 6px;border-radius:5px}}
  .grid2{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin:18px 0}}
  .idtab{{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:stretch;margin:18px 0}}
@@ -1316,7 +1323,21 @@ document.addEventListener('click',function(e){{
   if(p&&!e.target.closest('.bell'))p.classList.remove('open');
  }});
 }})();
+function lightbox(src){{
+ var o=document.getElementById('lightbox');
+ if(!o)return;
+ o.querySelector('img').src=src;
+ o.classList.add('open');
+}}
+document.addEventListener('click',function(e){{
+ var o=document.getElementById('lightbox');
+ if(o&&(e.target.id==='lightbox'||e.target.classList.contains('lb-x')))o.classList.remove('open');
+}});
+document.addEventListener('keydown',function(e){{
+ if(e.key==='Escape'){{var o=document.getElementById('lightbox');if(o)o.classList.remove('open');}}
+}});
 </script>
+<div id="lightbox" class="lightbox"><button type="button" class="lb-x">\u2715</button><img src="" alt="capture"></div>
 </body></html>"""
 
 
@@ -2130,9 +2151,9 @@ def admin_case_detail(case_id: int):
             shot_html = ""
             if shots:
                 imgs = "".join(
-                    f"<a href='/admin/cases/{c.id}/screenshot/{i}' target='_blank'>"
-                    f"<img src='/admin/cases/{c.id}/screenshot/{i}' alt='pièce {i+1}' "
-                    f"style='max-width:100%;border-radius:10px;border:1px solid var(--line);margin-bottom:10px'></a>"
+                                        f"<img src='/admin/cases/{c.id}/screenshot/{i}' alt='pièce {i+1}' "
+                    f"onclick=\"lightbox('/admin/cases/{c.id}/screenshot/{i}')\" "
+                    f"style='max-width:100%;cursor:zoom-in;border-radius:10px;border:1px solid var(--line);margin-bottom:10px'>"
                     for i in range(len(shots)))
                 shot_html = f"<div class='card full'><h3>Pièce(s) jointe(s) · {len(shots)}</h3>{imgs}</div>"
 
@@ -2270,10 +2291,10 @@ def admin_case_detail(case_id: int):
         shots = c.screenshots or []
         if shots:
             imgs = "".join(
-                f"<a href='/admin/cases/{c.id}/screenshot/{i}' target='_blank'>"
-                f"<img src='/admin/cases/{c.id}/screenshot/{i}' alt='capture {i+1}' "
-                "style='max-width:100%;max-height:460px;display:block;margin:0 auto 10px;"
-                "border-radius:10px;border:1px solid var(--line);background:rgba(3,18,27,.4)'></a>"
+                                f"<img src='/admin/cases/{c.id}/screenshot/{i}' alt='capture {i+1}' "
+            f"onclick=\"lightbox('/admin/cases/{c.id}/screenshot/{i}')\" "
+                "style='max-width:100%;max-height:460px;display:block;margin:0 auto 10px;cursor:zoom-in;"
+                "border-radius:10px;border:1px solid var(--line);background:rgba(3,18,27,.4)'>"
                 for i in range(len(shots))
             )
             screenshot_card = (
