@@ -89,6 +89,25 @@ def current_portal_client_id(request: Request):
         return None
 
 
+def _gate(request: Request):
+    """Guard for KYC-protected tabs. Returns (cid, None) when the visitor is
+    logged in AND has completed their identity; otherwise (None, response) with
+    a redirect to the profile (or a login prompt)."""
+    cid = current_portal_client_id(request)
+    if not cid:
+        return None, HTMLResponse(_info_page(
+            "Espace client",
+            "Ouvre ton lien personnel, ou redemande-le sur Messenger "
+            "(menu ☰ → « 🔐 Mon espace client »). 🔐"))
+    with SessionLocal() as db:
+        client = db.get(Client, cid)
+        if not client:
+            return None, HTMLResponse(_info_page("Espace client", "Dossier introuvable. 🙂"))
+        if not kyc_complete(client):
+            return None, RedirectResponse("/portail/profil", status_code=303)
+    return cid, None
+
+
 def build_portal_login_url(client_id: int):
     """Set a fresh single-use nonce on the client and return an absolute magic
     link, or None if the client doesn't exist."""
@@ -229,7 +248,8 @@ def _dashboard(client, cases, flash: str = "") -> str:
 # Identity / KYC
 # --------------------------------------------------------------------------- #
 # (key, label, input type, required, half-width). email/phone live on the
-# Client; everything else is stored in the `kyc` JSON blob.
+# Client; everything else is stored in the `kyc` JSON blob. We never ask for or
+# store passport / travel-document data.
 _KYC_FIELDS = [
     ("legal_first_name", "Prénom légal", "text", True, True),
     ("legal_last_name", "Nom légal", "text", True, True),
@@ -241,8 +261,6 @@ _KYC_FIELDS = [
     ("province", "Province / État", "text", True, True),
     ("postal_code", "Code postal", "text", True, True),
     ("country", "Pays", "text", True, True),
-    ("passport_number", "N° de passeport", "text", False, True),
-    ("passport_expiry", "Expiration du passeport", "date", False, True),
 ]
 
 
@@ -261,6 +279,10 @@ def kyc_status(client):
     return len(req) - len(missing), len(req), missing
 
 
+def kyc_complete(client) -> bool:
+    return not kyc_status(client)[2]
+
+
 def _kyc_banner(client) -> str:
     done, total, missing = kyc_status(client)
     if not missing:
@@ -273,12 +295,16 @@ def _kyc_banner(client) -> str:
         "<span class='banner-cta'>Compléter →</span></a>")
 
 
-def _profile_form(client, saved: bool = False) -> str:
+def _profile_form(client, saved: bool = False, locked: bool = False) -> str:
     done, total, _missing = kyc_status(client)
     pct = int(done / total * 100) if total else 100
     ok = "<div class='note ok'>Profil enregistré ✓</div>" if saved else ""
+    lock = ("<div class='banner'><div class='banner-txt'>"
+            "<b>🔒 Complète ton identité pour débloquer ton espace</b>"
+            "<span>Tes voyages, demandes et avis s'ouvrent dès que ton identité est complète.</span>"
+            "</div></div>") if locked else ""
     prog = (f"<div class='prog'><span style='width:{pct}%'></span></div>"
-            f"<p class='lede'>{done}/{total} champs essentiels remplis.</p>")
+            f"<p class='lede'>{done}/{total} champs remplis.</p>")
 
     def field(k, label, typ, req, half):
         val = escape(str(_kyc_value(client, k) or ""))
@@ -298,18 +324,17 @@ def _profile_form(client, saved: bool = False) -> str:
         return (f"<div class='fset'><h3>{title}{s}</h3>"
                 f"<div class='formgrid'>{fields}</div></div>")
 
+    back = ("" if locked
+            else "<a class='btn ghost' href='/portail'>Retour</a>")
     return (
-        ok + prog
+        lock + ok + prog
         + "<form class='form' method='post' action='/portail/profil'>"
         + group("Identité", ("legal_first_name", "legal_last_name", "date_of_birth"))
         + group("Coordonnées", ("phone", "email", "address", "city",
                                 "province", "postal_code", "country"))
-        + group("Passeport", ("passport_number", "passport_expiry"),
-                "voyages internationaux")
         + "<div class='actions'>"
           "<button class='btn block' type='submit'>Enregistrer mon profil</button>"
-          "<a class='btn ghost' href='/portail'>Retour</a></div>"
-          "</form>")
+          + back + "</div></form>")
 
 
 # --------------------------------------------------------------------------- #
@@ -394,7 +419,9 @@ def _service_form(cases) -> str:
 # --------------------------------------------------------------------------- #
 # Shell + nav
 # --------------------------------------------------------------------------- #
-def _nav(active: str) -> str:
+def _nav(active: str, locked: bool = False) -> str:
+    if locked:                       # KYC incomplete -> no tabs, profile only
+        return ""
     items = [("voyages", "/portail", "Mes voyages"),
              ("nouveau", "/portail/nouveau-voyage", "Nouveau voyage"),
              ("aide", "/portail/service", "Aide"),
@@ -527,6 +554,8 @@ def portal_home(request: Request, new: int = 0, avis: int = 0):
                 "Espace client",
                 "On n'a pas retrouvé ton dossier. Écris-nous sur Messenger. 🙂"))
         cases = list(client.requests)
+        if not kyc_complete(client):
+            return RedirectResponse("/portail/profil", status_code=303)
         body = _dashboard(client, cases, flash=flash)
     resp = HTMLResponse(_shell("Mon espace", body, logged_in=True, nav=_nav("voyages")))
     _set_session_cookie(resp, cid)          # sliding expiry on every visit
@@ -545,10 +574,13 @@ def portal_profile(request: Request, saved: int = 0):
         client = db.get(Client, cid)
         if not client:
             return HTMLResponse(_info_page("Espace client", "Dossier introuvable. 🙂"))
-        body = ("<div class='hello'><h2>Mon profil</h2>"
-                "<p class='lede'>Ces infos nous servent à réserver tes voyages au bon nom.</p></div>"
-                + _profile_form(client, saved=bool(saved)))
-    resp = HTMLResponse(_shell("Mon profil", body, logged_in=True, nav=_nav("profil")))
+        locked = not kyc_complete(client)
+        lede = ("Bienvenue ! Complète ton identité pour ouvrir ton espace."
+                if locked else "Ces infos nous servent à réserver tes voyages au bon nom.")
+        body = (f"<div class='hello'><h2>Mon profil</h2><p class='lede'>{lede}</p></div>"
+                + _profile_form(client, saved=bool(saved), locked=locked))
+    resp = HTMLResponse(_shell("Mon profil", body, logged_in=True,
+                               nav=_nav("profil", locked=locked)))
     _set_session_cookie(resp, cid)
     return resp
 
@@ -578,11 +610,12 @@ async def portal_profile_save(request: Request):
                 else:
                     kyc[k] = v or None
             client.kyc = kyc
-            if not client.display_name:
-                full = " ".join(x for x in (kyc.get("legal_first_name"),
-                                            kyc.get("legal_last_name")) if x)
-                if full:
-                    client.display_name = full
+            # Legal name is authoritative: it replaces the (often fake) Facebook
+            # display name in the admin once the client submits it.
+            full = " ".join(x for x in (kyc.get("legal_first_name"),
+                                        kyc.get("legal_last_name")) if x)
+            if full:
+                client.display_name = full
             log_activity(db, cid, "note", "Identité mise à jour (espace client)", None)
             db.commit()
     return RedirectResponse("/portail/profil?saved=1", status_code=303)
@@ -590,12 +623,9 @@ async def portal_profile_save(request: Request):
 
 @router.get("/portail/nouveau-voyage", response_class=HTMLResponse)
 def portal_new_trip(request: Request):
-    cid = current_portal_client_id(request)
-    if not cid:
-        return HTMLResponse(_info_page(
-            "Espace client",
-            "Pour faire une demande, ouvre ton lien personnel ou redemande-le "
-            "sur Messenger (menu ☰ → « 🔐 Mon espace client »). 🔐"))
+    cid, gate = _gate(request)
+    if gate:
+        return gate
     body = ("<div class='hello'><h2>Nouvelle demande de voyage</h2>"
             "<p class='lede'>Dis-nous ce que tu cherches — on retrouve le même "
             "forfait avec ton rabais. 🌴</p></div>" + _new_trip_form())
@@ -606,9 +636,9 @@ def portal_new_trip(request: Request):
 
 @router.post("/portail/nouveau-voyage")
 async def portal_new_trip_save(request: Request):
-    cid = current_portal_client_id(request)
-    if not cid:
-        return RedirectResponse("/portail", status_code=303)
+    cid, gate = _gate(request)
+    if gate:
+        return gate
     form = await request.form()
 
     def g(k):
@@ -678,9 +708,9 @@ async def portal_new_trip_save(request: Request):
 
 @router.post("/portail/voyage/{case_id}/avis")
 async def portal_review_save(case_id: int, request: Request):
-    cid = current_portal_client_id(request)
-    if not cid:
-        return RedirectResponse("/portail", status_code=303)
+    cid, gate = _gate(request)
+    if gate:
+        return gate
     form = await request.form()
     try:
         rating = int((form.get("rating") or "").strip())
@@ -704,16 +734,11 @@ async def portal_review_save(case_id: int, request: Request):
 
 @router.get("/portail/service", response_class=HTMLResponse)
 def portal_service(request: Request, sent: int = 0):
-    cid = current_portal_client_id(request)
-    if not cid:
-        return HTMLResponse(_info_page(
-            "Espace client",
-            "Pour nous écrire, ouvre ton lien personnel ou redemande-le sur "
-            "Messenger (menu ☰ → « 🔐 Mon espace client »). 🔐"))
+    cid, gate = _gate(request)
+    if gate:
+        return gate
     with SessionLocal() as db:
         client = db.get(Client, cid)
-        if not client:
-            return HTMLResponse(_info_page("Espace client", "Dossier introuvable. 🙂"))
         cases = list(client.requests)
         body = (("<div class='note ok'>Message envoyé ✓ — on te répond bientôt.</div>"
                  if sent else "")
@@ -728,9 +753,9 @@ def portal_service(request: Request, sent: int = 0):
 
 @router.post("/portail/service")
 async def portal_service_save(request: Request):
-    cid = current_portal_client_id(request)
-    if not cid:
-        return RedirectResponse("/portail", status_code=303)
+    cid, gate = _gate(request)
+    if gate:
+        return gate
     form = await request.form()
     subject = (form.get("subject") or "").strip()
     message = (form.get("message") or "").strip()
