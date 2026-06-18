@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import re
 import secrets
+import time
 from datetime import datetime
 from html import escape
 
@@ -97,8 +98,9 @@ def _gate(request: Request):
     if not cid:
         return None, HTMLResponse(_info_page(
             "Espace client",
-            "Ouvre ton lien personnel, ou redemande-le sur Messenger "
-            "(menu ☰ → « 🔐 Mon espace client »). 🔐"))
+            "Connecte-toi avec ton courriel et ta date de naissance sur "
+            "<a href='/portail/connexion'>la page de connexion</a>, ou redemande "
+            "ton lien sur Messenger (menu ☰ → « 🔐 Mon espace client »). 🔐"))
     with SessionLocal() as db:
         client = db.get(Client, cid)
         if not client:
@@ -1021,6 +1023,78 @@ def portal_logout():
 
 
 # --------------------------------------------------------------------------- #
+# Self-service re-login with email + date of birth (lower-assurance; rate-limited)
+# --------------------------------------------------------------------------- #
+_LOGIN_HITS: dict = {}          # ip -> [monotonic timestamps of failed attempts]
+_LOGIN_WINDOW = 900             # 15 minutes
+_LOGIN_MAX = 6                  # failed attempts before a temporary lockout
+
+
+def _rate_ok(ip: str) -> bool:
+    now = time.monotonic()
+    hits = [t for t in _LOGIN_HITS.get(ip, []) if now - t < _LOGIN_WINDOW]
+    _LOGIN_HITS[ip] = hits
+    return len(hits) < _LOGIN_MAX
+
+
+def _rate_hit(ip: str) -> None:
+    _LOGIN_HITS.setdefault(ip, []).append(time.monotonic())
+
+
+def _login_form(error: str = "") -> str:
+    err = f"<div class='note err'>{escape(error)}</div>" if error else ""
+    return (
+        err
+        + "<div class='hello'><h2>Connexion</h2>"
+        "<p class='lede'>Accède à ton espace avec ton courriel et ta date de "
+        "naissance.</p></div>"
+        "<form class='form' method='post' action='/portail/connexion'>"
+        "<div class='fset'><div class='formgrid'>"
+        "<div class='field'><label>Courriel</label>"
+        "<input name='email' type='email' inputmode='email' autocomplete='email' required></div>"
+        "<div class='field'><label>Date de naissance</label>"
+        "<input name='dob' type='date' required></div>"
+        "</div></div>"
+        "<div class='actions'><button class='btn block' type='submit'>Me connecter</button></div>"
+        "</form>"
+        "<p class='muted' style='text-align:center;margin-top:16px'>Tu arrives de "
+        "Messenger ? Ouvre « 🔐 Mon espace client » dans le menu ☰ pour recevoir "
+        "ton lien.</p>")
+
+
+@router.get("/portail/connexion", response_class=HTMLResponse)
+def portal_login_page(request: Request):
+    if current_portal_client_id(request):
+        return RedirectResponse("/portail", status_code=303)
+    return HTMLResponse(_shell("Connexion", _login_form(), logged_in=False))
+
+
+@router.post("/portail/connexion")
+async def portal_login_credentials(request: Request):
+    ip = request.client.host if request.client else "?"
+    if not _rate_ok(ip):
+        return HTMLResponse(_shell("Connexion", _login_form(
+            "Trop de tentatives. Réessaie dans quelques minutes."), logged_in=False))
+    form = await request.form()
+    email = normalize_email((form.get("email") or "").strip())
+    dob = (form.get("dob") or "").strip()
+    cid = None
+    if email and dob:
+        with SessionLocal() as db:
+            client = db.query(Client).filter(Client.primary_email == email).first()
+            stored = str((client.kyc or {}).get("date_of_birth") or "") if client else ""
+            if client and stored and secrets.compare_digest(stored, dob):
+                cid = client.id
+    if not cid:
+        _rate_hit(ip)
+        return HTMLResponse(_shell("Connexion", _login_form(
+            "Courriel ou date de naissance invalide."), logged_in=False))
+    resp = RedirectResponse("/portail", status_code=303)
+    _set_session_cookie(resp, cid)
+    return resp
+
+
+# --------------------------------------------------------------------------- #
 # HTML shell template (standalone, client-facing brand — no admin nav)
 # --------------------------------------------------------------------------- #
 _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
@@ -1191,6 +1265,7 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
    background:linear-gradient(90deg,var(--pacific),var(--lagoon));transition:width .4s ease}}
  .note{{border-radius:12px;padding:11px 14px;font-size:14px;margin:0 0 16px}}
  .note.ok{{background:rgba(61,240,197,.12);border:1px solid rgba(61,240,197,.4);color:var(--lagoon)}}
+ .note.err{{background:rgba(255,90,110,.12);border:1px solid rgba(255,90,110,.45);color:#ff9aa6}}
  /* Reviews */
  .btn.small{{min-height:42px;padding:10px 18px;font-size:14px;margin-top:12px;width:auto}}
  .rv{{margin-top:12px;border-top:1px solid var(--line);padding-top:13px}}
