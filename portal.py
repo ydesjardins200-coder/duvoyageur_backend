@@ -220,8 +220,32 @@ def _review_block(c) -> str:
         "<div class='rv-head'>Comment s'est passé ton voyage ?</div>"
         f"<div class='stars'>{radios}</div>"
         "<textarea name='text' rows='2' placeholder='Raconte-nous (optionnel)…'></textarea>"
+        "<label class='consent'><input type='checkbox' name='consent' value='1' checked>"
+        "<span>J'autorise Du Voyageur à utiliser mon avis pour améliorer son service.</span></label>"
         "<button class='btn small' type='submit'>Publier mon avis</button>"
         "</form>")
+
+
+def _review_card(c) -> str:
+    where = escape(_trip_where(c.trip or {}))
+    return (f"<div class='tcard'><div class='tchdr'><h3>{where}</h3>"
+            "<span class='badge done'>Voyage terminé</span></div>"
+            f"{_review_block(c)}</div>")
+
+
+def _avis_page(client, cases, flash: str = "") -> str:
+    closed = [c for c in cases if (c.kind or "trip") == "trip" and c.status == "closed"]
+    note = f"<div class='note ok'>{flash}</div>" if flash else ""
+    intro = ("<div class='hello'><h2>Mes avis</h2>"
+             "<p class='lede'>Donne ton avis sur tes voyages passés. Avec ta "
+             "permission, on s'en sert pour améliorer continuellement notre "
+             "service. 🙌</p></div>")
+    if not closed:
+        cards = ("<div class='tcard empty'>Tes avis apparaîtront ici une fois "
+                 "tes voyages terminés. 🌴</div>")
+    else:
+        cards = f"<div class='tgrid'>{''.join(_review_card(c) for c in closed)}</div>"
+    return note + intro + cards
 
 
 def _unread(client) -> int:
@@ -871,6 +895,22 @@ async def portal_new_trip_save(request: Request):
     return RedirectResponse("/portail?new=1", status_code=303)
 
 
+@router.get("/portail/avis", response_class=HTMLResponse)
+def portal_avis(request: Request, ok: int = 0):
+    cid, gate = _gate(request)
+    if gate:
+        return gate
+    with SessionLocal() as db:
+        client = db.get(Client, cid)
+        cases = list(client.requests)
+        flash = "Merci pour ton avis ✓" if ok else ""
+        body = _avis_page(client, cases, flash=flash)
+        bell = _unread(client)
+    resp = HTMLResponse(_shell("Mes avis", body, logged_in=True, nav=_nav("avis"), bell=bell))
+    _set_session_cookie(resp, cid)
+    return resp
+
+
 @router.post("/portail/voyage/{case_id}/avis")
 async def portal_review_save(case_id: int, request: Request):
     cid, gate = _gate(request)
@@ -882,19 +922,24 @@ async def portal_review_save(case_id: int, request: Request):
     except ValueError:
         rating = 0
     text = (form.get("text") or "").strip()
+    consent = bool(form.get("consent"))
     if rating < 1 or rating > 5:
-        return RedirectResponse("/portail", status_code=303)
+        return RedirectResponse("/portail/avis", status_code=303)
     with SessionLocal() as db:
         case = db.get(Case, case_id)
         # Ownership + state guard: must be this client's own, finished trip.
         if (case and case.client_id == cid and case.status == "closed"
                 and not (case.review or {}).get("rating")):
-            case.review = {"rating": rating, "text": text or None,
+            case.review = {"rating": rating, "text": text or None, "consent": consent,
                            "at": datetime.utcnow().isoformat(timespec="seconds")}
+            if consent:                     # remember the global permission too
+                client = db.get(Client, cid)
+                if client:
+                    client.review_consent = True
             log_activity(db, cid, "note",
                          f"Avis client : {rating}/5 (espace client)", case_id)
             db.commit()
-    return RedirectResponse("/portail?avis=1", status_code=303)
+    return RedirectResponse("/portail/avis?ok=1", status_code=303)
 
 
 @router.get("/portail/service", response_class=HTMLResponse)
@@ -1160,6 +1205,9 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .stars label{{font-size:32px;line-height:1;color:rgba(155,246,236,.22);cursor:pointer;padding:2px 3px;transition:color .12s}}
  .stars label:hover,.stars label:hover ~ label,.stars input:checked ~ label{{color:var(--gold)}}
  .stars input:focus-visible + label{{outline:2px solid var(--pacific);outline-offset:2px;border-radius:5px}}
+ .consent{{display:flex;gap:9px;align-items:flex-start;margin:12px 0 2px;font-size:13px;color:var(--mist);cursor:pointer}}
+ .consent input{{width:20px;height:20px;margin:0;flex:none;accent-color:var(--lagoon)}}
+ .consent span{{line-height:1.4}}
  /* Info / confirm pages */
  .infobox{{max-width:460px;margin:56px auto;text-align:center;
    background:linear-gradient(180deg, rgba(20,62,82,.5), rgba(8,33,47,.6));
