@@ -39,8 +39,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from config import settings
-from db import (Case, Client, SessionLocal, add_identity, log_activity, normalize_email,
-                normalize_phone, replace_primary_identity)
+from db import (Case, Client, SessionLocal, add_identity, find_client_by_identity, log_activity,
+                normalize_email, normalize_phone, replace_primary_identity)
 from trip_schema import TripRequest
 
 import storage
@@ -1142,7 +1142,8 @@ def _login_form(error: str = "") -> str:
         "</div></div>"
         "<div class='actions'><button class='btn block' type='submit'>Me connecter</button></div>"
         "</form>"
-        "<p class='muted' style='text-align:center;margin-top:16px'>Tu arrives de "
+        "<p class='muted' style='text-align:center;margin-top:16px'>Pas encore de compte ? "
+        "<a href='/portail/inscription'>Crée-le en 1 minute</a>.<br>Tu arrives de "
         "Messenger ? Ouvre « 🔐 Mon espace client » dans le menu ☰ pour recevoir "
         "ton lien.</p>")
 
@@ -1180,8 +1181,112 @@ async def portal_login_credentials(request: Request):
 
 
 # --------------------------------------------------------------------------- #
-# HTML shell template (standalone, client-facing brand — no admin nav)
+# Self-service signup (collects the full KYC up front)
 # --------------------------------------------------------------------------- #
+_SIGNUP_HITS: dict = {}
+_SIGNUP_WINDOW = 3600           # 1 hour
+_SIGNUP_MAX = 5                 # new accounts per hour per IP
+
+
+def _signup_ok(ip: str) -> bool:
+    now = time.monotonic()
+    hits = [t for t in _SIGNUP_HITS.get(ip, []) if now - t < _SIGNUP_WINDOW]
+    _SIGNUP_HITS[ip] = hits
+    return len(hits) < _SIGNUP_MAX
+
+
+def _signup_hit(ip: str) -> None:
+    _SIGNUP_HITS.setdefault(ip, []).append(time.monotonic())
+
+
+def _signup_form(values=None, error: str = "") -> str:
+    values = values or {}
+    err = f"<div class='note err'>{escape(error)}</div>" if error else ""
+
+    def field(k, label, typ, req, half):
+        val = escape(str(values.get(k) or ""))
+        star = " <span class='req'>*</span>" if req else ""
+        cls = "field half" if half else "field"
+        return (f"<div class='{cls}'><label>{label}{star}</label>"
+                f"<input name='{k}' type='{typ}' value=\"{val}\" inputmode='"
+                f"{'email' if typ == 'email' else ('tel' if typ == 'tel' else 'text')}'"
+                f"{' required' if req else ''}></div>")
+
+    def group(title, keys):
+        fields = "".join(field(*f) for f in _KYC_FIELDS if f[0] in keys)
+        return f"<div class='fset'><h3>{title}</h3><div class='formgrid'>{fields}</div></div>"
+
+    return (
+        err
+        + "<div class='hello'><h2>Créer mon compte</h2>"
+        "<p class='lede'>Quelques infos et ton espace est prêt — tu pourras suivre "
+        "tes voyages, tes soumissions et tes économies.</p></div>"
+        "<form class='form' method='post' action='/portail/inscription'>"
+        + group("Identité", ("legal_first_name", "legal_last_name", "date_of_birth"))
+        + group("Coordonnées", ("phone", "email", "address", "city",
+                                "province", "postal_code", "country"))
+        + "<div class='actions'>"
+          "<button class='btn block' type='submit'>Créer mon compte</button>"
+          "<a class='btn ghost' href='/portail/connexion'>J'ai déjà un compte</a></div>"
+          "</form>")
+
+
+@router.get("/portail/inscription", response_class=HTMLResponse)
+def portal_signup_page(request: Request):
+    if current_portal_client_id(request):
+        return RedirectResponse("/portail", status_code=303)
+    return HTMLResponse(_shell("Inscription", _signup_form(), logged_in=False))
+
+
+@router.post("/portail/inscription")
+async def portal_signup_save(request: Request):
+    ip = request.client.host if request.client else "?"
+    if not _signup_ok(ip):
+        return HTMLResponse(_shell("Inscription", _signup_form(
+            error="Trop de créations de compte. Réessaie dans une heure."), logged_in=False))
+    form = await request.form()
+    values = {k: (form.get(k) or "").strip() for k, *_ in _KYC_FIELDS}
+    email = normalize_email(values.get("email"))
+    phone = normalize_phone(values.get("phone"))
+    values["email"], values["phone"] = email or "", phone or ""
+
+    def missing(k):
+        if k == "email":
+            return not email
+        if k == "phone":
+            return not phone
+        return not values.get(k)
+
+    if any(missing(k) for k, _l, _t, req, _h in _KYC_FIELDS if req):
+        return HTMLResponse(_shell("Inscription", _signup_form(
+            values, "Remplis tous les champs requis."), logged_in=False))
+
+    with SessionLocal() as db:
+        # Don't create a duplicate: an existing email belongs to an account.
+        existing = (db.query(Client).filter(Client.primary_email == email).first()
+                    or find_client_by_identity(db, "email", email))
+        if existing:
+            return HTMLResponse(_shell("Inscription", _signup_form(
+                values, "Ce courriel a déjà un compte. Connecte-toi avec ton "
+                "courriel et ta date de naissance."), logged_in=False))
+        kyc = {k: (values.get(k) or None) for k, *_ in _KYC_FIELDS
+               if k not in ("email", "phone")}
+        legal = " ".join(x for x in (kyc.get("legal_first_name"),
+                                     kyc.get("legal_last_name")) if x)
+        client = Client(display_name=legal or None, primary_email=email,
+                        primary_phone=phone, preferred_channel="email", kyc=kyc)
+        db.add(client)
+        db.flush()
+        add_identity(db, client, "email", email)
+        add_identity(db, client, "phone", phone)
+        log_activity(db, client.id, "request_created",
+                     "Compte créé (inscription espace client)")
+        db.commit()
+        cid = client.id
+    _signup_hit(ip)
+    resp = RedirectResponse("/portail", status_code=303)
+    _set_session_cookie(resp, cid)
+    return resp
 _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#03121b">
