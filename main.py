@@ -49,7 +49,8 @@ from config import settings
 from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLocal, engine,
                 add_identity, find_client_by_identity, find_duplicate_groups,
                 find_open_case_for_sender, find_open_request_for_client, init_db, log_activity,
-                merge_clients, normalize_email, normalize_phone, resolve_or_create_client)
+                merge_clients, normalize_email, normalize_phone, resolve_or_create_client,
+                SUPPORT_STATUSES)
 from facebook import (extract_messages, extract_postbacks, extract_quick_replies,
                       get_user_name, send_quick_replies, send_text, set_ice_breakers,
                       set_messenger_profile, set_persistent_menu, valid_signature,
@@ -750,11 +751,11 @@ def _handle_human_message(sender: str, text: str, shots: list | None) -> None:
                 client.display_name = nm
         case = (db.query(Case)
                 .filter(Case.client_id == client.id, Case.kind == "support",
-                        Case.status != "closed")
+                        Case.status != "resolved")
                 .order_by(Case.created_at.desc()).first())
         if case is None:
             case = Case(
-                client_id=client.id, channel="messenger", status="needs_info",
+                client_id=client.id, channel="messenger", status="open",
                 kind="support", sender_ref=sender,
                 raw_message=text or "(demande de support)",
                 trip={"customer_name": client.display_name} if client.display_name else {},
@@ -1039,6 +1040,20 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .booked{{background:rgba(61,240,197,.15);border-color:rgba(61,240,197,.4);color:#a9f7e2}}
  .quoted{{background:rgba(167,139,250,.18);border-color:rgba(167,139,250,.4);color:#d6c9ff}}
  .closed{{background:rgba(148,184,198,.12);border-color:var(--line);color:var(--mist)}}
+ .tag.open{{background:rgba(25,211,230,.16);border-color:rgba(25,211,230,.4);color:#bff3fb}}
+ .tag.resolved{{background:rgba(61,240,197,.15);border-color:rgba(61,240,197,.4);color:#a9f7e2}}
+ .svc tr:hover td{{background:rgba(25,211,230,.07)}}
+ .modal-ov{{position:fixed;inset:0;background:rgba(2,11,16,.74);display:none;z-index:80;
+   align-items:center;justify-content:center;padding:24px}}
+ .modal-ov.open{{display:flex}}
+ .modal{{background:var(--abyss-2);border:1px solid var(--line);border-radius:16px;max-width:700px;
+   width:100%;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,.6)}}
+ .modal-hd{{display:flex;align-items:center;justify-content:space-between;gap:12px;
+   padding:14px 18px;border-bottom:1px solid var(--line)}}
+ .modal-bd{{padding:16px 18px;overflow-y:auto}}
+ .modal-ft{{padding:14px 18px;border-top:1px solid var(--line)}}
+ .modal-x{{background:rgba(3,18,27,.4);border:1px solid var(--line);color:var(--foam);
+   box-shadow:none;border-radius:9px;padding:6px 11px;cursor:pointer;font-size:14px}}
  .muted{{color:var(--mist)}} code{{background:rgba(3,18,27,.6);padding:1px 6px;border-radius:5px}}
  .grid2{{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin:18px 0}}
  .idtab{{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:stretch;margin:18px 0}}
@@ -1158,7 +1173,7 @@ document.addEventListener('click',function(e){{
 def _bell_html() -> str:
     """Notification bell: requests still awaiting our reply, any channel."""
     with SessionLocal() as db:
-        q = db.query(Case).filter(Case.awaiting_reply.is_(True), Case.status != "closed")
+        q = db.query(Case).filter(Case.awaiting_reply.is_(True), Case.status.notin_(("closed", "resolved")))
         total = q.count()
         pend = q.order_by(Case.created_at.desc()).limit(15).all()
         rows = []
@@ -1189,7 +1204,7 @@ def _nav_html(active: str = "") -> str:
     with SessionLocal() as db:
         n_new = db.query(Case).filter(Case.kind == "trip", Case.status == "new").count()
         n_svc = db.query(Case).filter(Case.kind == "support", Case.awaiting_reply.is_(True),
-                                      Case.status != "closed").count()
+                                      Case.status.notin_(("closed", "resolved"))).count()
     items = [
         ("queue", "Nouvelle demande de voyage", "/admin/cases?status=new", n_new),
         ("queue_service", "Nouvelle demande de service client",
@@ -1379,7 +1394,7 @@ def admin_cases(status: str = "all", view: str = "voyage"):
         with SessionLocal() as db:
             cases = (db.query(Case)
                      .filter(Case.kind == "support", Case.awaiting_reply.is_(True),
-                             Case.status != "closed")
+                             Case.status.notin_(("closed", "resolved")))
                      .order_by(Case.created_at.desc()).limit(200).all())
         body = page_header(SEC_TITLE[nav_active], "/admin/cases?status=service") + table(cases, support=True)
         return render_page(body, nav_active)
@@ -1498,9 +1513,10 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
     def kv(label, value):
         return f"<div class='kv'><span class='k'>{label}</span><span class='v'>{value}</span></div>"
 
-    def status_form(cid, status, nxt):
+    def status_form(cid, status, nxt, kind="trip"):
+        choices = SUPPORT_STATUSES if kind == "support" else STATUSES
         opts = "".join(f"<option value='{s}'{' selected' if s == status else ''}>{s}</option>"
-                       for s in STATUSES)
+                       for s in choices)
         return (f"<form method='post' action='/admin/cases/{cid}/status' "
                 "style='display:flex;gap:8px;align-items:center;margin:0'>"
                 f"<input type='hidden' name='next' value=\"{escape(nxt)}\">"
@@ -1674,26 +1690,48 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
 
         else:
             if supports:
-                cards = []
+                rows, modals = [], []
                 for r in supports:
                     msgs = _conversation(r)
                     last_in = next((m for m in reversed(msgs) if m.get("dir") == "in"), None)
                     preview = (last_in.get("text") if last_in else (r.raw_message or "")) or "—"
-                    if len(preview) > 140:
-                        preview = preview[:140] + "…"
-                    cards.append(
-                        "<div class='card'>"
-                        "<div class='pagehdr'>"
-                        f"<h3 style='margin:0'>#{r.id} <span class='tag {r.status}'>{r.status}</span></h3>"
-                        + status_form(r.id, r.status, f"{base}?tab=service")
-                        + "</div>"
-                        + kv("Canal", val(r.channel))
-                        + kv("Reçu", r.created_at.strftime("%Y-%m-%d %H:%M"))
-                        + f"<div class='msg-in' style='margin-top:10px'>{escape(preview)}</div>"
-                        + f"<div style='margin-top:10px'><a href='/admin/cases/{r.id}'>Ouvrir la conversation &rarr;</a></div>"
-                        "</div>"
+                    if len(preview) > 90:
+                        preview = preview[:90] + "…"
+                    rows.append(
+                        f"<tr onclick=\"openSvc({r.id})\" style='cursor:pointer'>"
+                        f"<td>#{r.id}</td>"
+                        f"<td><span class='tag {r.status}'>{r.status}</span></td>"
+                        f"<td>{escape(r.channel)}</td>"
+                        f"<td>{escape(preview)}</td>"
+                        f"<td>{r.created_at:%Y-%m-%d %H:%M}</td></tr>"
                     )
-                content = f"<div class='grid2'>{''.join(cards)}</div>"
+                    modals.append(
+                        f"<div class='modal-ov' id='svc-{r.id}'>"
+                        "<div class='modal'>"
+                        "<div class='modal-hd'>"
+                        f"<h3 style='margin:0'>#{r.id} <span class='tag {r.status}'>{r.status}</span></h3>"
+                        + status_form(r.id, r.status, f"{base}?tab=service", kind="support")
+                        + "<button type='button' class='modal-x' onclick='closeSvc()'>✕</button>"
+                        "</div>"
+                        f"<div class='modal-bd'>{_render_thread(r, name)}</div>"
+                        "<div class='modal-ft'>"
+                        f"<form method='post' action='/admin/cases/{r.id}/send'>"
+                        f"<input type='hidden' name='next' value=\"{base}?tab=service\">"
+                        "<textarea name='message' rows='3' placeholder='Répondre au client…' "
+                        "style='width:100%'></textarea>"
+                        "<button style='margin-top:10px'>Répondre au client</button></form>"
+                        "</div></div></div>"
+                    )
+                content = (
+                    "<table class='svc'><tr><th>#</th><th>Statut</th><th>Canal</th>"
+                    "<th>Message</th><th>Reçu</th></tr>" + "".join(rows) + "</table>"
+                    + "".join(modals)
+                    + "<script>function openSvc(i){document.getElementById('svc-'+i).classList.add('open');}"
+                    "function closeSvc(){document.querySelectorAll('.modal-ov.open').forEach("
+                    "function(m){m.classList.remove('open');});}"
+                    "document.addEventListener('click',function(e){if(e.target.classList&&"
+                    "e.target.classList.contains('modal-ov'))closeSvc();});</script>"
+                )
             else:
                 content = "<div class='card full'><div class='muted'>Aucune demande de service.</div></div>"
 
@@ -1815,7 +1853,7 @@ def admin_system():
         n_ident = db.query(ClientIdentity).count()
         n_acts = db.query(Interaction).count()
         n_await = db.query(Case).filter(
-            Case.awaiting_reply.is_(True), Case.status != "closed").count()
+            Case.awaiting_reply.is_(True), Case.status.notin_(("closed", "resolved"))).count()
     dialect = engine.dialect.name
     secret_ok = bool(settings.SECRET_KEY) and settings.SECRET_KEY != "dev-only-insecure-change-me"
 
@@ -1925,7 +1963,7 @@ def admin_case_detail(case_id: int):
                 msg_html = "<p class='muted'>En attente du premier message du client…</p>"
             opts = "".join(
                 f"<option value='{s}'{' selected' if s == c.status else ''}>{s}</option>"
-                for s in STATUSES)
+                for s in SUPPORT_STATUSES)
             client_link = (f"<a href='/admin/clients/{c.client_id}'>voir la fiche &rarr;</a>"
                            if c.client_id else "<span class='muted'>—</span>")
 
@@ -2132,7 +2170,8 @@ async def admin_update_status(case_id: int, request: Request):
     nxt = form.get("next") or f"/admin/cases/{case_id}"
     with SessionLocal() as db:
         c = db.get(Case, case_id)
-        if c and new_status in STATUSES and new_status != c.status:
+        allowed = SUPPORT_STATUSES if (c and c.kind == "support") else STATUSES
+        if c and new_status in allowed and new_status != c.status:
             log_activity(db, c.client_id, "status_change",
                          f"Statut : {c.status} → {new_status}", c.id)
             c.status = new_status
@@ -2223,6 +2262,7 @@ async def admin_case_send(case_id: int, request: Request):
     """Agent sends a personalized message straight to the Messenger customer."""
     form = await request.form()
     message = (form.get("message") or "").strip()
+    nxt = form.get("next") or f"/admin/cases/{case_id}"
     with SessionLocal() as db:
         c = db.get(Case, case_id)
         sender = c.sender_ref if c else None
@@ -2240,7 +2280,9 @@ async def admin_case_send(case_id: int, request: Request):
                     c.messages = _conversation(c) + [{"dir": "out", "text": message, "at": now}]
                 log_activity(db, client_id, "reply_out", f"Message envoyé : {preview}", case_id)
                 db.commit()
-    return RedirectResponse(f"/admin/cases/{case_id}", status_code=303)
+    if not nxt.startswith("/admin/"):
+        nxt = f"/admin/cases/{case_id}"
+    return RedirectResponse(nxt, status_code=303)
 
 
 @app.post("/admin/reset", dependencies=[Depends(require_admin)])
