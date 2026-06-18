@@ -362,6 +362,43 @@ def _dispatch_quote_notification(info: dict) -> None:
         log.info("Quote notif for channel %r not yet supported (case #%s)", ch, cid)
 
 
+def _booking_confirmation_message(name, booking_ref) -> str:
+    """Warm confirmation from Du Voyageur once the agent has booked on Tripbook."""
+    greet = f"Salut {name} ! " if name else "Salut ! "
+    ref = f"\n\nTon numéro de confirmation : {booking_ref}" if booking_ref else ""
+    return (greet + "🎉 C'est officiel — ta réservation est confirmée ! ✈️" + ref
+            + "\n\nTu vas recevoir la confirmation détaillée de Tripbook par courriel. "
+            "On reste là si tu as la moindre question — bon voyage ! 🌴")
+
+
+def _dispatch_booking_notification(info: dict) -> None:
+    """Tell the client their trip is booked, on their own channel."""
+    msg = _booking_confirmation_message(info.get("name"), info.get("booking_ref"))
+    ch = info.get("channel")
+    cid, client_id = info["case_id"], info.get("client_id")
+    if ch == "messenger" and info.get("sender") and settings.FB_PAGE_TOKEN:
+        ok = send_text(info["sender"], msg, settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
+        with SessionLocal() as db:
+            if ok:
+                _record_message(cid, "out", msg)
+            log_activity(db, client_id, "reply_out" if ok else "note",
+                         "Confirmation de réservation envoyée" if ok
+                         else "Échec envoi confirmation Messenger (fenêtre 24 h ?)", cid)
+            db.commit()
+        log.info("Booking notif (messenger) case #%s: %s", cid, "sent" if ok else "failed")
+    elif ch == "form":
+        sent = _send_email_stub(info.get("email"), "Réservation confirmée — Du Voyageur 🌴", msg)
+        with SessionLocal() as db:
+            log_activity(db, client_id, "reply_out" if sent else "note",
+                         "Confirmation envoyée par courriel" if sent
+                         else f"Confirmation à envoyer par courriel à {info.get('email') or '?'}", cid)
+            db.commit()
+    else:
+        with SessionLocal() as db:
+            log_activity(db, client_id, "note", "Confirmation prête — portail client à venir", cid)
+            db.commit()
+
+
 def process_messenger_message(sender: str | None, text: str, image_urls: list[str]) -> None:
     # Mark this as the latest message from this sender (for reply debouncing).
     my_stamp = time.monotonic()
@@ -929,6 +966,19 @@ def _trip_fulfillment_section(c, redirect: str) -> str:
                 "<button style='margin-top:12px'>Enregistrer la quote</button>"
                 "<p class='sub'>Enregistrer un lien fait passer le dossier \u00e0 \u00ab quoted \u00bb.</p>"
                 "</form></div>")
+        if st == "quoted":
+            out += (
+                "<div class='fbox'><div class='fhdr'>Pr\u00eat \u00e0 r\u00e9server</div>"
+                "<p class='sub' style='margin:0 0 8px'>Entre le n\u00b0 de confirmation Tripbook "
+                "(v\u00e9rifi\u00e9 dans Tripbook, ou donn\u00e9 par le client) pour passer \u00e0 "
+                "\u00ab r\u00e9serv\u00e9 \u00bb.</p>"
+                f"<form method='post' action='/admin/cases/{c.id}/book'>"
+                f"<input type='hidden' name='next' value=\"{escape(redirect)}\">"
+                "<label class='flbl'>N\u00b0 de confirmation Tripbook</label>"
+                "<input name='booking_ref' placeholder='ex. TB-2048391' required "
+                "style='width:100%'>"
+                "<button style='margin-top:12px'>Marquer comme r\u00e9serv\u00e9 \u2713</button>"
+                "</form></div>")
         return out
 
     if st == "booked":
@@ -938,10 +988,19 @@ def _trip_fulfillment_section(c, redirect: str) -> str:
                          "target='_blank'>Ouvrir &rarr;</a>")
         if c.savings:
             items.append(f"<span class='k'>Économie</span> {escape(c.savings)}")
+        if c.booking_ref:
+            items.append(f"<span class='k'>N° Tripbook</span> {escape(c.booking_ref)}")
         items.append(f"<span class='k'>Vols</span> {escape(vols or '—')}")
         line = "".join(f"<span class='fitem'>{it}</span>" for it in items)
+        edit = (
+            f"<form method='post' action='/admin/cases/{c.id}/book' class='refedit'>"
+            f"<input type='hidden' name='next' value=\"{escape(redirect)}\">"
+            f"<input name='booking_ref' value=\"{escape(c.booking_ref or '')}\" "
+            "placeholder='N° de confirmation Tripbook' required>"
+            "<button>Mettre à jour le n°</button></form>")
         return (f"<div class='fline'>{line}<span class='fitem fnote' "
-                "title='Dates de vol issues de la carte Voyage · passe à closed après le retour'>ⓘ</span></div>")
+                "title='Dates de vol issues de la carte Voyage · passe à closed après le retour'>ⓘ</span></div>"
+                + edit)
 
     if st == "closed":
         items = []
@@ -1477,6 +1536,9 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  tr[data-href]{{cursor:pointer}}
  .tabs{{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 18px}}
  .filters{{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 14px}}
+ .warnbar{{background:rgba(255,176,32,.12);border:1px solid rgba(255,176,32,.5);color:#ffd27a;padding:10px 14px;border-radius:10px;margin:0 0 14px;font-size:14px}}
+ .refedit{{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}}
+ .refedit input{{flex:1;min-width:180px}}
  .filters select{{min-width:140px}}
  th a{{color:inherit;text-decoration:none;display:inline-flex;align-items:center;gap:2px}}
  th a:hover{{color:var(--pacific)}}
@@ -2484,7 +2546,7 @@ def admin_espace_client():
 
 @app.get("/admin/cases/{case_id}", response_class=HTMLResponse,
          dependencies=[Depends(require_admin)])
-def admin_case_detail(case_id: int):
+def admin_case_detail(case_id: int, warn: str = ""):
     import json as _json
 
     BOARD_FR = {"all_inclusive": "Tout inclus", "breakfast": "Petit-déjeuner",
@@ -2721,7 +2783,11 @@ def admin_case_detail(case_id: int):
 
         body = (
             "<p><a href='/admin/cases'>&larr; Tous les dossiers</a></p>"
-            "<div class='pagehdr'>"
+            + ("<div class='warnbar'>\u26a0\ufe0f Pour marquer ce voyage comme "
+               "\u00ab\u00a0r\u00e9serv\u00e9\u00a0\u00bb, entre d'abord le n\u00b0 de "
+               "confirmation Tripbook dans la section \u00ab\u00a0Pr\u00eat \u00e0 r\u00e9server\u00a0\u00bb "
+               "ci-dessous.</div>" if warn == "book_ref" else "")
+            + "<div class='pagehdr'>"
             f"<h2 style='margin:0'>#{c.id} · {name} <span class='tag {c.status}'>{c.status}</span></h2>"
             f"{status_form}</div>"
             f"<div class='grid2'>{cards}{screenshot_card}</div>"
@@ -2737,15 +2803,22 @@ async def admin_update_status(case_id: int, request: Request):
     form = await request.form()
     new_status = form.get("status")
     nxt = form.get("next") or f"/admin/cases/{case_id}"
+    ref_in = (form.get("booking_ref") or "").strip()
     with SessionLocal() as db:
         c = db.get(Case, case_id)
         allowed = SUPPORT_STATUSES if (c and c.kind == "support") else STATUSES
         if c and new_status in allowed and new_status != c.status:
+            # A trip can only become "booked" with a Tripbook confirmation number.
+            if new_status == "booked" and c.kind == "trip" and not (ref_in or c.booking_ref):
+                return RedirectResponse(f"/admin/cases/{case_id}?warn=book_ref",
+                                        status_code=303)
             log_activity(db, c.client_id, "status_change",
                          f"Statut : {c.status} → {new_status}", c.id)
             c.status = new_status
             c.awaiting_reply = False                    # we triaged it
             if new_status == "booked":                  # capture flight dates from the trip
+                if ref_in:
+                    c.booking_ref = ref_in
                 tt = c.trip or {}
                 c.flight_depart = c.flight_depart or tt.get("departure_date")
                 c.flight_return = c.flight_return or tt.get("return_date")
@@ -2793,7 +2866,46 @@ async def admin_case_quote(case_id: int, request: Request):
     return RedirectResponse(nxt, status_code=303)
 
 
-@app.post("/admin/cases/{case_id}/trip", dependencies=[Depends(require_admin)])
+@app.post("/admin/cases/{case_id}/book", dependencies=[Depends(require_admin)])
+async def admin_case_book(case_id: int, request: Request):
+    """Save the Tripbook confirmation number and move the trip to 'booked'.
+    A confirmation number is REQUIRED — booked must mean an actual reservation."""
+    form = await request.form()
+    nxt = form.get("next") or f"/admin/cases/{case_id}"
+    ref = (form.get("booking_ref") or "").strip()
+    if not ref:
+        return RedirectResponse(f"/admin/cases/{case_id}?warn=book_ref", status_code=303)
+    notify = None
+    with SessionLocal() as db:
+        c = db.get(Case, case_id)
+        if c and c.kind == "trip":
+            was, ref_changed = c.status, (ref != (c.booking_ref or ""))
+            c.booking_ref = ref
+            if c.status != "booked":
+                log_activity(db, c.client_id, "status_change",
+                             f"Statut : {c.status} → booked", c.id)
+                c.status = "booked"
+                c.awaiting_reply = False
+                tt = c.trip or {}
+                c.flight_depart = c.flight_depart or tt.get("departure_date")
+                c.flight_return = c.flight_return or tt.get("return_date")
+            log_activity(db, c.client_id, "note", f"Réservation confirmée · n° {ref}", c.id)
+            if was != "booked" or ref_changed:
+                client = db.get(Client, c.client_id) if c.client_id else None
+                name = (c.trip or {}).get("customer_name") or (client.display_name if client else None)
+                email = c.customer_email or (client.primary_email if client else None)
+                notify = {"channel": c.channel, "sender": c.sender_ref, "name": name,
+                          "email": email, "booking_ref": ref,
+                          "case_id": c.id, "client_id": c.client_id}
+            db.commit()
+    if notify:
+        try:
+            _dispatch_booking_notification(notify)
+        except Exception as e:  # noqa: BLE001
+            log.exception("Booking notification failed for case #%s: %s", case_id, e)
+    if not nxt.startswith("/admin/"):
+        nxt = f"/admin/cases/{case_id}"
+    return RedirectResponse(nxt, status_code=303)
 async def admin_case_trip(case_id: int, request: Request):
     """Update the trip's Voyage / Voyageurs / Prix fields from the inline editor,
     then recompute what's still missing and the (non-terminal) status."""

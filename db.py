@@ -167,6 +167,8 @@ class Case(Base):
     savings: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)        # quoted
     flight_depart: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)  # booked
     flight_return: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)  # booked
+    # Tripbook booking confirmation number — required to move a trip to "booked".
+    booking_ref: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)    # booked
 
 
 def init_db() -> None:
@@ -195,6 +197,7 @@ def _ensure_columns() -> None:
             conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS savings VARCHAR(60)"))
             conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS flight_depart VARCHAR(40)"))
             conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS flight_return VARCHAR(40)"))
+            conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS booking_ref VARCHAR(80)"))
             # Support cases use open/resolved; remap any legacy trip-statuses.
             conn.execute(text(
                 "UPDATE cases SET status='resolved' "
@@ -241,6 +244,8 @@ def _ensure_columns() -> None:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN flight_depart VARCHAR(40)"))
             if "flight_return" not in cols:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN flight_return VARCHAR(40)"))
+            if "booking_ref" not in cols:
+                conn.execute(text("ALTER TABLE cases ADD COLUMN booking_ref VARCHAR(80)"))
             conn.execute(text(
                 "UPDATE cases SET status='resolved' "
                 "WHERE kind='support' AND status IN ('closed','resolved')"))
