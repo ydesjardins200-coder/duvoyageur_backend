@@ -14,9 +14,20 @@ class Settings:
     # Local default is SQLite so you can run/test with zero setup.
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./dev.db")
 
-    # --- Anthropic (the parser) ---
+    # --- Anthropic (the parser + concierge) ---
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
-    PARSE_MODEL: str = os.getenv("PARSE_MODEL", "claude-sonnet-4-6")
+    # Primary model: Haiku 4.5 is ~5x cheaper than Sonnet and plenty for
+    # structured extraction / short concierge replies.
+    PARSE_MODEL: str = os.getenv("PARSE_MODEL", "claude-haiku-4-5-20251001")
+    # When Haiku reports low confidence on a parse, retry once on a stronger
+    # model (with a higher-res image). Set PARSE_FALLBACK_MODEL="" to disable.
+    PARSE_FALLBACK_MODEL: str = os.getenv("PARSE_FALLBACK_MODEL", "claude-sonnet-4-6")
+    PARSE_FALLBACK_CONF: float = float(os.getenv("PARSE_FALLBACK_CONF", "0.6"))
+    # Screenshots are downscaled before being sent to the API to save vision
+    # tokens. Primary uses a smaller edge; the fallback uses a larger one so the
+    # stronger model gets maximum detail on the hard cases.
+    PARSE_IMG_MAX_EDGE: int = int(os.getenv("PARSE_IMG_MAX_EDGE", "1280"))
+    PARSE_FALLBACK_EDGE: int = int(os.getenv("PARSE_FALLBACK_EDGE", "1568"))
 
     # --- Facebook Messenger webhook ---
     FB_VERIFY_TOKEN: str = os.getenv("FB_VERIFY_TOKEN", "set-a-random-verify-token")
