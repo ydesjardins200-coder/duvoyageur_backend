@@ -1531,7 +1531,7 @@ def admin_cases(status: str = "all", view: str = "voyage"):
                         for s in STATUSES)
         sform = (f"<form method='post' action='/admin/cases/{c.id}/status' "
                  "style='display:flex;gap:8px;align-items:center;margin:0'>"
-                 f"<input type='hidden' name='next' value=\"{nxt}\">"
+                 f"<input type='hidden' name='next' value=\"/admin/cases/{c.id}\">"
                  f"<select name='status'>{opts2}</select>"
                  "<button>Mettre à jour</button></form>")
         return (
@@ -2385,7 +2385,8 @@ def admin_case_detail(case_id: int):
             f"<h2 style='margin:0'>#{c.id} · {name} <span class='tag {c.status}'>{c.status}</span></h2>"
             f"{status_form}</div>"
             f"<div class='grid2'>{cards}{screenshot_card}</div>"
-            f"<div class='grid2'>{profil}{convo}{send_panel}</div>"
+            + _trip_fulfillment_section(c, f"/admin/cases/{c.id}")
+            + f"<div class='grid2'>{profil}{convo}{send_panel}</div>"
             f"{raw}"
         )
     return render_page(body, "cases")
