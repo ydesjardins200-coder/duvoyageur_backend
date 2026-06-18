@@ -3059,6 +3059,9 @@ async def admin_case_book(case_id: int, request: Request):
     if not nxt.startswith("/admin/"):
         nxt = f"/admin/cases/{case_id}"
     return RedirectResponse(nxt, status_code=303)
+
+
+@app.post("/admin/cases/{case_id}/trip", dependencies=[Depends(require_admin)])
 async def admin_case_trip(case_id: int, request: Request):
     """Update the trip's Voyage / Voyageurs / Prix fields from the inline editor,
     then recompute what's still missing and the (non-terminal) status."""
