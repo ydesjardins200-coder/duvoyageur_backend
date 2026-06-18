@@ -410,6 +410,39 @@ def kyc_complete(client) -> bool:
     return not kyc_status(client)[2]
 
 
+def _dob_field(value: str = "") -> str:
+    """Three dropdowns (jj / mm / aaaa) for a date of birth — friendlier than the
+    native mobile date picker. Posts dob_d / dob_m / dob_y; reconstruct with
+    _dob_from_form()."""
+    y = mm = dd = ""
+    if value:
+        p = str(value).split("-")
+        if len(p) == 3 and all(p):
+            y, mm, dd = p[0], p[1].zfill(2), p[2].zfill(2)
+    days = "<option value=''>jj</option>" + "".join(
+        f"<option value='{i:02d}'{' selected' if f'{i:02d}' == dd else ''}>{i:02d}</option>"
+        for i in range(1, 32))
+    months = "<option value=''>mm</option>" + "".join(
+        f"<option value='{i:02d}'{' selected' if f'{i:02d}' == mm else ''}>{i:02d}</option>"
+        for i in range(1, 13))
+    cur = datetime.utcnow().year
+    years = "<option value=''>aaaa</option>" + "".join(
+        f"<option value='{yy}'{' selected' if str(yy) == y else ''}>{yy}</option>"
+        for yy in range(cur, cur - 101, -1))
+    return ("<div class='dobgrid'>"
+            f"<select name='dob_d' aria-label='Jour' required>{days}</select>"
+            f"<select name='dob_m' aria-label='Mois' required>{months}</select>"
+            f"<select name='dob_y' aria-label='Année' required>{years}</select>"
+            "</div>")
+
+
+def _dob_from_form(form) -> str:
+    d = (form.get("dob_d") or "").strip()
+    m = (form.get("dob_m") or "").strip()
+    y = (form.get("dob_y") or "").strip()
+    return f"{y}-{m}-{d}" if (d and m and y) else ""
+
+
 def _kyc_banner(client) -> str:
     done, total, missing = kyc_status(client)
     if not missing:
@@ -440,6 +473,9 @@ def _profile_form(client, saved: bool = False, locked: bool = False) -> str:
         cls = "field half" if half else "field"
         if miss:
             cls += " miss"
+        if k == "date_of_birth":
+            return (f"<div class='{cls}'><label>{label}{star}</label>"
+                    f"{_dob_field(_kyc_value(client, k) or '')}</div>")
         return (f"<div class='{cls}'><label>{label}{star}</label>"
                 f"<input name='{k}' type='{typ}' value=\"{val}\" inputmode='"
                 f"{'email' if typ == 'email' else ('tel' if typ == 'tel' else 'text')}'"
@@ -825,7 +861,7 @@ async def portal_profile_save(request: Request):
         if client:
             kyc = dict(client.kyc or {})
             for k, _label, _typ, _req, _half in _KYC_FIELDS:
-                v = (form.get(k) or "").strip()
+                v = _dob_from_form(form) if k == "date_of_birth" else (form.get(k) or "").strip()
                 if k == "email":
                     em = normalize_email(v)
                     if em:
@@ -1138,7 +1174,7 @@ def _login_form(error: str = "") -> str:
         "<div class='field'><label>Courriel</label>"
         "<input name='email' type='email' inputmode='email' autocomplete='email' required></div>"
         "<div class='field'><label>Date de naissance</label>"
-        "<input name='dob' type='date' required></div>"
+        f"{_dob_field()}</div>"
         "</div></div>"
         "<div class='actions'><button class='btn block' type='submit'>Me connecter</button></div>"
         "</form>"
@@ -1163,7 +1199,7 @@ async def portal_login_credentials(request: Request):
             "Trop de tentatives. Réessaie dans quelques minutes."), logged_in=False))
     form = await request.form()
     email = normalize_email((form.get("email") or "").strip())
-    dob = (form.get("dob") or "").strip()
+    dob = _dob_from_form(form)
     cid = None
     if email and dob:
         with SessionLocal() as db:
@@ -1207,6 +1243,9 @@ def _signup_form(values=None, error: str = "") -> str:
         val = escape(str(values.get(k) or ""))
         star = " <span class='req'>*</span>" if req else ""
         cls = "field half" if half else "field"
+        if k == "date_of_birth":
+            return (f"<div class='{cls}'><label>{label}{star}</label>"
+                    f"{_dob_field(values.get(k) or '')}</div>")
         return (f"<div class='{cls}'><label>{label}{star}</label>"
                 f"<input name='{k}' type='{typ}' value=\"{val}\" inputmode='"
                 f"{'email' if typ == 'email' else ('tel' if typ == 'tel' else 'text')}'"
@@ -1246,6 +1285,7 @@ async def portal_signup_save(request: Request):
             error="Trop de créations de compte. Réessaie dans une heure."), logged_in=False))
     form = await request.form()
     values = {k: (form.get(k) or "").strip() for k, *_ in _KYC_FIELDS}
+    values["date_of_birth"] = _dob_from_form(form)
     email = normalize_email(values.get("email"))
     phone = normalize_phone(values.get("phone"))
     values["email"], values["phone"] = email or "", phone or ""
@@ -1448,6 +1488,9 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .field input::placeholder,.field textarea::placeholder{{color:#6f93a3}}
  .field input:focus,.field select:focus,.field textarea:focus{{outline:none;border-color:var(--pacific);box-shadow:0 0 0 3px rgba(25,211,230,.18)}}
  .field.miss input,.field.miss select{{border-color:rgba(255,210,63,.55)}}
+ .dobgrid{{display:grid;grid-template-columns:1fr 1fr 1.35fr;gap:8px}}
+ .dobgrid select{{padding:12px 26px 12px 11px;
+   background-position:calc(100% - 13px) 21px,calc(100% - 8px) 21px}}
  .hint{{font-size:12px;color:var(--mist);margin:6px 0 0}}
  /* Screenshot upload */
  .upload{{margin-bottom:8px}}
