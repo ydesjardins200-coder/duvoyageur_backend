@@ -39,7 +39,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from config import settings
-from db import Case, Client, SessionLocal, add_identity, log_activity, normalize_email, normalize_phone
+from db import (Case, Client, SessionLocal, add_identity, log_activity, normalize_email,
+                normalize_phone, replace_primary_identity)
 from trip_schema import TripRequest
 
 import storage
@@ -840,12 +841,12 @@ async def portal_profile_save(request: Request):
                     em = normalize_email(v)
                     if em:
                         client.primary_email = em
-                        add_identity(db, client, "email", em)
+                        replace_primary_identity(db, client, "email", em)
                 elif k == "phone":
                     ph = normalize_phone(v)
                     if ph:
                         client.primary_phone = ph
-                        add_identity(db, client, "phone", ph)
+                        replace_primary_identity(db, client, "phone", ph)
                 else:
                     kyc[k] = v or None
             client.kyc = kyc

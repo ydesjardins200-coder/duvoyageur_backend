@@ -398,6 +398,21 @@ def add_identity(db, client: "Client", kind: str, value: Optional[str]):
     return ident
 
 
+def replace_primary_identity(db, client: "Client", kind: str, value: Optional[str]):
+    """Make `value` this client's SOLE identity of `kind`, used when the client
+    edits their canonical contact in the portal profile: drop this client's other
+    identities of that kind (old values / typos that piled up across edits), then
+    attach the new one. Only touches THIS client's rows — never another client's.
+    No-op on an empty value (so we never wipe identities by accident)."""
+    if not value:
+        return
+    for ident in db.query(ClientIdentity).filter_by(client_id=client.id, kind=kind).all():
+        if ident.value != value:
+            db.delete(ident)
+    db.flush()
+    add_identity(db, client, kind, value)
+
+
 def resolve_or_create_client(db, *, messenger_psid: Optional[str] = None,
                              email: Optional[str] = None, phone: Optional[str] = None,
                              name: Optional[str] = None,
