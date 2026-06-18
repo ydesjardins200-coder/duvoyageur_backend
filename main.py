@@ -734,22 +734,21 @@ def _trip_fulfillment_section(c, redirect: str) -> str:
     dep, ret, draw = t.get("departure_date"), t.get("return_date"), t.get("dates_raw")
     vols = (f"{dep or '?'} \u2192 {ret or '?'}") if (dep or ret) else (draw or None)
 
-    if st == "needs_info":
-        missing = c.needs_clarification or []
-        if not missing:
-            return ""
-        chips = "".join(f"<span class='chip'>{escape(str(m))}</span>" for m in missing)
-        return ("<div class='fbox'><div class='fhdr'>Infos manquantes pour coter</div>"
-                f"<div class='chips'>{chips}</div></div>")
-
-    if st == "quoted":
+    if st in ("new", "needs_info", "quoted"):
+        out = ""
+        if st == "needs_info":
+            missing = c.needs_clarification or []
+            if missing:
+                chips = "".join(f"<span class='chip'>{escape(str(m))}</span>" for m in missing)
+                out += ("<div class='fbox'><div class='fhdr'>Infos manquantes pour coter</div>"
+                        f"<div class='chips'>{chips}</div></div>")
         cur, sav = c.quote_url or "", c.savings or ""
         shown = ""
         if cur:
-            shown += link_row("Quote d\u00e9pos\u00e9e", cur) + info_row("Lien", cur)
+            shown += link_row("Quote déposée", cur) + info_row("Lien", cur)
         if sav:
             shown += info_row("\u00c9conomie", sav)
-        return ("<div class='fbox'><div class='fhdr'>Quote &amp; \u00e9conomie</div>"
+        out += ("<div class='fbox'><div class='fhdr'>Coter \u00b7 quote &amp; \u00e9conomie</div>"
                 f"{shown}"
                 f"<form method='post' action='/admin/cases/{c.id}/quote'>"
                 f"<input type='hidden' name='next' value=\"{escape(redirect)}\">"
@@ -758,7 +757,10 @@ def _trip_fulfillment_section(c, redirect: str) -> str:
                 f"value=\"{escape(cur)}\" style='width:100%'>"
                 "<label class='flbl' style='margin-top:10px'>\u00c9conomie (rabais donn\u00e9 au client)</label>"
                 f"<input name='savings' placeholder='ex. 195 $' value=\"{escape(sav)}\" style='width:100%'>"
-                "<button style='margin-top:12px'>Enregistrer</button></form></div>")
+                "<button style='margin-top:12px'>Enregistrer la quote</button>"
+                "<p class='sub'>Enregistrer un lien fait passer le dossier \u00e0 \u00ab quoted \u00bb.</p>"
+                "</form></div>")
+        return out
 
     if st == "booked":
         items = []
@@ -2424,6 +2426,11 @@ async def admin_case_quote(case_id: int, request: Request):
         if c:
             c.quote_url = (form.get("quote_url") or "").strip() or None
             c.savings = (form.get("savings") or "").strip() or None
+            # Saving a quote link promotes a still-open trip to "quoted".
+            if c.quote_url and c.kind == "trip" and c.status in ("new", "needs_info"):
+                log_activity(db, c.client_id, "status_change",
+                             f"Statut : {c.status} → quoted", c.id)
+                c.status = "quoted"
             log_activity(db, c.client_id, "note",
                          "Quote déposée" if c.quote_url else "Quote retirée", c.id)
             db.commit()
