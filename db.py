@@ -160,6 +160,11 @@ class Case(Base):
     # Conversation thread for service-client cases: list of {dir:'in'|'out', text, at}.
     messages: Mapped[list] = mapped_column(JSON, default=list)
 
+    # Fulfillment fields, filled as the trip moves through the pipeline.
+    quote_url: Mapped[Optional[str]] = mapped_column(String(600), nullable=True)   # quoted
+    flight_depart: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)  # booked
+    flight_return: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)  # booked
+
 
 def init_db() -> None:
     Base.metadata.create_all(engine)
@@ -183,6 +188,9 @@ def _ensure_columns() -> None:
             conn.execute(text(
                 "ALTER TABLE cases ADD COLUMN IF NOT EXISTS messages JSONB DEFAULT '[]'::jsonb"
             ))
+            conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS quote_url VARCHAR(600)"))
+            conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS flight_depart VARCHAR(40)"))
+            conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS flight_return VARCHAR(40)"))
             has = conn.execute(text(
                 "SELECT 1 FROM information_schema.columns "
                 "WHERE table_name='cases' AND column_name='awaiting_reply'"
@@ -214,6 +222,12 @@ def _ensure_columns() -> None:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN client_id INTEGER"))
             if "messages" not in cols:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN messages JSON"))
+            if "quote_url" not in cols:
+                conn.execute(text("ALTER TABLE cases ADD COLUMN quote_url VARCHAR(600)"))
+            if "flight_depart" not in cols:
+                conn.execute(text("ALTER TABLE cases ADD COLUMN flight_depart VARCHAR(40)"))
+            if "flight_return" not in cols:
+                conn.execute(text("ALTER TABLE cases ADD COLUMN flight_return VARCHAR(40)"))
             if "awaiting_reply" not in cols:  # add + one-time backfill
                 conn.execute(text("ALTER TABLE cases ADD COLUMN awaiting_reply BOOLEAN DEFAULT 1"))
                 conn.execute(text(

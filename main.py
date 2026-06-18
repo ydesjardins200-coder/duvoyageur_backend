@@ -658,6 +658,83 @@ def _trip_info_cards(c) -> str:
     return cards
 
 
+def _trip_fulfillment_section(c, redirect: str) -> str:
+    """Status-driven action area shown at the bottom of a trip box:
+    needs_info -> missing fields; quoted -> quote URL; booked -> flight dates;
+    closed -> read-only summary (feedback later). new -> nothing."""
+    st = c.status
+
+    if st == "needs_info":
+        missing = c.needs_clarification or []
+        if not missing:
+            return ""
+        chips = "".join(f"<span class='chip'>{escape(str(m))}</span>" for m in missing)
+        return ("<div class='fbox'><div class='fhdr'>Infos manquantes pour coter</div>"
+                f"<div class='chips'>{chips}</div></div>")
+
+    if st == "quoted":
+        cur = c.quote_url or ""
+        shown = (f"<div class='kv'><span class='k'>Quote déposée</span>"
+                 f"<span class='v'><a href=\"{escape(cur)}\" target='_blank'>Ouvrir la quote &rarr;</a>"
+                 "</span></div>") if cur else ""
+        return ("<div class='fbox'><div class='fhdr'>Quote du client (URL)</div>"
+                f"{shown}"
+                f"<form method='post' action='/admin/cases/{c.id}/quote'>"
+                f"<input type='hidden' name='next' value=\"{escape(redirect)}\">"
+                f"<input name='quote_url' type='url' placeholder='https://…' "
+                f"value=\"{escape(cur)}\" style='width:100%'>"
+                "<button style='margin-top:10px'>Enregistrer la quote</button></form></div>")
+
+    if st == "booked":
+        dd, rr = c.flight_depart or "", c.flight_return or ""
+        q = (f"<div class='kv'><span class='k'>Quote</span><span class='v'>"
+             f"<a href=\"{escape(c.quote_url)}\" target='_blank'>Ouvrir &rarr;</a></span></div>"
+             ) if c.quote_url else ""
+        return ("<div class='fbox'><div class='fhdr'>Dates de vol (selon la quote)</div>"
+                f"{q}"
+                f"<form method='post' action='/admin/cases/{c.id}/flights'>"
+                f"<input type='hidden' name='next' value=\"{escape(redirect)}\">"
+                "<div style='display:flex;gap:16px;flex-wrap:wrap'>"
+                "<div><label class='flbl'>Vol aller</label><br>"
+                f"<input name='flight_depart' type='date' value='{escape(dd)}'></div>"
+                "<div><label class='flbl'>Vol retour</label><br>"
+                f"<input name='flight_return' type='date' value='{escape(rr)}'></div></div>"
+                "<button style='margin-top:12px'>Enregistrer les vols</button></form>"
+                "<p class='sub'>Le dossier passera automatiquement à « closed » après la date "
+                "de retour.</p></div>")
+
+    if st == "closed":
+        bits = []
+        if c.quote_url:
+            bits.append(f"<div class='kv'><span class='k'>Quote</span><span class='v'>"
+                        f"<a href=\"{escape(c.quote_url)}\" target='_blank'>Ouvrir &rarr;</a></span></div>")
+        if c.flight_depart or c.flight_return:
+            bits.append("<div class='kv'><span class='k'>Vols</span><span class='v'>"
+                        f"{escape(c.flight_depart or '?')} → {escape(c.flight_return or '?')}</span></div>")
+        bits.append("<p class='sub'>Voyage terminé. La collecte de feedback s'affichera ici.</p>")
+        return f"<div class='fbox'><div class='fhdr'>Voyage complété</div>{''.join(bits)}</div>"
+
+    return ""  # new
+
+
+def _close_returned_trips(db) -> None:
+    """Auto-close booked trips whose return flight date has passed (ISO strings
+    sort lexicographically, so a plain string compare is correct here)."""
+    today = datetime.utcnow().date().isoformat()
+    rows = (db.query(Case)
+            .filter(Case.kind == "trip", Case.status == "booked",
+                    Case.flight_return.isnot(None), Case.flight_return != "",
+                    Case.flight_return < today)
+            .all())
+    for r in rows:
+        log_activity(db, r.client_id, "status_change",
+                     f"Statut : booked → closed (retour de voyage)", r.id)
+        r.status = "closed"
+        r.awaiting_reply = False
+    if rows:
+        db.commit()
+
+
 def _handle_human_message(sender: str, text: str, shots: list | None) -> None:
     """Human-support lane: NO AI. Store the message on a support case, record it
     in the conversation thread, flag it for the agent (bell), and stay silent."""
@@ -967,6 +1044,10 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .idtab{{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:stretch;margin:18px 0}}
  @media(max-width:900px){{.idtab{{grid-template-columns:1fr}}}}
  .idtab>.col{{display:flex;flex-direction:column;gap:16px}}
+ .voyagebox{{border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin:0 0 22px;background:rgba(255,255,255,.012)}}
+ .voyagebox .grid2{{margin:14px 0}}
+ .fbox{{margin-top:8px;padding:16px 18px;border:1px solid var(--line);border-radius:12px;background:rgba(6,28,40,.45)}}
+ .fhdr{{font-family:"Space Grotesk",monospace;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--pacific);margin-bottom:10px}}
  .act-card{{position:relative;padding:0;min-height:320px}}
  .act-inner{{position:absolute;inset:0;display:flex;flex-direction:column;padding:18px 20px}}
  .act-inner>h3{{margin:0 0 12px}}
@@ -1434,6 +1515,7 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
                 "<button>Mettre à jour</button></form>")
 
     with SessionLocal() as db:
+        _close_returned_trips(db)
         cl = db.get(Client, client_id)
         if not cl:
             return HTMLResponse(render_page("<p>Client introuvable.</p>", "clients"), status_code=404)
@@ -1583,13 +1665,14 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
                 blocks = []
                 for r in trips:
                     blocks.append(
-                        "<div style='margin-bottom:24px'>"
+                        "<div class='voyagebox'>"
                         "<div class='pagehdr'>"
                         f"<h3 style='margin:0'>#{r.id} <span class='tag {r.status}'>{r.status}</span></h3>"
                         + status_form(r.id, r.status, f"{base}?tab=voyage")
                         + "</div>"
                         f"<div class='grid2'>{_trip_info_cards(r)}</div>"
-                        f"<div style='margin-top:4px'><a href='/admin/cases/{r.id}'>Ouvrir le dossier &rarr;</a></div>"
+                        + _trip_fulfillment_section(r, f"{base}?tab=voyage")
+                        + f"<div style='margin-top:14px'><a href='/admin/cases/{r.id}'>Ouvrir le dossier &rarr;</a></div>"
                         "</div>"
                     )
                 content = "".join(blocks)
@@ -2060,7 +2143,36 @@ async def admin_update_status(case_id: int, request: Request):
     return RedirectResponse(nxt, status_code=303)
 
 
-@app.get("/admin/cases/{case_id}/screenshot/{idx}", dependencies=[Depends(require_admin)])
+@app.post("/admin/cases/{case_id}/quote", dependencies=[Depends(require_admin)])
+async def admin_case_quote(case_id: int, request: Request):
+    form = await request.form()
+    nxt = form.get("next") or f"/admin/cases/{case_id}"
+    with SessionLocal() as db:
+        c = db.get(Case, case_id)
+        if c:
+            c.quote_url = (form.get("quote_url") or "").strip() or None
+            log_activity(db, c.client_id, "note",
+                         "Quote déposée" if c.quote_url else "Quote retirée", c.id)
+            db.commit()
+    if not nxt.startswith("/admin/"):
+        nxt = f"/admin/cases/{case_id}"
+    return RedirectResponse(nxt, status_code=303)
+
+
+@app.post("/admin/cases/{case_id}/flights", dependencies=[Depends(require_admin)])
+async def admin_case_flights(case_id: int, request: Request):
+    form = await request.form()
+    nxt = form.get("next") or f"/admin/cases/{case_id}"
+    with SessionLocal() as db:
+        c = db.get(Case, case_id)
+        if c:
+            c.flight_depart = (form.get("flight_depart") or "").strip() or None
+            c.flight_return = (form.get("flight_return") or "").strip() or None
+            log_activity(db, c.client_id, "note", "Dates de vol enregistrées", c.id)
+            db.commit()
+    if not nxt.startswith("/admin/"):
+        nxt = f"/admin/cases/{case_id}"
+    return RedirectResponse(nxt, status_code=303)
 def admin_case_screenshot(case_id: int, idx: int):
     with SessionLocal() as db:
         c = db.get(Case, case_id)
