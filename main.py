@@ -2254,6 +2254,23 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
                 f"<option value='{c}'{' selected' if cur_ch == c else ''}>{lbl}</option>"
                 for c, lbl in chans)
 
+            kyc = cl.kyc or {}
+            _legal = " ".join(x for x in (kyc.get("legal_first_name"),
+                                          kyc.get("legal_last_name")) if x)
+            _addr = ", ".join(x for x in (kyc.get("address"), kyc.get("city"),
+                                          kyc.get("province"), kyc.get("postal_code"),
+                                          kyc.get("country")) if x)
+            if _legal or kyc.get("date_of_birth") or _addr:
+                kyc_block = (
+                    "<h3 style='margin-top:18px'>Identit\u00e9 l\u00e9gale (KYC)</h3>"
+                    + kv("Nom l\u00e9gal", val(_legal))
+                    + kv("Date de naissance", val(kyc.get("date_of_birth")))
+                    + kv("Adresse", val(_addr)))
+            else:
+                kyc_block = ("<h3 style='margin-top:18px'>Identit\u00e9 l\u00e9gale (KYC)</h3>"
+                             "<div class='muted'>Pas encore compl\u00e9t\u00e9e par le client "
+                             "(espace client).</div>")
+
             view_block = (
                 "<div id='idview'>"
                 + kv("Nom", val(cl.display_name))
@@ -2263,6 +2280,7 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
                 + kv("Cr\u00e9\u00e9", cl.created_at.strftime("%Y-%m-%d %H:%M"))
                 + kv("Dernier contact",
                      cl.last_contact_at.strftime("%Y-%m-%d %H:%M") if cl.last_contact_at else "\u2014")
+                + kyc_block
                 + "<h3 style='margin-top:18px'>Identifiants</h3>"
                 + (id_rows or "<div class='muted'>Aucun.</div>")
                 + "</div>"
