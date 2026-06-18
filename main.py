@@ -1327,7 +1327,8 @@ def intake_form(trip: TripRequest):
 
 
 def _trip_from_form(email, name, origin_city, origin_airport_iata, where,
-                    dep, ret, adults, children, operator, notes, price, basis) -> TripRequest:
+                    dep, ret, adults, children, operator, notes, price, basis,
+                    phone=None) -> TripRequest:
     from trip_schema import PriceBasis, PriceSeen
     price_seen = None
     if price is not None:
@@ -1339,6 +1340,7 @@ def _trip_from_form(email, name, origin_city, origin_airport_iata, where,
     return TripRequest(
         customer_email=email or None,
         customer_name=name or None,
+        customer_phone=phone or None,
         origin_city=origin_city or None,
         origin_airport_iata=origin_airport_iata or None,
         hotel_name_raw=where or None,
@@ -1372,6 +1374,7 @@ async def intake_screenshot(
     parse: bool = Form(True),
     email: str | None = Form(None),
     name: str | None = Form(None),
+    phone: str | None = Form(None),
     origin_city: str | None = Form(None),
     origin_airport_iata: str | None = Form(None),
     where: str | None = Form(None),
@@ -1401,7 +1404,8 @@ async def intake_screenshot(
         trip = TripRequest(raw_message="(capture web — révisé par le client)")
 
     manual = _trip_from_form(email, name, origin_city, origin_airport_iata, where,
-                             dep, ret, adults, children, operator, notes, price, basis)
+                             dep, ret, adults, children, operator, notes, price, basis,
+                             phone=phone)
     trip = merge_trip_requests(trip, manual)
     trip.source = "capture web"
     if trip.preferred_channel == ContactChannel.unknown and trip.customer_email:
