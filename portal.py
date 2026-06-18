@@ -30,18 +30,23 @@ from __future__ import annotations
 import re
 import secrets
 import time
+import logging
 from datetime import datetime
 from html import escape
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from config import settings
 from db import Case, Client, SessionLocal, add_identity, log_activity, normalize_email, normalize_phone
 from trip_schema import TripRequest
 
+import storage
+from parser import parse_trip
+
 router = APIRouter()
+log = logging.getLogger("duvoyageur.portal")
 
 PORTAL_COOKIE = "dv_portal"
 _COOKIE_PATH = "/portail"
@@ -465,53 +470,99 @@ def _profile_form(client, saved: bool = False, locked: bool = False) -> str:
 # --------------------------------------------------------------------------- #
 # New trip request
 # --------------------------------------------------------------------------- #
-_BOARD_OPTS = [("", "Peu importe"), ("all_inclusive", "Tout inclus"),
-               ("breakfast", "Petit-déjeuner"), ("half_board", "Demi-pension"),
-               ("full_board", "Pension complète"), ("room_only", "Chambre seulement")]
-_BASIS_OPTS = [("", "—"), ("per_person", "par personne"), ("total", "pour le groupe")]
+_AIRPORTS = [("", "Choisir…"), ("YUL", "Montréal (YUL)"), ("YQB", "Québec (YQB)"),
+             ("YOW", "Ottawa (YOW)"), ("YYZ", "Toronto (YYZ)"), ("AUTRE", "Autre")]
+_CARRIERS = [("", "Je ne sais pas"), ("Transat", "Transat"), ("Sunwing", "Sunwing"),
+             ("Vacances Air Canada", "Vacances Air Canada"),
+             ("WestJet Vacations", "WestJet Vacations"), ("Autre", "Autre")]
+_BASIS_OPTS = [("", "—"), ("per_person", "par personne"), ("total", "le total")]
+
+
+def _opts(pairs, current=""):
+    return "".join(f"<option value=\"{escape(v)}\"{' selected' if v == current else ''}>"
+                   f"{escape(l)}</option>" for v, l in pairs)
 
 
 def _new_trip_form() -> str:
-    bsel = "".join(f"<option value='{v}'>{l}</option>" for v, l in _BOARD_OPTS)
-    psel = "".join(f"<option value='{v}'>{l}</option>" for v, l in _BASIS_OPTS)
-    return (
-        "<form class='form' method='post' action='/portail/nouveau-voyage'>"
-        "<div class='fset'><h3>Destination</h3><div class='formgrid'>"
-        "<div class='field'><label>Où veux-tu aller ? <span class='req'>*</span></label>"
-        "<input name='destination' placeholder='ex. Punta Cana, Cancún, Varadero…' required></div>"
-        "<div class='field'><label>Un hôtel en particulier ?</label>"
-        "<input name='hotel_name_raw' placeholder='optionnel'></div>"
-        "</div></div>"
-        "<div class='fset'><h3>Quand &amp; d'où</h3><div class='formgrid'>"
-        "<div class='field'><label>Tu pars d'où ? <span class='req'>*</span></label>"
-        "<input name='origin_city' placeholder='ville ou aéroport (ex. Montréal)' required></div>"
+    asel, csel, psel = _opts(_AIRPORTS), _opts(_CARRIERS), _opts(_BASIS_OPTS)
+    upload = (
+        "<div class='upload'>"
+        "<input type='file' name='capture' id='capfile' accept='image/*' hidden>"
+        "<label for='capfile' class='upbtn' id='uplabel'>📸 Envoie une capture de ton forfait"
+        "<span>Le plus rapide : on lit l'hôtel, les dates, le prix et le transporteur "
+        "pour toi. Touche pour choisir une image.</span></label>"
+        "<div class='upprog' id='upprog' style='display:none'><div class='upbar' id='upbar'></div></div>"
+        "<div class='upstatus' id='upstatus'></div></div>"
+        "<div class='ordiv'><span>ou remplis les détails à la main</span></div>")
+    form = (
+        "<form class='form' method='post' action='/portail/nouveau-voyage' "
+        "enctype='multipart/form-data'>" + upload
+        + "<div class='fset'><h3>Ton forfait</h3><div class='formgrid'>"
+        f"<div class='field half'><label>Aéroport de départ <span class='req'>*</span></label>"
+        f"<select name='origin_airport' required>{asel}</select></div>"
+        "<div class='field half'><label>Hôtel ou destination <span class='req'>*</span></label>"
+        "<input name='where' placeholder='ex. Riu Bambu, Punta Cana…' required></div>"
         "<div class='field half'><label>Date de départ <span class='req'>*</span></label>"
-        "<input name='departure_date' type='date' required></div>"
-        "<div class='field half'><label>Date de retour <span class='req'>*</span></label>"
-        "<input name='return_date' type='date' required></div>"
+        "<input name='depart' type='date' required></div>"
+        "<div class='field half'><label>Date de retour</label>"
+        "<input name='retour' type='date'></div>"
         "</div></div>"
         "<div class='fset'><h3>Voyageurs</h3><div class='formgrid'>"
         "<div class='field half'><label>Adultes <span class='req'>*</span></label>"
-        "<input name='num_adults' type='number' min='1' value='2' inputmode='numeric' required></div>"
+        "<input name='adults' type='number' min='1' value='2' inputmode='numeric' required></div>"
         "<div class='field half'><label>Enfants</label>"
-        "<input name='num_children' type='number' min='0' value='0' inputmode='numeric'></div>"
-        "<div class='field half'><label>Âges des enfants</label>"
+        "<input name='children' type='number' min='0' value='0' inputmode='numeric'></div>"
+        "<div class='field'><label>Âge des enfants</label>"
         "<input name='children_ages' placeholder='ex. 4, 9'></div>"
-        "<div class='field half'><label>Chambres</label>"
-        "<input name='num_rooms' type='number' min='1' inputmode='numeric'></div>"
         "</div></div>"
-        "<div class='fset'><h3>Détails <span class='muted'>(optionnel)</span></h3><div class='formgrid'>"
-        f"<div class='field half'><label>Type de forfait</label><select name='board'>{bsel}</select></div>"
-        "<div class='field half'><label>Prix que t'as vu</label>"
-        "<input name='price_amount' type='number' inputmode='decimal' placeholder='ex. 1450'></div>"
-        f"<div class='field half'><label>Ce prix, c'est…</label><select name='price_basis'>{psel}</select></div>"
-        "<div class='field'><label>Autre chose à nous dire ?</label>"
+        "<div class='fset'><h3>Prix &amp; voyagiste <span class='muted'>(si tu l'as)</span></h3>"
+        "<div class='formgrid'>"
+        "<div class='field half'><label>Prix trouvé</label>"
+        "<input name='price' type='number' inputmode='decimal' placeholder='ex. 1450'></div>"
+        f"<div class='field half'><label>Ce prix est…</label><select name='basis'>{psel}</select></div>"
+        f"<div class='field half'><label>Transporteur</label><select name='operator'>{csel}</select></div>"
+        "<div class='field half'><label>Lien du forfait</label>"
+        "<input name='link' type='url' inputmode='url' placeholder='https://…'></div>"
+        "<div class='field'><label>Précisions</label>"
         "<textarea name='notes' placeholder='préférences, occasion spéciale, budget…'></textarea></div>"
         "</div></div>"
         "<div class='actions'>"
         "<button class='btn block' type='submit'>Envoyer ma demande</button>"
         "<a class='btn ghost' href='/portail'>Annuler</a></div>"
         "</form>")
+    return form + _CAPTURE_JS
+
+
+_CAPTURE_JS = """<script>
+(function(){
+  var f=document.getElementById('capfile'),prog=document.getElementById('upprog'),
+      bar=document.getElementById('upbar'),st=document.getElementById('upstatus'),
+      lbl=document.getElementById('uplabel');
+  if(!f)return;
+  function setv(n,v){if(v==null||v==='')return;var e=document.querySelector('[name="'+n+'"]');if(e&&!e.value)e.value=v;}
+  function setsel(n,v){var e=document.querySelector('select[name="'+n+'"]');if(!e||v==null)return;for(var i=0;i<e.options.length;i++){if(e.options[i].value===v){e.selectedIndex=i;return;}}}
+  f.addEventListener('change',function(){
+    var file=f.files&&f.files[0];if(!file)return;
+    prog.style.display='block';bar.style.width='0%';st.textContent='Lecture de ta capture…';lbl.classList.add('busy');
+    var fd=new FormData();fd.append('file',file);
+    var x=new XMLHttpRequest();x.open('POST','/portail/nouveau-voyage/capture');
+    x.upload.onprogress=function(e){if(e.lengthComputable)bar.style.width=Math.round(e.loaded/e.total*60)+'%';};
+    x.onload=function(){bar.style.width='100%';lbl.classList.remove('busy');
+      try{var r=JSON.parse(x.responseText);if(r.ok&&r.trip){var t=r.trip;
+        setv('where',t.hotel_name_raw||t.destination);setv('depart',t.departure_date);setv('retour',t.return_date);
+        setv('adults',t.num_adults);setv('children',t.num_children);
+        if(t.origin_airport_iata)setsel('origin_airport',t.origin_airport_iata);
+        if(t.operator)setsel('operator',t.operator);
+        if(t.price_seen&&t.price_seen.amount){setv('price',t.price_seen.amount);
+          if(t.price_seen.basis==='per_person'||t.price_seen.basis==='total')setsel('basis',t.price_seen.basis);}
+        st.textContent='Capture lue ✓ — vérifie et complète au besoin.';
+      }else{st.textContent='Capture reçue. Complète les champs au besoin.';}
+      }catch(e){st.textContent='Capture reçue. Complète les champs au besoin.';}
+      setTimeout(function(){prog.style.display='none';},700);};
+    x.onerror=function(){lbl.classList.remove('busy');prog.style.display='none';st.textContent='Upload impossible — remplis à la main.';};
+    x.send(fd);});
+})();
+</script>"""
 
 
 # --------------------------------------------------------------------------- #
@@ -825,6 +876,28 @@ def portal_new_trip(request: Request):
     return resp
 
 
+@router.post("/portail/nouveau-voyage/capture")
+async def portal_new_trip_capture(request: Request):
+    """Parse an uploaded deal screenshot and return the extracted fields so the
+    form can pre-fill itself (with an upload progress bar client-side). Reads
+    only — nothing is saved here; the screenshot is stored on submit."""
+    cid, gate = _gate(request)
+    if gate:
+        return JSONResponse({"ok": False, "error": "auth"}, status_code=403)
+    form = await request.form()
+    up = form.get("file")
+    if up is None or not hasattr(up, "read"):
+        return JSONResponse({"ok": False, "error": "no_file"})
+    data = await up.read()
+    media = getattr(up, "content_type", None) or "image/png"
+    try:
+        trip = parse_trip("(capture espace client)", images=[(data, media)])
+        return JSONResponse({"ok": True, "trip": trip.model_dump()})
+    except Exception as e:  # noqa: BLE001
+        log.warning("Portal screenshot parse failed: %s", e)
+        return JSONResponse({"ok": False, "error": "parse_failed", "trip": {}})
+
+
 @router.post("/portail/nouveau-voyage")
 async def portal_new_trip_save(request: Request):
     cid, gate = _gate(request)
@@ -849,6 +922,25 @@ async def portal_new_trip_save(request: Request):
         except ValueError:
             return None
 
+    # Optional deal screenshot -> store it on the case (like the web form).
+    shot = None
+    up = form.get("capture")
+    if up is not None and hasattr(up, "read"):
+        try:
+            data = await up.read()
+            if data:
+                shot = storage.make_screenshot(data, getattr(up, "content_type", None) or "image/png")
+        except Exception as e:  # noqa: BLE001 — never lose a submission over storage
+            log.warning("Portal capture store failed: %s", e)
+
+    notes = g("notes")
+    link = g("link")
+    if link:
+        notes = f"{notes}\nLien du forfait : {link}" if notes else f"Lien du forfait : {link}"
+
+    airport = (form.get("origin_airport") or "").strip()
+    operator = (form.get("operator") or "").strip() or None   # "" = Je ne sais pas
+
     with SessionLocal() as db:
         client = db.get(Client, cid)
         if not client:
@@ -858,25 +950,26 @@ async def portal_new_trip_save(request: Request):
             "customer_name": client.display_name,
             "customer_email": client.primary_email,
             "customer_phone": client.primary_phone,
-            "destination": g("destination"),
-            "hotel_name_raw": g("hotel_name_raw"),
-            "origin_city": g("origin_city"),
-            "departure_date": g("departure_date"),
-            "return_date": g("return_date"),
-            "board": g("board") or "unknown",
-            "num_adults": gi("num_adults"),
-            "num_children": gi("num_children"),
-            "num_rooms": gi("num_rooms"),
-            "raw_message": g("notes"),
+            "destination": g("where"),
+            "departure_date": g("depart"),
+            "return_date": g("retour"),
+            "num_adults": gi("adults"),
+            "num_children": gi("children"),
+            "operator": operator,
+            "raw_message": notes,
         }
+        if airport in ("YUL", "YQB", "YOW", "YYZ"):
+            d["origin_airport_iata"] = airport
+        elif airport == "AUTRE":
+            d["origin_city"] = "Autre (à préciser)"
         ages = [int(a) for a in re.split(r"[,\s]+", form.get("children_ages", "") or "")
                 if a.strip().isdigit()]
         if ages:
             d["passengers"] = [{"age": a} for a in ages]
-        amt = gf("price_amount")
+        amt = gf("price")
         if amt is not None:
             d["price_seen"] = {"amount": amt, "currency": "CAD",
-                               "basis": g("price_basis") or "unknown"}
+                               "basis": (form.get("basis") or "").strip() or "unknown"}
         try:
             trip = TripRequest.model_validate({k: v for k, v in d.items() if v is not None})
         except Exception:  # noqa: BLE001
@@ -886,13 +979,14 @@ async def portal_new_trip_save(request: Request):
             client_id=client.id, channel="portal",
             status="new",                      # a fresh lead the agent must action
             customer_email=client.primary_email, customer_phone=client.primary_phone,
-            parse_confidence=1.0, raw_message=g("notes"),
+            parse_confidence=1.0, raw_message=notes,
             trip=trip.model_dump(), needs_clarification=rem,
-            screenshots=[], messages=[])
+            screenshots=[shot] if shot else [], messages=[])
         db.add(case)
         db.flush()
         log_activity(db, client.id, "request_created",
-                     "Nouvelle demande via espace client", case.id)
+                     "Nouvelle demande via espace client"
+                     + (" (avec capture)" if shot else ""), case.id)
         db.commit()
     return RedirectResponse("/portail?new=1", status_code=303)
 
@@ -1259,6 +1353,21 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .field input:focus,.field select:focus,.field textarea:focus{{outline:none;border-color:var(--pacific);box-shadow:0 0 0 3px rgba(25,211,230,.18)}}
  .field.miss input,.field.miss select{{border-color:rgba(255,210,63,.55)}}
  .hint{{font-size:12px;color:var(--mist);margin:6px 0 0}}
+ /* Screenshot upload */
+ .upload{{margin-bottom:8px}}
+ .upbtn{{display:flex;flex-direction:column;gap:5px;cursor:pointer;text-align:center;
+   border:1.5px dashed rgba(155,246,236,.35);border-radius:16px;padding:24px 18px;
+   background:rgba(8,33,47,.45);font-family:"Bricolage Grotesque",sans-serif;font-weight:700;
+   font-size:15px;color:var(--foam);transition:border-color .15s,background .15s}}
+ .upbtn span{{font-family:"Inter",sans-serif;font-weight:400;font-size:12px;color:var(--mist);line-height:1.45}}
+ .upbtn:hover{{border-color:var(--pacific);background:rgba(25,211,230,.06)}}
+ .upbtn.busy{{opacity:.65;border-style:solid}}
+ .upprog{{height:8px;border-radius:999px;background:rgba(8,33,47,.8);overflow:hidden;margin:10px 0 0}}
+ .upbar{{height:100%;width:0;border-radius:999px;
+   background:linear-gradient(90deg,var(--pacific),var(--lagoon));transition:width .2s ease}}
+ .upstatus{{font-size:12px;color:var(--surf);margin-top:8px;text-align:center;min-height:14px}}
+ .ordiv{{display:flex;align-items:center;gap:12px;color:var(--mist);font-size:12px;margin:16px 0}}
+ .ordiv::before,.ordiv::after{{content:'';flex:1;height:1px;background:var(--line)}}
  /* Progress */
  .prog{{height:8px;border-radius:999px;background:rgba(8,33,47,.7);overflow:hidden;margin:2px 0 6px}}
  .prog span{{display:block;height:100%;border-radius:999px;
