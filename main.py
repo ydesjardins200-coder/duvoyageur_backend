@@ -494,8 +494,11 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                   "Parfait 🙏 Un conseiller va te répondre directement ici. On revient vite !",
                   settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
         return
+    if sender and not shots and _wants_info(text):   # "vos heures ? êtes-vous une agence ?"
+        _handle_concierge_message(sender, text)      # answer with the general-info IA
+        return
     if (sender and not shots and is_cold and sender not in _triaged
-            and _is_vague(text)):               # vague opener -> offer the 3 lanes once
+            and _is_vague(text) and not _wants_rebate(text)):  # vague opener -> 3 lanes once
         _triaged.add(sender)
         send_quick_replies(sender, TRIAGE_TEXT, TRIAGE_QR,
                            settings.FB_PAGE_TOKEN, settings.FB_GRAPH_VERSION)
@@ -717,8 +720,21 @@ QUOTE_QR = [
 ]
 
 _HUMAN_RE = re.compile(
-    r"(agent|conseill\w+|repr[ée]sentant|humain|une personne|vraie personne|"
-    r"quelqu'?un|parler [àa]|service (?:[àa] la )?client\w*|\bsupport\b)", re.I)
+    r"(agent|conseill\w+|repr[ée]sentant|humain|vraie personne|"
+    r"service (?:[àa] la )?client\w*|\bsupport\b|"
+    r"(?:[àa]|avec)\s+(?:quelqu'?un|une personne)|"          # "parler à quelqu'un"
+    r"\b(?:annuler|rembours\w+|plainte|r[ée]clamation)\b|"   # escalations -> a human
+    r"modifier ma (?:r[ée]serv\w*|demande))", re.I)
+# Operational / "who are you" questions that belong to the general-info (concierge)
+# lane, not the trip funnel. Trip words override (handled in _wants_info).
+_FAQ_RE = re.compile(
+    r"(heures?\s+d'?ouvert|ouvert\w*\s+quand|"
+    r"[êe]tes?-vous\b|vous [êe]tes (?:qui|quoi|une)|"
+    r"\bagence\b|permis|\bfrais\b|commission|"
+    r"o[ùu] (?:[êe]tes|vous situez|est)|votre adresse|"
+    r"comment [çc]a (?:marche|fonctionne)|comment vous (?:travaillez|faites)|"
+    r"qui [êe]tes-vous|c'?est quoi du voyageur|"
+    r"fiable|l[ée]gitime|arnaque|\bscam\b)", re.I)
 _GREETING_RE = re.compile(
     r"^\s*(allo|all[ôo]|bonjour|bonsoir|salut|coucou|hello|hi|hey|yo|"
     r"info\w*|question|aide|help|renseign\w*|besoin)", re.I)
@@ -738,6 +754,15 @@ _REBATE_RE = re.compile(
 
 def _wants_rebate(text: str) -> bool:
     return bool(text and _REBATE_RE.search(text))
+
+
+def _wants_info(text: str) -> bool:
+    """Operational / company question (hours, agency, fees, 'who are you') with no
+    trip content — belongs in the general-info concierge lane, not the funnel."""
+    t = text or ""
+    if _TRIP_HINT_RE.search(t):          # a trip question is not an FAQ
+        return False
+    return bool(_FAQ_RE.search(t))
 
 
 def _wants_human(text: str) -> bool:
