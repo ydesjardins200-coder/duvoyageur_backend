@@ -1,0 +1,9 @@
+# Golden set for the trip parser. One JSON object per line (lines starting with # are ignored).
+# Only label the fields you care about in "expect". null = the parser should leave it EMPTY.
+# Dates ignore the year by default (year inference depends on the run date); use --strict for exact.
+# Seed cases are text-only; add real (anonymized) screenshots under eval/images/ and reference them with "image".
+{"id": "punta-riu-sunwing", "message": "Forfait tout inclus Punta Cana, hôtel Riu Bambu, du 14 au 21 février, 2 adultes, 1450$ par personne avec Sunwing", "expect": {"destination": "Punta Cana", "hotel_name_raw": "Riu Bambu", "departure_date": "2026-02-14", "return_date": "2026-02-21", "num_adults": 2, "operator": "Sunwing", "price_amount": 1450, "price_basis": "per_person"}}
+{"id": "eurostars-dominicaine", "message": "Eurostars Grand Cayacoa en République dominicaine, départ de Montréal le 10 mars pour 7 nuits, 2 adultes", "expect": {"destination": "République dominicaine", "hotel_name_raw": "Eurostars Grand Cayacoa", "departure_date": "2026-03-10", "num_adults": 2, "num_children": null}}
+{"id": "cuba-famille", "message": "Cuba tout inclus une semaine en avril pour 2 adultes et 2 enfants", "expect": {"destination": "Cuba", "num_adults": 2, "num_children": 2, "hotel_name_raw": null}}
+{"id": "cancun-total", "message": "Cancún 5 nuits, 2 adultes, prix total 2980$ taxes incluses", "expect": {"destination": "Cancún", "num_adults": 2, "price_amount": 2980, "price_basis": "total"}}
+{"id": "non-trip-human", "message": "bonjour, je veux juste parler à un agent svp", "expect": {"destination": null, "hotel_name_raw": null, "num_adults": null, "price_amount": null}}
