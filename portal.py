@@ -86,9 +86,9 @@ def _set_session_cookie(resp, client_id: int) -> None:
         max_age=settings.PORTAL_SESSION_MAX_AGE, path=_COOKIE_PATH,
         httponly=True, samesite="lax", secure=settings.SECURE_COOKIES)
     resp.set_cookie(
-        HINT_COOKIE, "1",
+        HINT_COOKIE, _session_signer.dumps({"cid": client_id}),
         max_age=settings.PORTAL_SESSION_MAX_AGE, path=_COOKIE_PATH,
-        httponly=False,
+        httponly=True,
         samesite="none" if settings.SECURE_COOKIES else "lax",
         secure=settings.SECURE_COOKIES)
 
@@ -105,6 +105,43 @@ def current_portal_client_id(request: Request):
         return None
 
 
+def _hint_client_id(request: Request):
+    """Client id from the cross-site 'hint' cookie (rides SameSite=None), or
+    None. Used where the SameSite=Lax session cookie isn't sent — i.e. the
+    Netlify site asking /portail/whoami from another origin."""
+    raw = request.cookies.get(HINT_COOKIE)
+    if not raw:
+        return None
+    try:
+        data = _session_signer.loads(raw, max_age=settings.PORTAL_SESSION_MAX_AGE)
+        return int(data["cid"])
+    except (BadSignature, SignatureExpired, KeyError, ValueError, Exception):  # noqa: BLE001
+        return None
+
+
+def _client_exists(cid) -> bool:
+    """True iff a Client row still exists for cid. The single source of truth:
+    a client wiped in the admin reads as gone everywhere, no stale flag."""
+    if not cid:
+        return False
+    with SessionLocal() as db:
+        return db.get(Client, cid) is not None
+
+
+def _clear_session_cookies(resp):
+    """Erase both portal cookies (auth + cross-site hint)."""
+    resp.delete_cookie(PORTAL_COOKIE, path=_COOKIE_PATH)
+    resp.delete_cookie(HINT_COOKIE, path=_COOKIE_PATH)
+    return resp
+
+
+def _logged_out(to: str = "/portail/connexion"):
+    """Redirect that also clears a stale/zombie session (e.g. the client record
+    was deleted in the admin). Self-heals the cookies so the visitor — and the
+    cross-origin nav — stop seeing a phantom logged-in state."""
+    return _clear_session_cookies(RedirectResponse(to, status_code=303))
+
+
 def _gate(request: Request):
     """Guard for KYC-protected tabs. Returns (cid, None) when the visitor is
     logged in AND has completed their identity; otherwise (None, response) with
@@ -115,7 +152,7 @@ def _gate(request: Request):
     with SessionLocal() as db:
         client = db.get(Client, cid)
         if not client:
-            return None, HTMLResponse(_info_page("Espace client", "Dossier introuvable. 🙂"))
+            return None, _logged_out()
         if not kyc_complete(client):
             return None, RedirectResponse("/portail/profil", status_code=303)
     return cid, None
@@ -807,9 +844,7 @@ def portal_home(request: Request, new: int = 0, avis: int = 0):
     with SessionLocal() as db:
         client = db.get(Client, cid)
         if not client:
-            return HTMLResponse(_info_page(
-                "Espace client",
-                "On n'a pas retrouvé ton dossier. Écris-nous sur Messenger. 🙂"))
+            return _logged_out()
         cases = list(client.requests)
         if not kyc_complete(client):
             return RedirectResponse("/portail/profil", status_code=303)
@@ -849,7 +884,7 @@ def portal_profile(request: Request, saved: int = 0):
     with SessionLocal() as db:
         client = db.get(Client, cid)
         if not client:
-            return HTMLResponse(_info_page("Espace client", "Dossier introuvable. 🙂"))
+            return _logged_out()
         locked = not kyc_complete(client)
         lede = ("Bienvenue ! Complète ton identité pour ouvrir ton espace."
                 if locked else "Ces infos nous servent à réserver tes voyages au bon nom.")
@@ -1158,15 +1193,24 @@ def portal_logout():
 
 
 def _is_logged_in(request: Request) -> bool:
-    return (request.cookies.get(HINT_COOKIE) == "1"
-            or bool(current_portal_client_id(request)))
+    """True only if the visitor has a portal session AND the underlying client
+    record still exists. Cross-origin (Netlify) we only get the SameSite=None
+    hint cookie; same-origin we also have the signed session cookie. Either way
+    we resolve a cid and confirm it in the DB, so a client wiped in the admin
+    reads as logged-out and the nav shows 'Connexion', not a dead 'Mon compte'."""
+    cid = current_portal_client_id(request) or _hint_client_id(request)
+    return _client_exists(cid)
 
 
 @router.get("/portail/whoami")
 def portal_whoami(request: Request):
     """Plain JSON login state (same-origin use / debugging)."""
-    resp = JSONResponse({"logged_in": _is_logged_in(request)})
+    logged_in = _is_logged_in(request)
+    resp = JSONResponse({"logged_in": logged_in})
     resp.headers["Cache-Control"] = "no-store"
+    if not logged_in and (request.cookies.get(HINT_COOKIE)
+                          or request.cookies.get(PORTAL_COOKIE)):
+        _clear_session_cookies(resp)            # self-heal a zombie session
     return resp
 
 
@@ -1176,13 +1220,19 @@ _CB_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]{0,40}")
 @router.get("/portail/whoami.js")
 def portal_whoami_js(request: Request, cb: str = "__dvAuth"):
     """JSONP: the Netlify site (another origin) loads this as a <script>. The
-    SameSite=None hint cookie rides along cross-site, so we can tell it whether
-    to show 'Connexion' or 'Mon compte' — without depending on CORS."""
+    SameSite=None hint cookie rides along cross-site, carrying a signed cid we
+    verify against the DB — so the nav reflects reality (a deleted account shows
+    'Connexion'). A stale cookie gets cleared here too, healing the zombie."""
     cb = cb if _CB_RE.fullmatch(cb or "") else "__dvAuth"
-    state = "true" if _is_logged_in(request) else "false"
+    logged_in = _is_logged_in(request)
+    state = "true" if logged_in else "false"
     js = f"window.{cb}&&window.{cb}({state});"
-    return Response(js, media_type="application/javascript",
+    resp = Response(js, media_type="application/javascript",
                     headers={"Cache-Control": "no-store"})
+    if not logged_in and (request.cookies.get(HINT_COOKIE)
+                          or request.cookies.get(PORTAL_COOKIE)):
+        _clear_session_cookies(resp)            # self-heal a zombie session
+    return resp
 
 
 # --------------------------------------------------------------------------- #
