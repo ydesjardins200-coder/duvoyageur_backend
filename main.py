@@ -56,7 +56,7 @@ from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLoca
                 Staff, FOLLOW_UP_STATUSES, due_follow_ups, is_stale_quoted,
                 mark_follow_up_for_status, schedule_follow_up, touch_activity,
                 active_staff, default_staff_id, unclaimed_cases, cases_for_owner,
-                count_unclaimed)
+                count_unclaimed, pipeline_stats)
 from facebook import (extract_messages, extract_postbacks, extract_quick_replies,
                       get_user_name, send_quick_replies, send_text, set_ice_breakers,
                       set_messenger_profile, set_persistent_menu, valid_signature,
@@ -1804,7 +1804,7 @@ def _nav_html(active: str = "") -> str:
         ("completed", "Voyages complétés", "/admin/cases?status=closed", None),
         ("health", "System Health", "/admin/system", None),
         ("config", "System Config", "/admin/config", None),
-        ("reports", "Reports", "/admin/reports", None),
+        ("reports", "Pipeline", "/admin/reports", None),
     ]
     out = []
     for key, label, href, badge in items:
@@ -2856,7 +2856,103 @@ def admin_config():
 
 @app.get("/admin/reports", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 def admin_reports():
-    body = page_header("Reports") + "<div class='card'><p class='muted'>Rapports à venir.</p></div>"
+    """Pipeline & performance: KPI strip, a status board (kanban), and a
+    per-owner leaderboard — the 'performance d'affaire' view (Phase 3)."""
+    now = datetime.utcnow()
+    STAGE_FR = {"new": "Nouveau", "needs_info": "Info requise",
+                "quoted": "Soumis", "booked": "Réservé"}
+    BOARD = ["new", "needs_info", "quoted", "booked"]
+    TILE = ("background:rgba(6,33,47,.5);border:1px solid rgba(25,211,230,.18);"
+            "border-radius:12px;padding:14px 16px;min-width:120px;text-decoration:none;"
+            "display:block")
+    CARD = ("background:rgba(6,33,47,.55);border:1px solid rgba(25,211,230,.14);"
+            "border-radius:10px;padding:9px 11px;margin-bottom:8px;text-decoration:none;"
+            "display:block;color:var(--foam)")
+    CHIP = ("display:inline-flex;align-items:center;justify-content:center;width:22px;"
+            "height:22px;border-radius:999px;background:var(--deep);color:var(--surf);"
+            "font-size:10px;font-weight:700")
+    COLHEAD = ("font-weight:700;padding:8px 11px;background:rgba(25,211,230,.08);"
+               "border-radius:8px;margin-bottom:10px;display:flex;justify-content:space-between")
+
+    with SessionLocal() as db:
+        st = pipeline_stats(db, now)
+
+        # --- KPI strip ---
+        def kpi(label, value, href=None, accent=False):
+            color = "var(--gold)" if accent else "var(--foam)"
+            inner = (f"<div style='font-size:26px;font-weight:700;color:{color}'>{value}</div>"
+                     f"<div class='muted' style='font-size:12px'>{label}</div>")
+            tag = "a" if href else "div"
+            attr = f" href='{href}'" if href else ""
+            return f"<{tag}{attr} style='{TILE}'>{inner}</{tag}>"
+
+        open_n = sum(st["by_status"].get(s, 0) for s in ("new", "needs_info", "quoted"))
+        wr = f"{st['win_rate']}\u202f%" if st["win_rate"] is not None else "—"
+        tiles = "".join([
+            kpi("Pipeline ouvert", open_n),
+            kpi("Taux de réussite", wr),
+            kpi("Relances en retard", st["overdue"], "/admin/cases?status=relance",
+                accent=st["overdue"] > 0),
+            kpi("À risque", st["at_risk"], accent=st["at_risk"] > 0),
+            kpi("À réclamer", st["unclaimed"], "/admin/cases?status=unclaimed"),
+            kpi("Âge moyen (ouvert)", f"{st['avg_age']}\u00a0j"),
+            kpi("Réservés", st["booked"]),
+        ])
+        kpis = ("<div style='display:flex;gap:12px;flex-wrap:wrap;margin-bottom:22px'>"
+                + tiles + "</div>")
+
+        # --- status board ---
+        cols = []
+        for status in BOARD:
+            cases = (db.query(Case)
+                     .filter(Case.kind == "trip", Case.status == status)
+                     .order_by(Case.created_at.desc()).limit(40).all())
+            cards = []
+            for c in cases:
+                t = c.trip or {}
+                name = escape(str(t.get("customer_name") or "Client"))
+                where = escape(str(t.get("hotel_name_raw") or t.get("destination") or "—"))
+                age = (now - c.created_at).days
+                if c.owner:
+                    chip = f"<span style='{CHIP}'>{escape(c.owner.initials or c.owner.name[:2])}</span>"
+                else:
+                    chip = "<span class='muted' style='font-size:11px'>non réclamé</span>"
+                flag = ""
+                if c.next_follow_up_at and c.next_follow_up_at <= now:
+                    flag += " ⏰"
+                if is_stale_quoted(c, now):
+                    flag += " ⚠️"
+                cards.append(
+                    f"<a href='/admin/cases/{c.id}' style='{CARD}'>"
+                    f"<div style='font-weight:600'>{name}{flag}</div>"
+                    f"<div class='muted' style='font-size:12px;margin:2px 0 7px'>{where}</div>"
+                    "<div style='display:flex;justify-content:space-between;align-items:center'>"
+                    f"{chip}<span class='muted' style='font-size:11px'>{age}\u00a0j</span></div></a>")
+            n = st["by_status"].get(status, 0)
+            body_cards = "".join(cards) or "<p class='muted' style='font-size:12px'>—</p>"
+            cols.append(
+                "<div style='flex:1;min-width:190px'>"
+                f"<div style='{COLHEAD}'><span>{STAGE_FR[status]}</span>"
+                f"<span class='n'>{n}</span></div>{body_cards}</div>")
+        board = ("<div style='display:flex;gap:14px;overflow-x:auto;padding-bottom:6px'>"
+                 + "".join(cols) + "</div>")
+
+        # --- per-owner leaderboard ---
+        if st["per_owner"]:
+            lb = "".join(
+                f"<tr><td><b>{escape(o['name'])}</b></td><td>{o['open']}</td>"
+                f"<td>{o['won']}</td></tr>" for o in st["per_owner"])
+            leaderboard = (
+                "<div class='card' style='margin-top:22px'><h3>Par responsable</h3>"
+                "<table><tr><th>Responsable</th><th>Dossiers ouverts</th>"
+                f"<th>Réservés</th></tr>{lb}</table></div>")
+        else:
+            leaderboard = ""
+
+    body = (page_header("Pipeline & performance", "/admin/reports")
+            + kpis
+            + "<h3 style='margin:4px 0 12px'>Board pipeline</h3>" + board
+            + leaderboard)
     return render_page(body, "reports")
 
 

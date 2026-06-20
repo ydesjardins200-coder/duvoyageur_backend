@@ -52,8 +52,8 @@ le même schéma. Quand les logins individuels arrivent, `owner_id` passe de
 - [x] Réassignation manuelle (admin) + log `assign`.
 
 ### Phase 3 — Board pipeline + métriques (performance d'affaire)
-- [ ] Board par statut (chips owner + âge du dossier).
-- [ ] Bande métriques : conversion new→quoted→booked, temps moyen par étape,
+- [x] Board par statut (chips owner + âge du dossier).
+- [x] Bande métriques : conversion new→quoted→booked, temps moyen par étape,
       nb en retard, classement par owner.
 
 ### Phase 4 — Vrais comptes admin (quand le 2e admin arrive)

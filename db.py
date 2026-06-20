@@ -565,6 +565,53 @@ def count_unclaimed(db) -> int:
 
 
 # --------------------------------------------------------------------------- #
+# Pipeline metrics (Phase 3) — performance d'affaire
+# --------------------------------------------------------------------------- #
+
+def pipeline_stats(db, now: Optional[datetime] = None) -> dict:
+    """Aggregate trip-pipeline numbers for the perf dashboard: current stage
+    distribution, win rate (booked vs resolved), follow-up pressure (overdue +
+    à risque), average age of the open pipeline, and a per-owner leaderboard."""
+    from collections import Counter
+    now = now or datetime.utcnow()
+    rows = db.query(Case.status).filter(Case.kind == "trip").all()
+    counts = Counter(s for (s,) in rows)
+    by_status = {s: counts.get(s, 0) for s in STATUSES}
+    booked = by_status.get("booked", 0)
+    closed = by_status.get("closed", 0)
+    resolved = booked + closed
+    win_rate = round(booked / resolved * 100) if resolved else None
+
+    overdue = len(due_follow_ups(db, now))
+    quoted_cases = (db.query(Case)
+                    .filter(Case.kind == "trip", Case.status == "quoted").all())
+    at_risk = sum(1 for c in quoted_cases if is_stale_quoted(c, now))
+
+    open_cases = (db.query(Case)
+                  .filter(Case.kind == "trip",
+                          Case.status.in_(FOLLOW_UP_STATUSES)).all())
+    avg_age = (round(sum((now - c.created_at).days for c in open_cases) / len(open_cases), 1)
+               if open_cases else 0)
+
+    per_owner = []
+    for s in active_staff(db):
+        owned_open = (db.query(Case)
+                      .filter(Case.kind == "trip", Case.owner_id == s.id,
+                              Case.status.in_(FOLLOW_UP_STATUSES)).count())
+        won = (db.query(Case)
+               .filter(Case.kind == "trip", Case.owner_id == s.id,
+                       Case.status == "booked").count())
+        if owned_open or won:
+            per_owner.append({"name": s.name, "open": owned_open, "won": won})
+    per_owner.sort(key=lambda r: (-r["won"], -r["open"]))
+
+    return {"by_status": by_status, "total": sum(by_status.values()),
+            "booked": booked, "resolved": resolved, "win_rate": win_rate,
+            "overdue": overdue, "at_risk": at_risk, "avg_age": avg_age,
+            "unclaimed": count_unclaimed(db), "per_owner": per_owner}
+
+
+# --------------------------------------------------------------------------- #
 # Client identity resolution (recognize returning clients across channels)
 # --------------------------------------------------------------------------- #
 import re as _re
