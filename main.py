@@ -3053,10 +3053,12 @@ def admin_case_detail(request: Request, case_id: int, warn: str = ""):
                     out = m.get("dir") == "out"
                     at = (m.get("at") or "").replace("T", " ")
                     who = "Toi" if out else name
+                    undelivered = (" · <span style='color:#ff9b9b'>non livré</span>"
+                                   if m.get("delivered") is False else "")
                     bubbles.append(
                         f"<div class='{'msg-out' if out else 'msg-in'}'>"
                         f"{escape(m.get('text') or '')}"
-                        f"<div class='msg-at'>{who} · {escape(at)}</div></div>")
+                        f"<div class='msg-at'>{who} · {escape(at)}{undelivered}</div></div>")
                 msg_html = "".join(bubbles)
             else:
                 msg_html = "<p class='muted'>En attente du premier message du client…</p>"
@@ -3084,8 +3086,10 @@ def admin_case_detail(request: Request, case_id: int, warn: str = ""):
                     "<textarea name='message' rows='4' placeholder='Écris ta réponse au client…' "
                     "style='width:100%'></textarea>"
                     "<button style='margin-top:10px'>Envoyer sur Messenger</button></form>"
-                    "<p class='sub'>Envoi direct via Messenger (fenêtre de 24 h après le dernier "
-                    "message du client). Une fois envoyé, le dossier sort de la cloche.</p></div>"
+                    "<p class='sub'>Ta réponse est toujours enregistrée sur le fil. "
+                    "Livraison Messenger seulement dans la fenêtre de 24 h après le "
+                    "dernier message du client; sinon elle reste visible dans l'espace "
+                    "client. Une fois traité, le dossier sort de la cloche.</p></div>"
                 )
             else:
                 reply = ("<div class='card full'><h3>Répondre au client</h3>"
@@ -3106,9 +3110,16 @@ def admin_case_detail(request: Request, case_id: int, warn: str = ""):
                 f"<select name='status'>{opts}</select>"
                 "<button>Mettre à jour</button></form>"
             )
+            warnbar = ""
+            if warn == "not_delivered":
+                warnbar = ("<div class='warnbar'>⚠️ Message <b>enregistré sur le fil</b>, "
+                           "mais <b>non livré sur Messenger</b> — fenêtre de 24 h fermée, "
+                           "token de page manquant, ou PSID de test. Le client le verra "
+                           "dans son espace client; ta réponse n'est pas perdue.</div>")
             body = (
                 "<p><a href='/admin/cases?view=service'>&larr; Service client</a></p>"
-                "<div class='pagehdr'>"
+                + warnbar
+                + "<div class='pagehdr'>"
                 f"<h2 style='margin:0'>#{c.id} · {name} <span class='tag {c.status}'>{c.status}</span> "
                 "<span class='tag'>service client</span></h2>"
                 f"{status_form}</div>"
@@ -3642,12 +3653,14 @@ def admin_setup_greeting():
 
 @app.post("/admin/cases/{case_id}/send", dependencies=[Depends(require_admin)])
 async def admin_case_send(case_id: int, request: Request):
-    """Agent reply. Delivered via Messenger when the case has a PSID; always
-    recorded on the case thread (so portal clients see it in their Aide toggle)
-    and, for support cases, pushed as a portal notification."""
+    """Agent reply. ALWAYS recorded on the case thread first — a Messenger
+    delivery failure (closed 24 h window, missing token, invalid PSID) must never
+    lose the agent's message. Delivery is attempted separately and, when it
+    fails, the message is flagged 'non livré' and the admin is warned."""
     form = await request.form()
     message = (form.get("message") or "").strip()
     nxt = form.get("next") or f"/admin/cases/{case_id}"
+    not_delivered = False
     if message:
         with SessionLocal() as db:
             c = db.get(Case, case_id)
@@ -3661,21 +3674,27 @@ async def admin_case_send(case_id: int, request: Request):
                     log.info("Manual reply to case #%s: %s%s", case_id,
                              "sent" if sent else "failed",
                              " [HUMAN_AGENT]" if tag else "")
-                # Record when delivered by Messenger, or always for portal/no-PSID.
-                if sent or not sender:
-                    now = datetime.utcnow().isoformat(timespec="seconds")
-                    c.messages = _conversation(c) + [{"dir": "out", "text": message, "at": now}]
-                    c.awaiting_reply = False
-                    preview = message if len(message) <= 80 else message[:77] + "…"
-                    log_activity(db, c.client_id, "reply_out",
-                                 f"Message envoyé : {preview}", case_id)
-                    if c.kind == "support":
-                        push_notification(db, c.client_id,
-                                          "Nouvelle réponse à ta demande d'aide 💬",
-                                          "/portail/service")
-                    db.commit()
+                # A PSID that couldn't be reached = recorded but undelivered.
+                not_delivered = bool(sender) and not sent
+                now = datetime.utcnow().isoformat(timespec="seconds")
+                entry = {"dir": "out", "text": message, "at": now}
+                if not_delivered:
+                    entry["delivered"] = False
+                c.messages = _conversation(c) + [entry]
+                c.awaiting_reply = False
+                preview = message if len(message) <= 80 else message[:77] + "…"
+                verb = "enregistré (non livré)" if not_delivered else "envoyé"
+                log_activity(db, c.client_id, "reply_out",
+                             f"Message {verb} : {preview}", case_id)
+                if c.kind == "support":
+                    push_notification(db, c.client_id,
+                                      "Nouvelle réponse à ta demande d'aide 💬",
+                                      "/portail/service")
+                db.commit()
     if not nxt.startswith("/admin/"):
         nxt = f"/admin/cases/{case_id}"
+    if not_delivered:
+        nxt += ("&" if "?" in nxt else "?") + "warn=not_delivered"
     return RedirectResponse(nxt, status_code=303)
 
 
