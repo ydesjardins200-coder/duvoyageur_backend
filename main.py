@@ -58,7 +58,8 @@ from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLoca
                 active_staff, default_staff_id, unclaimed_cases, cases_for_owner,
                 count_unclaimed, pipeline_stats)
 from facebook import (extract_messages, extract_postbacks, extract_quick_replies,
-                      get_user_name, send_quick_replies, send_text, set_ice_breakers,
+                      get_user_name, send_quick_replies, send_text, send_text_result,
+                      set_ice_breakers,
                       set_messenger_profile, set_persistent_menu, valid_signature,
                       verify_challenge)
 from parser import parse_trip
@@ -3053,8 +3054,13 @@ def admin_case_detail(request: Request, case_id: int, warn: str = ""):
                     out = m.get("dir") == "out"
                     at = (m.get("at") or "").replace("T", " ")
                     who = "Toi" if out else name
-                    undelivered = (" · <span style='color:#ff9b9b'>non livré</span>"
-                                   if m.get("delivered") is False else "")
+                    if m.get("delivered") is False:
+                        why = m.get("delivery_error") or ""
+                        undelivered = (" · <span style='color:#ff9b9b'>non livré</span>"
+                                       + (f" <span class='muted' style='font-size:11px'>"
+                                          f"({escape(why)})</span>" if why else ""))
+                    else:
+                        undelivered = ""
                     bubbles.append(
                         f"<div class='{'msg-out' if out else 'msg-in'}'>"
                         f"{escape(m.get('text') or '')}"
@@ -3113,9 +3119,10 @@ def admin_case_detail(request: Request, case_id: int, warn: str = ""):
             warnbar = ""
             if warn == "not_delivered":
                 warnbar = ("<div class='warnbar'>⚠️ Message <b>enregistré sur le fil</b>, "
-                           "mais <b>non livré sur Messenger</b> — fenêtre de 24 h fermée, "
-                           "token de page manquant, ou PSID de test. Le client le verra "
-                           "dans son espace client; ta réponse n'est pas perdue.</div>")
+                           "mais <b>non livré sur Messenger</b>. La raison exacte renvoyée "
+                           "par Facebook est affichée sous ta réponse dans la conversation. "
+                           "Le client le verra dans son espace client; ta réponse n'est "
+                           "pas perdue.</div>")
             body = (
                 "<p><a href='/admin/cases?view=service'>&larr; Service client</a></p>"
                 + warnbar
@@ -3667,25 +3674,45 @@ async def admin_case_send(case_id: int, request: Request):
             if c:
                 sender = c.sender_ref
                 sent = False
+                detail = ""
                 if sender and settings.FB_PAGE_TOKEN:
                     tag = "HUMAN_AGENT" if settings.HUMAN_AGENT_ENABLED else None
-                    sent = send_text(sender, message, settings.FB_PAGE_TOKEN,
-                                     settings.FB_GRAPH_VERSION, tag=tag)
-                    log.info("Manual reply to case #%s: %s%s", case_id,
+                    sent, detail = send_text_result(
+                        sender, message, settings.FB_PAGE_TOKEN,
+                        settings.FB_GRAPH_VERSION, tag=tag)
+                    # If a tagged send fails (commonly: Human Agent permission not
+                    # approved on the Meta app), retry once WITHOUT the tag — a plain
+                    # RESPONSE still works inside the 24 h window.
+                    if not sent and tag:
+                        sent2, detail2 = send_text_result(
+                            sender, message, settings.FB_PAGE_TOKEN,
+                            settings.FB_GRAPH_VERSION, tag=None)
+                        if sent2:
+                            sent, detail = True, ""
+                        else:
+                            detail = f"avec HUMAN_AGENT: {detail} · sans tag: {detail2}"
+                    log.info("Manual reply to case #%s: %s%s%s", case_id,
                              "sent" if sent else "failed",
-                             " [HUMAN_AGENT]" if tag else "")
+                             " [HUMAN_AGENT]" if tag else "",
+                             "" if sent else f" — {detail}")
+                elif sender and not settings.FB_PAGE_TOKEN:
+                    detail = "Token de page Messenger absent (FB_PAGE_TOKEN)"
                 # A PSID that couldn't be reached = recorded but undelivered.
                 not_delivered = bool(sender) and not sent
                 now = datetime.utcnow().isoformat(timespec="seconds")
                 entry = {"dir": "out", "text": message, "at": now}
                 if not_delivered:
                     entry["delivered"] = False
+                    if detail:
+                        entry["delivery_error"] = detail
                 c.messages = _conversation(c) + [entry]
                 c.awaiting_reply = False
                 preview = message if len(message) <= 80 else message[:77] + "…"
                 verb = "enregistré (non livré)" if not_delivered else "envoyé"
-                log_activity(db, c.client_id, "reply_out",
-                             f"Message {verb} : {preview}", case_id)
+                summary = f"Message {verb} : {preview}"
+                if not_delivered and detail:
+                    summary = f"Message {verb} — {detail} : {preview}"
+                log_activity(db, c.client_id, "reply_out", summary, case_id)
                 if c.kind == "support":
                     push_notification(db, c.client_id,
                                       "Nouvelle réponse à ta demande d'aide 💬",

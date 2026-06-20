@@ -14,6 +14,7 @@ import hashlib
 import hmac
 import json
 import logging
+import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Optional
@@ -82,20 +83,20 @@ def extract_postbacks(payload: dict) -> list[tuple[Optional[str], str]]:
     return results
 
 
-def send_text(recipient_id: Optional[str], text: str, page_token: str,
-              graph_version: str = "v21.0", timeout: int = 8, tag: Optional[str] = None) -> bool:
+def send_text_result(recipient_id: Optional[str], text: str, page_token: str,
+                     graph_version: str = "v21.0", timeout: int = 8,
+                     tag: Optional[str] = None) -> tuple[bool, str]:
+    """Like send_text, but returns (ok, detail). On failure, detail is the actual
+    Facebook Send API error message (read from the HTTP error body) so the reason
+    — closed 24 h window, missing Human Agent permission, bad token… — is visible
+    instead of a bare 'HTTP 400'. Never raises.
     """
-    Send a plain-text reply to a user via the Send API.
-
-    Built to NEVER raise: on any problem it logs and returns False, so a failed
-    reply can never break webhook processing or cause Meta to retry the event.
-
-    Without a tag this is messaging_type RESPONSE (24-hour window only). Pass
-    tag="HUMAN_AGENT" for a human-composed message up to 7 days after the user's
-    last message (requires the Human Agent permission on the Meta app).
-    """
-    if not (page_token and recipient_id and text):
-        return False
+    if not page_token:
+        return False, "Token de page Messenger absent (FB_PAGE_TOKEN)"
+    if not recipient_id:
+        return False, "Pas de PSID Messenger sur ce dossier"
+    if not text:
+        return False, "Message vide"
     url = (
         f"https://graph.facebook.com/{graph_version}/me/messages"
         f"?access_token={urllib.parse.quote(page_token)}"
@@ -115,10 +116,41 @@ def send_text(recipient_id: Optional[str], text: str, page_token: str,
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return 200 <= resp.status < 300
+            ok = 200 <= resp.status < 300
+            return ok, "" if ok else f"HTTP {resp.status}"
+    except urllib.error.HTTPError as e:
+        detail = f"HTTP {e.code}"
+        try:
+            err = json.loads(e.read().decode("utf-8")).get("error", {})
+            msg = (err.get("message") or "").strip()
+            code = err.get("code")
+            sub = err.get("error_subcode")
+            if msg:
+                detail = msg + (f" (code {code}" + (f"/{sub}" if sub else "") + ")"
+                                if code is not None else "")
+        except Exception:  # noqa: BLE001
+            pass
+        log.warning("Send API reply failed: %s", detail)
+        return False, detail
     except Exception as e:  # noqa: BLE001
         log.warning("Send API reply failed: %s", e)
-        return False
+        return False, str(e)
+
+
+def send_text(recipient_id: Optional[str], text: str, page_token: str,
+              graph_version: str = "v21.0", timeout: int = 8, tag: Optional[str] = None) -> bool:
+    """
+    Send a plain-text reply to a user via the Send API.
+
+    Built to NEVER raise: on any problem it logs and returns False, so a failed
+    reply can never break webhook processing or cause Meta to retry the event.
+
+    Without a tag this is messaging_type RESPONSE (24-hour window only). Pass
+    tag="HUMAN_AGENT" for a human-composed message up to 7 days after the user's
+    last message (requires the Human Agent permission on the Meta app).
+    """
+    ok, _ = send_text_result(recipient_id, text, page_token, graph_version, timeout, tag)
+    return ok
 
 
 def get_user_name(psid: Optional[str], page_token: str,
