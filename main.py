@@ -1516,6 +1516,7 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .topnav a:hover{{color:var(--foam);text-decoration:none;background:rgba(25,211,230,.1)}}
  .hdr-right{{display:flex;align-items:center;gap:14px}}
  .bell{{position:relative}}
+ .gear{{position:relative}}
  .bell-btn{{background:transparent;border:0;cursor:pointer;font-size:20px;line-height:1;padding:5px;
    color:var(--foam);box-shadow:none;border-radius:9px}}
  .bell-btn:hover{{transform:none;box-shadow:none;background:rgba(25,211,230,.12)}}
@@ -1680,6 +1681,7 @@ _PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
          onsubmit="return confirm('Vider TOUS les dossiers (clients, demandes, historique) ? Action irréversible.')">
     <button class="act act-danger" type="submit">🗑 Vider les dossiers</button>
    </form>
+   {gear}
    {bell}
    <a class="logout" href="/admin/logout">Déconnexion</a>
   </div>
@@ -1703,6 +1705,18 @@ document.addEventListener('click',function(e){{
  document.addEventListener('click',function(e){{
   var p=document.getElementById('bellPanel');
   if(p&&!e.target.closest('.bell'))p.classList.remove('open');
+ }});
+}})();
+(function(){{
+ var g=document.getElementById('gearBtn');
+ if(!g)return;
+ g.addEventListener('click',function(e){{
+  e.stopPropagation();
+  document.getElementById('gearPanel').classList.toggle('open');
+ }});
+ document.addEventListener('click',function(e){{
+  var p=document.getElementById('gearPanel');
+  if(p&&!e.target.closest('.gear'))p.classList.remove('open');
  }});
 }})();
 function lightbox(src){{
@@ -1748,6 +1762,20 @@ def _bell_html() -> str:
         "<div class='bell'>"
         f"<button class='bell-btn' id='bellBtn' aria-label='Notifications'>🔔{badge}</button>"
         f"<div class='bell-panel' id='bellPanel'>{head}{items}</div></div>"
+    )
+
+
+def _gear_html() -> str:
+    """Settings menu (⚙️) next to the bell: the system pages, tucked away to keep
+    the top nav light. Reuses the bell dropdown styles."""
+    return (
+        "<div class='gear'>"
+        "<button class='bell-btn' id='gearBtn' aria-label='Réglages'>⚙️</button>"
+        "<div class='bell-panel' id='gearPanel'>"
+        "<div class='bell-head'>Réglages</div>"
+        "<a class='bell-item' href='/admin/system'>🩺 System Health</a>"
+        "<a class='bell-item' href='/admin/config'>🛠️ System Config</a>"
+        "</div></div>"
     )
 
 
@@ -1865,23 +1893,17 @@ def _nav_html(active: str = "") -> str:
     """Top navigation row, travel-domain sections, with a live count on the
     new-requests queue."""
     with SessionLocal() as db:
-        n_new = db.query(Case).filter(Case.kind == "trip", Case.status == "new").count()
         n_svc = db.query(Case).filter(Case.kind == "support", Case.awaiting_reply.is_(True),
                                       Case.status.notin_(("closed", "resolved"))).count()
         n_unclaimed = count_unclaimed(db)
     items = [
         ("reports", "Pipeline", "/admin/reports", None),
         ("unclaimed", "Dossier à réclamer", "/admin/cases?status=unclaimed", n_unclaimed),
-        ("queue", "Nouvelle demande de voyage", "/admin/cases?status=new", n_new),
         ("queue_service", "Nouvelle demande de service client",
          "/admin/cases?status=service", n_svc),
         ("mine", "Mes dossiers", "/admin/cases?status=mine", None),
         ("cases", "Demandes", "/admin/cases", None),
         ("clients", "Clients", "/admin/clients", None),
-        ("traveling", "Clients en voyage", "/admin/cases?status=booked", None),
-        ("completed", "Voyages complétés", "/admin/cases?status=closed", None),
-        ("health", "System Health", "/admin/system", None),
-        ("config", "System Config", "/admin/config", None),
     ]
     out = []
     for key, label, href, badge in items:
@@ -1900,7 +1922,7 @@ def page_header(title: str, refresh_url: str | None = None) -> str:
 
 def render_page(body: str, active: str = "") -> str:
     """Render an admin page in the shell (top nav + notification bell)."""
-    return _PAGE.format(body=body, bell=_bell_html(), nav=_nav_html(active))
+    return _PAGE.format(body=body, bell=_bell_html(), gear=_gear_html(), nav=_nav_html(active))
 
 
 _LOGIN_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
@@ -1999,12 +2021,9 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
                 fstatus: str = "all", fcanal: str = "all", minconf: str = "0",
                 sort: str = "recu", dir: str = "desc"):
     # Top-nav travel sections (status filters, trip only).
-    SECTION = {"new": "queue", "service": "queue_service",
-               "booked": "traveling", "closed": "completed", "relance": "relance",
+    SECTION = {"service": "queue_service", "relance": "relance",
                "mine": "mine", "unclaimed": "unclaimed"}
-    SEC_TITLE = {"queue": "Nouvelle demande de voyage",
-                 "queue_service": "Nouvelle demande de service client",
-                 "traveling": "Clients en voyage", "completed": "Voyages complétés"}
+    SEC_TITLE = {"queue_service": "Nouvelle demande de service client"}
     nav_active = SECTION.get(status, "cases")
 
     def next_step(c) -> str:
@@ -2247,22 +2266,6 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
             body = page_header("Mes dossiers", base) + acting + intro + table_html
         return render_page(body, "mine")
 
-    # Focused travel sections (trip only) — rows expand into the full card.
-    if nav_active in ("queue", "traveling", "completed"):
-        with SessionLocal() as db:
-            cases = (db.query(Case)
-                     .filter(Case.kind == "trip", Case.status == status)
-                     .order_by(Case.created_at.desc()).limit(200).all())
-        body = (
-            page_header(SEC_TITLE[nav_active], f"/admin/cases?status={status}")
-            + table(cases, expand=True)
-            + "<script>function toggleQ(i){var r=document.getElementById('qexp-'+i);"
-              "if(r)r.classList.toggle('open');}"
-              "function tripEdit(i,on){var b=document.getElementById('vb-'+i);"
-              "if(b)b.classList[on?'add':'remove']('editing');}</script>"
-        )
-        return render_page(body, nav_active)
-
     # "Demandes": split between Voyage and Service client, with filters + sort.
     view = "service" if view == "service" else "voyage"
     kind = "support" if view == "service" else "trip"
@@ -2330,10 +2333,16 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
     )
 
     base = f"/admin/cases?view={view}&fstatus={fstatus}&fcanal={fcanal}&minconf={minconf}"
-    table_html = table(cases, support=(view == "service"), sort=(sort, direction, base))
+    expand = (view == "voyage")
+    table_html = table(cases, support=(view == "service"), expand=expand,
+                       sort=(sort, direction, base))
     count = (f"<span class='muted' style='margin-left:8px'>{len(cases)} dossier(s)</span>")
+    toggle_js = ("<script>function toggleQ(i){var r=document.getElementById('qexp-'+i);"
+                 "if(r)r.classList.toggle('open');}"
+                 "function tripEdit(i,on){var b=document.getElementById('vb-'+i);"
+                 "if(b)b.classList[on?'add':'remove']('editing');}</script>") if expand else ""
     body = (f"<h2>Demandes</h2><div class='tabs'>{subtabs}</div>"
-            + filters + count + table_html)
+            + filters + count + table_html + toggle_js)
     return render_page(body, "cases")
 
 
@@ -2959,8 +2968,11 @@ def admin_reports():
             body_cards = "".join(cards) or "<p class='muted' style='font-size:12px'>—</p>"
             cols.append(
                 "<div style='flex:1;min-width:190px'>"
-                f"<div style='{COLHEAD}'><span>{STAGE_FR[status]}</span>"
-                f"<span class='n'>{n}</span></div>{body_cards}</div>")
+                f"<a href='/admin/cases?view=voyage&fstatus={status}' "
+                f"style='{COLHEAD};text-decoration:none;color:var(--foam)' "
+                f"title='Ouvrir la liste · {STAGE_FR[status]} (filtres + tri)'>"
+                f"<span>{STAGE_FR[status]}</span>"
+                f"<span class='n'>{n} ↗</span></a>{body_cards}</div>")
         board = ("<div style='display:flex;gap:14px;overflow-x:auto;padding-bottom:6px'>"
                  + "".join(cols) + "</div>")
 
