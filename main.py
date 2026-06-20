@@ -1782,6 +1782,84 @@ def _acting_bar(request: Request, db, back: str) -> str:
         "<noscript><button>OK</button></noscript></form>")
 
 
+def _relance_table(db, now, nxt: str = "/admin/cases?status=relance") -> str:
+    """The 'À relancer' queue: in-progress dossiers whose proactive follow-up is
+    due, most overdue first, each with a 'Relancé ✓' action. Reused by the
+    Pipeline page and the relance route."""
+    rows = []
+    for c in due_follow_ups(db, now=now):
+        t = c.trip or {}
+        name = escape(str(t.get("customer_name") or "Client inconnu"))
+        where = escape(str(t.get("hotel_name_raw") or t.get("destination") or "—"))
+        due = c.next_follow_up_at
+        dd = (now - due).days if due else 0
+        if dd <= 0:
+            retard = "<span class='muted'>aujourd'hui</span>"
+        elif dd == 1:
+            retard = "<b style='color:var(--gold)'>1 jour</b>"
+        else:
+            retard = f"<b style='color:var(--gold)'>{dd} jours</b>"
+        risk = ("<span class='tag' style='background:rgba(255,90,90,.18);"
+                "color:#ff9b9b;margin-left:6px'>à risque</span>"
+                if is_stale_quoted(c, now) else "")
+        owner = escape(c.owner.initials or c.owner.name) if c.owner else "—"
+        btn = (f"<form method='post' action='/admin/cases/{c.id}/relance' "
+               "style='margin:0;display:inline'>"
+               f"<input type='hidden' name='next' value=\"{nxt}\">"
+               "<button class='btn-ghost' title='Marquer comme relancé · reprogramme "
+               "le prochain suivi à +2 jours ouvrables'>Relancé ✓</button></form>")
+        rows.append(
+            f"<tr data-href='/admin/cases/{c.id}'>"
+            f"<td><a href='/admin/cases/{c.id}'>#{c.id}</a></td>"
+            f"<td><b>{name}</b>{risk}</td>"
+            f"<td><span class='tag {c.status}'>{c.status}</span></td>"
+            f"<td>{where}</td><td>{retard}</td><td class='muted'>{owner}</td>"
+            f"<td onclick='event.stopPropagation()'>{btn} "
+            f"<a class='btn-ghost' href='/admin/cases/{c.id}'>Ouvrir</a></td></tr>")
+    empty = ("<tr><td colspan='7' class='muted'>Aucune relance due pour le moment. "
+             "🎉</td></tr>")
+    return ("<table><tr><th>#</th><th>Client</th><th>Statut</th><th>Hôtel / Dest.</th>"
+            "<th>En retard</th><th>Resp.</th><th>Action</th></tr>"
+            + ("".join(rows) or empty) + "</table>")
+
+
+def _pool_table(db, now, nxt: str = "/admin/cases?status=unclaimed") -> str:
+    """The 'Dossier à réclamer' pool: in-progress dossiers with no owner, each
+    with a 'Réclamer' action (claims as the acting staff). Reused by the Pipeline
+    page and the unclaimed tab."""
+    rows = []
+    for c in unclaimed_cases(db):
+        t = c.trip or {}
+        name = escape(str(t.get("customer_name") or "Client inconnu"))
+        where = escape(str(t.get("hotel_name_raw") or t.get("destination") or "—"))
+        due = c.next_follow_up_at
+        if due and due <= now:
+            dd = (now - due).days
+            retard = ("<b style='color:var(--gold)'>"
+                      + ("aujourd'hui" if dd <= 0 else f"{dd}\u00a0j") + "</b>")
+        elif due:
+            retard = f"<span class='muted'>{due:%Y-%m-%d}</span>"
+        else:
+            retard = "<span class='muted'>—</span>"
+        risk = (" <span class='tag' style='background:rgba(255,90,90,.18);"
+                "color:#ff9b9b'>à risque</span>" if is_stale_quoted(c, now) else "")
+        btn = (f"<form method='post' action='/admin/cases/{c.id}/claim' "
+               "style='margin:0;display:inline'>"
+               f"<input type='hidden' name='next' value=\"{nxt}\">"
+               "<button title='Réclamer ce dossier'>Réclamer</button></form>")
+        rows.append(
+            f"<tr data-href='/admin/cases/{c.id}'>"
+            f"<td><a href='/admin/cases/{c.id}'>#{c.id}</a></td>"
+            f"<td><b>{name}</b>{risk}</td>"
+            f"<td><span class='tag {c.status}'>{c.status}</span></td>"
+            f"<td>{where}</td><td>{retard}</td>"
+            f"<td onclick='event.stopPropagation()'>{btn} "
+            f"<a class='btn-ghost' href='/admin/cases/{c.id}'>Ouvrir</a></td></tr>")
+    empty = "<tr><td colspan='6' class='muted'>Aucun dossier à réclamer. 🎉</td></tr>"
+    return ("<table><tr><th>#</th><th>Client</th><th>Statut</th><th>Hôtel / Dest.</th>"
+            "<th>Suivi</th><th>Action</th></tr>" + ("".join(rows) or empty) + "</table>")
+
+
 def _nav_html(active: str = "") -> str:
     """Top navigation row, travel-domain sections, with a live count on the
     new-requests queue."""
@@ -1789,22 +1867,20 @@ def _nav_html(active: str = "") -> str:
         n_new = db.query(Case).filter(Case.kind == "trip", Case.status == "new").count()
         n_svc = db.query(Case).filter(Case.kind == "support", Case.awaiting_reply.is_(True),
                                       Case.status.notin_(("closed", "resolved"))).count()
-        n_relance = len(due_follow_ups(db))
         n_unclaimed = count_unclaimed(db)
     items = [
+        ("reports", "Pipeline", "/admin/reports", None),
+        ("unclaimed", "Dossier à réclamer", "/admin/cases?status=unclaimed", n_unclaimed),
         ("queue", "Nouvelle demande de voyage", "/admin/cases?status=new", n_new),
         ("queue_service", "Nouvelle demande de service client",
          "/admin/cases?status=service", n_svc),
-        ("relance", "À relancer", "/admin/cases?status=relance", n_relance),
         ("mine", "Mes dossiers", "/admin/cases?status=mine", None),
-        ("unclaimed", "À réclamer", "/admin/cases?status=unclaimed", n_unclaimed),
         ("cases", "Demandes", "/admin/cases", None),
         ("clients", "Clients", "/admin/clients", None),
         ("traveling", "Clients en voyage", "/admin/cases?status=booked", None),
         ("completed", "Voyages complétés", "/admin/cases?status=closed", None),
         ("health", "System Health", "/admin/system", None),
         ("config", "System Config", "/admin/config", None),
-        ("reports", "Pipeline", "/admin/reports", None),
     ]
     out = []
     for key, label, href, badge in items:
@@ -1891,14 +1967,14 @@ _LOGIN_ERR = "<div class='err'>Identifiant ou mot de passe invalide.</div>"
 @app.get("/admin")
 def admin_root(request: Request):
     if request.session.get("admin"):
-        return RedirectResponse("/admin/cases", status_code=303)
+        return RedirectResponse("/admin/reports", status_code=303)
     return RedirectResponse("/admin/login", status_code=303)
 
 
 @app.get("/admin/login", response_class=HTMLResponse)
 def admin_login_form(request: Request, error: int = 0):
     if request.session.get("admin"):
-        return RedirectResponse("/admin/cases", status_code=303)
+        return RedirectResponse("/admin/reports", status_code=303)
     return _LOGIN_PAGE.format(error=_LOGIN_ERR if error else "")
 
 
@@ -1907,7 +1983,7 @@ def admin_login(request: Request, username: str = Form(""), password: str = Form
     if check_credentials(username, password):
         request.session["admin"] = True
         request.session["user"] = username
-        return RedirectResponse("/admin/cases", status_code=303)
+        return RedirectResponse("/admin/reports", status_code=303)
     return RedirectResponse("/admin/login?error=1", status_code=303)
 
 
@@ -2088,81 +2164,46 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
                 + table_html + "".join(modals) + js)
         return render_page(body, nav_active)
 
-    # "À relancer": in-progress dossiers whose proactive follow-up is due, most
-    # overdue first — the admin's daily action list to push leads toward booked.
+    # "À relancer": in-progress dossiers whose follow-up is due. No longer a nav
+    # tab (it lives on the Pipeline page) but still reachable via the 'Relances
+    # en retard' KPI tile.
     if nav_active == "relance":
         now = datetime.utcnow()
         with SessionLocal() as db:
-            cases = due_follow_ups(db, now=now)
             nxt = "/admin/cases?status=relance"
-            rows = []
-            for c in cases:
-                t = c.trip or {}
-                name = escape(str(t.get("customer_name") or "Client inconnu"))
-                where = escape(str(t.get("hotel_name_raw") or t.get("destination") or "—"))
-                due = c.next_follow_up_at
-                delta_days = (now - due).days if due else 0
-                if delta_days <= 0:
-                    retard = "<span class='muted'>aujourd'hui</span>"
-                elif delta_days == 1:
-                    retard = "<b style='color:var(--gold)'>1 jour</b>"
-                else:
-                    retard = f"<b style='color:var(--gold)'>{delta_days} jours</b>"
-                risk = ("<span class='tag' style='background:rgba(255,90,90,.18);"
-                        "color:#ff9b9b;margin-left:6px'>à risque</span>"
-                        if is_stale_quoted(c, now) else "")
-                owner = escape(c.owner.initials or c.owner.name) if c.owner else "—"
-                relance_btn = (
-                    f"<form method='post' action='/admin/cases/{c.id}/relance' "
-                    "style='margin:0;display:inline'>"
-                    f"<input type='hidden' name='next' value=\"{nxt}\">"
-                    "<button class='btn-ghost' title='Marquer comme relancé · "
-                    "reprogramme le prochain suivi à +2 jours ouvrables'>Relancé ✓</button></form>")
-                rows.append(
-                    f"<tr data-href='/admin/cases/{c.id}'>"
-                    f"<td><a href='/admin/cases/{c.id}'>#{c.id}</a></td>"
-                    f"<td><b>{name}</b>{risk}</td>"
-                    f"<td><span class='tag {c.status}'>{c.status}</span></td>"
-                    f"<td>{where}</td>"
-                    f"<td>{retard}</td>"
-                    f"<td class='muted'>{owner}</td>"
-                    f"<td onclick='event.stopPropagation()'>{relance_btn} "
-                    f"<a class='btn-ghost' href='/admin/cases/{c.id}'>Ouvrir</a></td></tr>")
-            empty = ("<tr><td colspan='7' class='muted'>Aucune relance due pour le "
-                     "moment. 🎉</td></tr>")
-            table_html = ("<table><tr><th>#</th><th>Client</th><th>Statut</th>"
-                          "<th>Hôtel / Dest.</th><th>En retard</th><th>Resp.</th>"
-                          "<th>Action</th></tr>" + ("".join(rows) or empty) + "</table>")
             intro = ("<p class='muted' style='margin:-6px 0 14px'>Dossiers en cours "
                      "dont le suivi proactif est dû, du plus en retard au moins. "
                      "« Relancé&nbsp;✓ » reprogramme le prochain suivi à +2 jours "
                      "ouvrables et efface le drapeau « à risque ».</p>")
-            body = page_header("À relancer", nxt) + intro + table_html
+            body = page_header("À relancer", nxt) + intro + _relance_table(db, now, nxt)
         return render_page(body, "relance")
 
-    # "Mes dossiers" / "À réclamer": ownership lenses (Phase 2). Both list
-    # in-progress trip dossiers — 'mine' = owned by the acting staff, 'unclaimed'
-    # = the shared pool waiting for someone to pick them up.
-    if nav_active in ("mine", "unclaimed"):
+    # "Dossier à réclamer": the shared pool of unowned in-progress dossiers.
+    if nav_active == "unclaimed":
+        now = datetime.utcnow()
+        with SessionLocal() as db:
+            base = "/admin/cases?status=unclaimed"
+            acting = _acting_bar(request, db, base)
+            intro = ("<p class='muted' style='margin:6px 0 14px'>Dossiers en cours "
+                     "sans responsable. « Réclamer » te les attribue "
+                     "(staff sélectionné ci-dessus).</p>")
+            body = (page_header("Dossier à réclamer", base) + acting + intro
+                    + _pool_table(db, now, base))
+        return render_page(body, "unclaimed")
+
+    # "Mes dossiers": in-progress dossiers owned by the acting staff member,
+    # follow-up most overdue first, with inline reassignment.
+    if nav_active == "mine":
         now = datetime.utcnow()
         with SessionLocal() as db:
             me = current_staff(request, db)
             staff = active_staff(db)
-            if nav_active == "mine":
-                title = "Mes dossiers"
-                base = "/admin/cases?status=mine"
-                cases = cases_for_owner(db, me.id) if me else []
-                intro = ("<p class='muted' style='margin:6px 0 14px'>Tes dossiers en "
-                         "cours, suivi le plus en retard en haut. Réassigne-en un pour "
-                         "le passer à un collègue ou le remettre au pool.</p>")
-            else:
-                title = "À réclamer"
-                base = "/admin/cases?status=unclaimed"
-                cases = unclaimed_cases(db)
-                intro = ("<p class='muted' style='margin:6px 0 14px'>Dossiers en cours "
-                         "sans responsable. « Réclamer » te les attribue "
-                         "(staff sélectionné ci-dessus).</p>")
+            base = "/admin/cases?status=mine"
+            cases = cases_for_owner(db, me.id) if me else []
             acting = _acting_bar(request, db, base)
+            intro = ("<p class='muted' style='margin:6px 0 14px'>Tes dossiers en "
+                     "cours, suivi le plus en retard en haut. Réassigne-en un pour "
+                     "le passer à un collègue ou le remettre au pool.</p>")
             rows = []
             for c in cases:
                 t = c.trip or {}
@@ -2179,46 +2220,31 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
                     retard = "<span class='muted'>—</span>"
                 risk = (" <span class='tag' style='background:rgba(255,90,90,.18);"
                         "color:#ff9b9b'>à risque</span>" if is_stale_quoted(c, now) else "")
-                if nav_active == "unclaimed":
-                    owner_lbl = (escape(c.owner.name) if c.owner
-                                 else "<span class='muted'>—</span>")
-                    action = (
-                        f"<form method='post' action='/admin/cases/{c.id}/claim' "
-                        "style='margin:0;display:inline'>"
-                        f"<input type='hidden' name='next' value=\"{base}\">"
-                        "<button title='Réclamer ce dossier'>Réclamer</button></form>")
-                else:
-                    sel = "".join(
-                        f"<option value='{s.id}'{' selected' if c.owner_id == s.id else ''}>"
-                        f"{escape(s.name)}</option>" for s in staff)
-                    action = (
-                        f"<form method='post' action='/admin/cases/{c.id}/assign' "
-                        "style='margin:0;display:inline-flex;gap:6px'>"
-                        f"<input type='hidden' name='next' value=\"{base}\">"
-                        "<select name='staff_id'><option value=''>— remettre au pool —"
-                        f"</option>{sel}</select>"
-                        "<button class='btn-ghost'>Réassigner</button></form>")
+                sel = "".join(
+                    f"<option value='{s.id}'{' selected' if c.owner_id == s.id else ''}>"
+                    f"{escape(s.name)}</option>" for s in staff)
+                action = (
+                    f"<form method='post' action='/admin/cases/{c.id}/assign' "
+                    "style='margin:0;display:inline-flex;gap:6px'>"
+                    f"<input type='hidden' name='next' value=\"{base}\">"
+                    "<select name='staff_id'><option value=''>— remettre au pool —"
+                    f"</option>{sel}</select>"
+                    "<button class='btn-ghost'>Réassigner</button></form>")
                 rows.append(
                     f"<tr data-href='/admin/cases/{c.id}'>"
                     f"<td><a href='/admin/cases/{c.id}'>#{c.id}</a></td>"
                     f"<td><b>{name}</b>{risk}</td>"
                     f"<td><span class='tag {c.status}'>{c.status}</span></td>"
-                    f"<td>{where}</td>"
-                    f"<td>{retard}</td>"
-                    + (f"<td class='muted'>{owner_lbl}</td>" if nav_active == "unclaimed" else "")
-                    + f"<td onclick='event.stopPropagation()'>{action} "
+                    f"<td>{where}</td><td>{retard}</td>"
+                    f"<td onclick='event.stopPropagation()'>{action} "
                     f"<a class='btn-ghost' href='/admin/cases/{c.id}'>Ouvrir</a></td></tr>")
-            head = ("<th>#</th><th>Client</th><th>Statut</th><th>Hôtel / Dest.</th>"
-                    "<th>Suivi</th>"
-                    + ("<th>Resp.</th>" if nav_active == "unclaimed" else "")
-                    + "<th>Action</th>")
-            ncol = 7 if nav_active == "unclaimed" else 6
-            empty_msg = ("Tu n'as aucun dossier en cours. 🎉" if nav_active == "mine"
-                         else "Aucun dossier à réclamer. 🎉")
-            empty = f"<tr><td colspan='{ncol}' class='muted'>{empty_msg}</td></tr>"
-            table_html = f"<table><tr>{head}</tr>" + ("".join(rows) or empty) + "</table>"
-            body = page_header(title, base) + acting + intro + table_html
-        return render_page(body, nav_active)
+            empty = ("<tr><td colspan='6' class='muted'>Tu n'as aucun dossier en "
+                     "cours. 🎉</td></tr>")
+            table_html = ("<table><tr><th>#</th><th>Client</th><th>Statut</th>"
+                          "<th>Hôtel / Dest.</th><th>Suivi</th><th>Action</th></tr>"
+                          + ("".join(rows) or empty) + "</table>")
+            body = page_header("Mes dossiers", base) + acting + intro + table_html
+        return render_page(body, "mine")
 
     # Focused travel sections (trip only) — rows expand into the full card.
     if nav_active in ("queue", "traveling", "completed"):
@@ -2949,9 +2975,23 @@ def admin_reports():
         else:
             leaderboard = ""
 
+        # Merged queues on the command center: relance then pool, under the board.
+        relance_section = (
+            "<h3 style='margin:24px 0 4px'>À relancer</h3>"
+            "<p class='muted' style='margin:0 0 12px;font-size:13px'>Suivis dus, du "
+            "plus en retard au moins. « Relancé&nbsp;✓ » reprogramme à +2 jours "
+            "ouvrables et efface le drapeau « à risque ».</p>"
+            + _relance_table(db, now))
+        pool_section = (
+            "<h3 style='margin:24px 0 4px'>Dossier à réclamer</h3>"
+            "<p class='muted' style='margin:0 0 12px;font-size:13px'>Dossiers en cours "
+            "sans responsable. « Réclamer » te l'attribue (staff courant).</p>"
+            + _pool_table(db, now))
+
     body = (page_header("Pipeline & performance", "/admin/reports")
             + kpis
             + "<h3 style='margin:4px 0 12px'>Board pipeline</h3>" + board
+            + relance_section + pool_section
             + leaderboard)
     return render_page(body, "reports")
 
