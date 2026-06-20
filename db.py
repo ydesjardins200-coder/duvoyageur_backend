@@ -228,6 +228,7 @@ def init_db() -> None:
     _backfill_clients()
     _seed_staff()
     _backfill_last_activity()
+    _backfill_follow_ups()
 
 
 def _ensure_columns() -> None:
@@ -379,6 +380,24 @@ def _backfill_last_activity() -> None:
                 "created_at) WHERE last_activity_at IS NULL"))
 
 
+def _backfill_follow_ups() -> None:
+    """One-time: give existing in-progress trip dossiers (needs_info/quoted) with
+    no follow-up date one, derived from their last activity, so the 'À relancer'
+    queue is populated from day one rather than only on future transitions.
+    Idempotent: only fills rows where next_follow_up_at IS NULL."""
+    with SessionLocal() as s:
+        rows = (s.query(Case)
+                .filter(Case.kind == "trip",
+                        Case.status.in_(("needs_info", "quoted")),
+                        Case.next_follow_up_at.is_(None))
+                .all())
+        for c in rows:
+            base = c.last_activity_at or c.created_at or datetime.utcnow()
+            schedule_follow_up(c, from_dt=base)
+        if rows:
+            s.commit()
+
+
 # Statuses that mean "this request is still in progress" — new messages from the
 # same sender merge into it. Once quoted/booked/closed, the next message is a
 # fresh trip request.
@@ -425,6 +444,77 @@ def find_open_request_for_client(db, client_id: Optional[int], within_days: int 
         .order_by(Case.created_at.desc())
         .first()
     )
+
+
+# --------------------------------------------------------------------------- #
+# Follow-up & activity helpers (Phase 1)
+# --------------------------------------------------------------------------- #
+
+# Default delay before the next proactive touch when a case needs follow-up.
+DEFAULT_FOLLOW_UP_DAYS = 2
+# A quoted dossier with no activity for this many days is flagged "à risque".
+STALE_QUOTED_DAYS = 3
+# Statuses that still need active follow-up to move toward booked.
+FOLLOW_UP_STATUSES = ("new", "needs_info", "quoted")
+
+
+def add_business_days(start: datetime, days: int) -> datetime:
+    """start + N business days (skips Sat/Sun); keeps the time-of-day."""
+    d, added = start, 0
+    while added < days:
+        d = d + timedelta(days=1)
+        if d.weekday() < 5:   # Mon..Fri
+            added += 1
+    return d
+
+
+def schedule_follow_up(case: "Case", days: int = DEFAULT_FOLLOW_UP_DAYS,
+                       from_dt: Optional[datetime] = None) -> None:
+    """Set the next proactive-touch date on a case (business-day aware)."""
+    case.next_follow_up_at = add_business_days(from_dt or datetime.utcnow(), days)
+
+
+def touch_activity(case: "Case", when: Optional[datetime] = None) -> None:
+    """Mark that something just happened on this dossier (drives staleness)."""
+    case.last_activity_at = when or datetime.utcnow()
+
+
+def is_stale_quoted(case: "Case", now: Optional[datetime] = None) -> bool:
+    """A quoted dossier that hasn't moved in STALE_QUOTED_DAYS — a cooling lead."""
+    if case.status != "quoted" or not case.last_activity_at:
+        return False
+    return (now or datetime.utcnow()) - case.last_activity_at >= timedelta(days=STALE_QUOTED_DAYS)
+
+
+def due_follow_ups(db, now: Optional[datetime] = None, owner_id: Optional[int] = None):
+    """In-progress trip dossiers whose follow-up is due (next_follow_up_at <= now),
+    most overdue first. Optionally scoped to one owner. Excludes booked/closed
+    and support cases."""
+    now = now or datetime.utcnow()
+    q = (db.query(Case)
+         .filter(Case.kind == "trip",
+                 Case.status.in_(FOLLOW_UP_STATUSES),
+                 Case.next_follow_up_at.isnot(None),
+                 Case.next_follow_up_at <= now))
+    if owner_id is not None:
+        q = q.filter(Case.owner_id == owner_id)
+    return q.order_by(Case.next_follow_up_at.asc()).all()
+
+
+def mark_follow_up_for_status(case: "Case", status: str,
+                              now: Optional[datetime] = None) -> None:
+    """Apply Phase-1 pipeline signals for the status a case just entered.
+    Call right after setting the new status. Stamps activity, schedules the next
+    proactive touch for statuses that need follow-up (needs_info/quoted), and
+    clears it for terminal statuses (booked/closed). 'new' gets no follow-up
+    date on purpose — fresh cases live in the 'À répondre' inbox, not the
+    follow-up queue."""
+    now = now or datetime.utcnow()
+    touch_activity(case, now)
+    if status in ("needs_info", "quoted"):
+        schedule_follow_up(case, from_dt=now)
+    elif status in ("booked", "closed"):
+        case.next_follow_up_at = None
 
 
 # --------------------------------------------------------------------------- #

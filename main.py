@@ -52,7 +52,9 @@ from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLoca
                 add_identity, find_client_by_identity, find_duplicate_groups,
                 find_open_case_for_sender, find_open_request_for_client, init_db, log_activity,
                 merge_clients, normalize_email, normalize_phone, push_notification,
-                replace_primary_identity, resolve_or_create_client, SUPPORT_STATUSES)
+                replace_primary_identity, resolve_or_create_client, SUPPORT_STATUSES,
+                Staff, FOLLOW_UP_STATUSES, due_follow_ups, is_stale_quoted,
+                mark_follow_up_for_status, schedule_follow_up, touch_activity)
 from facebook import (extract_messages, extract_postbacks, extract_quick_replies,
                       get_user_name, send_quick_replies, send_text, set_ice_breakers,
                       set_messenger_profile, set_persistent_menu, valid_signature,
@@ -567,6 +569,7 @@ def process_messenger_message(sender: str | None, text: str, image_urls: list[st
                 existing.customer_email = trip.customer_email or existing.customer_email
                 existing.customer_phone = trip.customer_phone or existing.customer_phone
                 existing.status = "needs_info" if trip.needs_clarification else "new"
+                mark_follow_up_for_status(existing, existing.status)
                 if shots:                               # accumulate screenshots
                     existing.screenshots = (existing.screenshots or []) + shots
             existing.awaiting_reply = True              # client wrote -> our move
@@ -1752,10 +1755,12 @@ def _nav_html(active: str = "") -> str:
         n_new = db.query(Case).filter(Case.kind == "trip", Case.status == "new").count()
         n_svc = db.query(Case).filter(Case.kind == "support", Case.awaiting_reply.is_(True),
                                       Case.status.notin_(("closed", "resolved"))).count()
+        n_relance = len(due_follow_ups(db))
     items = [
         ("queue", "Nouvelle demande de voyage", "/admin/cases?status=new", n_new),
         ("queue_service", "Nouvelle demande de service client",
          "/admin/cases?status=service", n_svc),
+        ("relance", "À relancer", "/admin/cases?status=relance", n_relance),
         ("cases", "Demandes", "/admin/cases", None),
         ("clients", "Clients", "/admin/clients", None),
         ("traveling", "Clients en voyage", "/admin/cases?status=booked", None),
@@ -1881,7 +1886,7 @@ def admin_cases(status: str = "all", view: str = "voyage",
                 sort: str = "recu", dir: str = "desc"):
     # Top-nav travel sections (status filters, trip only).
     SECTION = {"new": "queue", "service": "queue_service",
-               "booked": "traveling", "closed": "completed"}
+               "booked": "traveling", "closed": "completed", "relance": "relance"}
     SEC_TITLE = {"queue": "Nouvelle demande de voyage",
                  "queue_service": "Nouvelle demande de service client",
                  "traveling": "Clients en voyage", "completed": "Voyages complétés"}
@@ -2044,6 +2049,58 @@ def admin_cases(status: str = "all", view: str = "voyage",
         body = (page_header(SEC_TITLE[nav_active], nxt)
                 + table_html + "".join(modals) + js)
         return render_page(body, nav_active)
+
+    # "À relancer": in-progress dossiers whose proactive follow-up is due, most
+    # overdue first — the admin's daily action list to push leads toward booked.
+    if nav_active == "relance":
+        now = datetime.utcnow()
+        with SessionLocal() as db:
+            cases = due_follow_ups(db, now=now)
+            nxt = "/admin/cases?status=relance"
+            rows = []
+            for c in cases:
+                t = c.trip or {}
+                name = escape(str(t.get("customer_name") or "Client inconnu"))
+                where = escape(str(t.get("hotel_name_raw") or t.get("destination") or "—"))
+                due = c.next_follow_up_at
+                delta_days = (now - due).days if due else 0
+                if delta_days <= 0:
+                    retard = "<span class='muted'>aujourd'hui</span>"
+                elif delta_days == 1:
+                    retard = "<b style='color:var(--gold)'>1 jour</b>"
+                else:
+                    retard = f"<b style='color:var(--gold)'>{delta_days} jours</b>"
+                risk = ("<span class='tag' style='background:rgba(255,90,90,.18);"
+                        "color:#ff9b9b;margin-left:6px'>à risque</span>"
+                        if is_stale_quoted(c, now) else "")
+                owner = escape(c.owner.initials or c.owner.name) if c.owner else "—"
+                relance_btn = (
+                    f"<form method='post' action='/admin/cases/{c.id}/relance' "
+                    "style='margin:0;display:inline'>"
+                    f"<input type='hidden' name='next' value=\"{nxt}\">"
+                    "<button class='btn-ghost' title='Marquer comme relancé · "
+                    "reprogramme le prochain suivi à +2 jours ouvrables'>Relancé ✓</button></form>")
+                rows.append(
+                    f"<tr data-href='/admin/cases/{c.id}'>"
+                    f"<td><a href='/admin/cases/{c.id}'>#{c.id}</a></td>"
+                    f"<td><b>{name}</b>{risk}</td>"
+                    f"<td><span class='tag {c.status}'>{c.status}</span></td>"
+                    f"<td>{where}</td>"
+                    f"<td>{retard}</td>"
+                    f"<td class='muted'>{owner}</td>"
+                    f"<td onclick='event.stopPropagation()'>{relance_btn} "
+                    f"<a class='btn-ghost' href='/admin/cases/{c.id}'>Ouvrir</a></td></tr>")
+            empty = ("<tr><td colspan='7' class='muted'>Aucune relance due pour le "
+                     "moment. 🎉</td></tr>")
+            table_html = ("<table><tr><th>#</th><th>Client</th><th>Statut</th>"
+                          "<th>Hôtel / Dest.</th><th>En retard</th><th>Resp.</th>"
+                          "<th>Action</th></tr>" + ("".join(rows) or empty) + "</table>")
+            intro = ("<p class='muted' style='margin:-6px 0 14px'>Dossiers en cours "
+                     "dont le suivi proactif est dû, du plus en retard au moins. "
+                     "« Relancé&nbsp;✓ » reprogramme le prochain suivi à +2 jours "
+                     "ouvrables et efface le drapeau « à risque ».</p>")
+            body = page_header("À relancer", nxt) + intro + table_html
+        return render_page(body, "relance")
 
     # Focused travel sections (trip only) — rows expand into the full card.
     if nav_active in ("queue", "traveling", "completed"):
@@ -2989,6 +3046,7 @@ async def admin_update_status(case_id: int, request: Request):
             log_activity(db, c.client_id, "status_change",
                          f"Statut : {c.status} → {new_status}", c.id)
             c.status = new_status
+            mark_follow_up_for_status(c, new_status)    # follow-up + activity
             c.awaiting_reply = False                    # we triaged it
             if new_status == "booked":                  # capture flight dates from the trip
                 if ref_in:
@@ -3024,6 +3082,7 @@ async def admin_case_quote(case_id: int, request: Request):
                 log_activity(db, c.client_id, "status_change",
                              f"Statut : {c.status} → quoted", c.id)
                 c.status = "quoted"
+                mark_follow_up_for_status(c, "quoted")  # schedule first relance
                 _notify_trip_status(db, c, "quoted")
             log_activity(db, c.client_id, "note",
                          "Quote déposée" if c.quote_url else "Quote retirée", c.id)
@@ -3042,6 +3101,26 @@ async def admin_case_quote(case_id: int, request: Request):
             _dispatch_quote_notification(notify)
         except Exception as e:  # noqa: BLE001 — never break the save over a send
             log.exception("Quote notification failed for case #%s: %s", case_id, e)
+    if not nxt.startswith("/admin/"):
+        nxt = f"/admin/cases/{case_id}"
+    return RedirectResponse(nxt, status_code=303)
+
+
+@app.post("/admin/cases/{case_id}/relance", dependencies=[Depends(require_admin)])
+async def admin_case_relance(case_id: int, request: Request):
+    """Mark a follow-up as done: push the next proactive-touch date forward,
+    stamp activity (which clears the 'à risque' staleness flag) and log it to the
+    client timeline. Used from the 'À relancer' queue and the dossier page."""
+    form = await request.form()
+    nxt = form.get("next") or f"/admin/cases/{case_id}"
+    with SessionLocal() as db:
+        c = db.get(Case, case_id)
+        if c and c.kind == "trip" and c.status in FOLLOW_UP_STATUSES:
+            schedule_follow_up(c)              # next touch in +N business days
+            touch_activity(c)                  # resets staleness clock
+            log_activity(db, c.client_id, "follow_up",
+                         "Relance effectuée — prochain suivi reprogrammé", c.id)
+            db.commit()
     if not nxt.startswith("/admin/"):
         nxt = f"/admin/cases/{case_id}"
     return RedirectResponse(nxt, status_code=303)
@@ -3066,6 +3145,7 @@ async def admin_case_book(case_id: int, request: Request):
                 log_activity(db, c.client_id, "status_change",
                              f"Statut : {c.status} → booked", c.id)
                 c.status = "booked"
+                mark_follow_up_for_status(c, "booked")  # clear relance, stamp activity
                 c.awaiting_reply = False
                 tt = c.trip or {}
                 c.flight_depart = c.flight_depart or tt.get("departure_date")

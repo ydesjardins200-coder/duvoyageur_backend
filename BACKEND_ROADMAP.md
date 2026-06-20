@@ -24,25 +24,25 @@ le même schéma. Quand les logins individuels arrivent, `owner_id` passe de
 ## Phases
 
 ### Phase 0 — Fondations (schéma) — invisible, débloque tout
-- [ ] Table `staff` (name, initials, email, role admin/agent, active,
+- [x] Table `staff` (name, initials, email, role admin/agent, active,
       password_hash nullable pour Phase 4). Seedée avec l'admin actuel.
-- [ ] Colonnes `cases` : `owner_id` (FK staff, null = pool partagé),
+- [x] Colonnes `cases` : `owner_id` (FK staff, null = pool partagé),
       `next_follow_up_at`, `last_activity_at`.
-- [ ] `last_activity_at` backfillé depuis la timeline `Interaction`
+- [x] `last_activity_at` backfillé depuis la timeline `Interaction`
       (fallback created_at).
-- [ ] Migration via le pattern `ADD COLUMN IF NOT EXISTS` (PG) / PRAGMA (SQLite).
-- [ ] Étendre `ACTIVITY_KINDS` : `follow_up`, `claim`, `assign`.
+- [x] Migration via le pattern `ADD COLUMN IF NOT EXISTS` (PG) / PRAGMA (SQLite).
+- [x] Étendre `ACTIVITY_KINDS` : `follow_up`, `claim`, `assign`.
 - Additif et rétrocompatible : colonnes nullables, nouvelle table → safe à
   pousser même si non encore utilisé par l'UI.
 
 ### Phase 1 — Moteur de relance ("À relancer") — le plus gros levier
-- [ ] Au passage à `needs_info`/`quoted` : fixer `next_follow_up_at` par défaut
+- [x] Au passage à `needs_info`/`quoted` : fixer `next_follow_up_at` par défaut
       (+2 jours ouvrables, éditable).
-- [ ] Vue "À relancer" : dossiers en cours dont la relance est due,
+- [x] Vue "À relancer" : dossiers en cours dont la relance est due,
       triés par retard, owner affiché.
-- [ ] Action "Relancé" → repousse la date + log `follow_up` dans la timeline.
-- [ ] Flag "à risque" si un quoted dort depuis N jours sans activité.
-- [ ] `last_activity_at` mis à jour à chaque event.
+- [x] Action "Relancé" → repousse la date + log `follow_up` dans la timeline.
+- [x] Flag "à risque" si un quoted dort depuis N jours sans activité.
+- [x] `last_activity_at` mis à jour à chaque event.
 
 ### Phase 2 — Ownership (modèle "Réclamer")
 - [ ] Bouton "Réclamer" → set `owner_id`.
