@@ -1899,7 +1899,7 @@ def _nav_html(active: str = "") -> str:
     items = [
         ("reports", "Pipeline", "/admin/reports", None),
         ("unclaimed", "Dossier à réclamer", "/admin/cases?status=unclaimed", n_unclaimed),
-        ("queue_service", "Nouvelle demande de service client",
+        ("queue_service", "Service client et relances",
          "/admin/cases?status=service", n_svc),
         ("mine", "Mes dossiers", "/admin/cases?status=mine", None),
         ("cases", "Demandes", "/admin/cases", None),
@@ -2023,7 +2023,7 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
     # Top-nav travel sections (status filters, trip only).
     SECTION = {"service": "queue_service", "relance": "relance",
                "mine": "mine", "unclaimed": "unclaimed"}
-    SEC_TITLE = {"queue_service": "Nouvelle demande de service client"}
+    SEC_TITLE = {"queue_service": "Service client et relances"}
     nav_active = SECTION.get(status, "cases")
 
     def next_step(c) -> str:
