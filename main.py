@@ -3356,7 +3356,8 @@ async def admin_update_status(case_id: int, request: Request):
             # Client portal notification.
             if c.kind == "support" and new_status == "resolved":
                 push_notification(db, c.client_id,
-                                  "Ta demande de service a été traitée ✓", "/portail/service")
+                                  "Ta demande a été résolue ✓ — note notre service ⭐",
+                                  f"/portail/service#thread-{c.id}")
             elif c.kind == "trip":
                 _notify_trip_status(db, c, new_status)
             db.commit()
@@ -3721,7 +3722,7 @@ async def admin_case_send(case_id: int, request: Request):
                 if c.kind == "support":
                     push_notification(db, c.client_id,
                                       "Nouvelle réponse à ta demande d'aide 💬",
-                                      "/portail/service")
+                                      f"/portail/service#thread-{case_id}")
                 db.commit()
     if not nxt.startswith("/admin/"):
         nxt = f"/admin/cases/{case_id}"

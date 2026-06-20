@@ -683,6 +683,30 @@ def _msg_bubble(m) -> str:
             f"<div class='msg-b'>{escape(m.get('text') or '')}</div></div>")
 
 
+def _service_stars_form(c) -> str:
+    """Service feedback (1-5★) reusing Case.review. Shows the form once a request
+    is resolved and not yet rated, or the submitted rating afterwards."""
+    rev = c.review or {}
+    if rev.get("rating"):
+        n = int(rev["rating"])
+        stars = "★" * n + "☆" * (5 - n)
+        txt = escape(rev.get("text") or "")
+        body = f"<p class='rv-txt'>{txt}</p>" if txt else ""
+        return (f"<div class='rv'><div class='rv-head'>Ton évaluation "
+                f"<span class='rv-stars on'>{stars}</span></div>{body}</div>")
+    radios = "".join(
+        f"<input type='radio' id='sf{c.id}_{n}' name='rating' value='{n}' required>"
+        f"<label for='sf{c.id}_{n}' title='{n}/5'>★</label>"
+        for n in range(5, 0, -1))
+    return (
+        f"<form class='rv rvform' method='post' action='/portail/service/{c.id}/feedback'>"
+        "<div class='rv-head'>Comment évalues-tu notre service&nbsp;?</div>"
+        f"<div class='stars'>{radios}</div>"
+        "<textarea name='text' rows='2' placeholder='Un commentaire (optionnel)…'></textarea>"
+        "<button class='btn small' type='submit'>Envoyer mon évaluation</button>"
+        "</form>")
+
+
 def _service_threads(cases) -> str:
     threads = sorted([c for c in cases if (c.kind or "") == "support"],
                      key=lambda x: x.created_at or datetime.min, reverse=True)
@@ -698,11 +722,28 @@ def _service_threads(cases) -> str:
         label, cls = ("Résolue", "done") if resolved else ("En cours", "quote")
         bubbles = ("".join(_msg_bubble(m) for m in msgs)
                    or "<div class='muted'>Demande envoyée. On te répond bientôt.</div>")
+        if resolved:
+            foot = _service_stars_form(c)
+        else:
+            foot = (
+                f"<form class='svc-reply' method='post' action='/portail/service/{c.id}/repondre'>"
+                "<textarea name='message' rows='2' placeholder='Écris ta réponse…' "
+                "required></textarea>"
+                "<button class='btn small' type='submit'>Répondre</button></form>"
+                f"<form class='svc-resolve' method='post' "
+                f"action='/portail/service/{c.id}/resoudre'>"
+                "<button class='btn ghost small' type='submit'>Marquer comme résolue</button>"
+                "</form>")
         out.append(
-            "<details class='thread'><summary>"
+            f"<details class='thread' id='thread-{c.id}'><summary>"
             f"<span class='th-sum'>{preview}</span>"
             f"<span class='badge {cls}'>{label}</span></summary>"
-            f"<div class='msgs'>{bubbles}</div></details>")
+            f"<div class='msgs'>{bubbles}</div>{foot}</details>")
+    out.append(
+        "<script>(function(){var h=location.hash;"
+        "if(h&&h.indexOf('#thread-')===0){var d=document.getElementById(h.slice(1));"
+        "if(d){d.open=true;setTimeout(function(){d.scrollIntoView({block:'center'});},60);}}"
+        "})();</script>")
     return "".join(out)
 
 
@@ -1120,8 +1161,13 @@ def portal_service(request: Request, sent: int = 0):
     with SessionLocal() as db:
         client = db.get(Client, cid)
         cases = list(client.requests)
-        body = (("<div class='note ok'>Message envoyé ✓ — on te répond bientôt.</div>"
-                 if sent else "")
+        if sent == 2:
+            flash = "<div class='note ok'>Merci pour ton évaluation ✓</div>"
+        elif sent:
+            flash = "<div class='note ok'>Message envoyé ✓ — on te répond bientôt.</div>"
+        else:
+            flash = ""
+        body = (flash
                 + "<div class='hello'><h2>Demande de service</h2>"
                 "<p class='lede'>Une question, un changement, un pépin ? Écris-nous, "
                 "un conseiller te répond.</p></div>"
@@ -1179,6 +1225,76 @@ async def portal_service_save(request: Request):
         case.awaiting_reply = True
         db.commit()
     return RedirectResponse("/portail/service?sent=1", status_code=303)
+
+
+@router.post("/portail/service/{case_id}/repondre")
+async def portal_service_reply(case_id: int, request: Request):
+    """Client replies inside one specific support thread (reopens it if it had
+    been resolved) and flags it for our attention."""
+    cid, gate = _gate(request)
+    if gate:
+        return gate
+    form = await request.form()
+    message = (form.get("message") or "").strip()
+    if not message:
+        return RedirectResponse(f"/portail/service#thread-{case_id}", status_code=303)
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    with SessionLocal() as db:
+        case = db.get(Case, case_id)
+        if not case or case.client_id != cid or case.kind != "support":
+            return RedirectResponse("/portail/service", status_code=303)
+        if case.status == "resolved":            # replying reopens the request
+            case.status = "open"
+        case.messages = (case.messages or []) + [{"dir": "in", "text": message, "at": now}]
+        case.raw_message = (case.raw_message + "\n---\n" + message
+                            if case.raw_message else message)
+        case.awaiting_reply = True
+        log_activity(db, cid, "note", "Réponse du client (espace client)", case.id)
+        db.commit()
+    return RedirectResponse(f"/portail/service?sent=1#thread-{case_id}", status_code=303)
+
+
+@router.post("/portail/service/{case_id}/resoudre")
+async def portal_service_resolve(case_id: int, request: Request):
+    """Client marks their own support request as resolved."""
+    cid, gate = _gate(request)
+    if gate:
+        return gate
+    with SessionLocal() as db:
+        case = db.get(Case, case_id)
+        if not case or case.client_id != cid or case.kind != "support":
+            return RedirectResponse("/portail/service", status_code=303)
+        case.status = "resolved"
+        case.awaiting_reply = False
+        log_activity(db, cid, "status_change", "Demande résolue par le client", case.id)
+        db.commit()
+    return RedirectResponse(f"/portail/service#thread-{case_id}", status_code=303)
+
+
+@router.post("/portail/service/{case_id}/feedback")
+async def portal_service_feedback(case_id: int, request: Request):
+    """Client rates our service (1-5★) on a resolved support request. Stored in
+    Case.review, the same field trip reviews use."""
+    cid, gate = _gate(request)
+    if gate:
+        return gate
+    form = await request.form()
+    try:
+        rating = int((form.get("rating") or "").strip())
+    except ValueError:
+        rating = 0
+    text = (form.get("text") or "").strip()
+    if rating < 1 or rating > 5:
+        return RedirectResponse(f"/portail/service#thread-{case_id}", status_code=303)
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    with SessionLocal() as db:
+        case = db.get(Case, case_id)
+        if not case or case.client_id != cid or case.kind != "support":
+            return RedirectResponse("/portail/service", status_code=303)
+        case.review = {"rating": rating, "text": text[:1000], "at": now}
+        log_activity(db, cid, "note", f"Évaluation service {rating}/5 (espace client)", case.id)
+        db.commit()
+    return RedirectResponse(f"/portail/service?sent=2#thread-{case_id}", status_code=303)
 
 
 @router.get("/portail/logout")
@@ -1534,6 +1650,13 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
    border:1px solid rgba(61,240,197,.3);border-bottom-right-radius:5px}}
  .msg-who{{font-size:11px;color:var(--mist);margin-bottom:4px;font-family:"Space Grotesk",monospace}}
  .msg-b{{white-space:pre-wrap;word-break:break-word}}
+ .svc-reply{{padding:0 14px 6px;display:flex;flex-direction:column;gap:8px}}
+ .svc-reply textarea{{width:100%;font:inherit;font-size:16px;color:var(--foam);min-height:54px;
+   padding:10px 12px;border-radius:12px;border:1px solid var(--line);
+   background:rgba(8,33,47,.55);resize:vertical}}
+ .svc-reply textarea:focus{{outline:none;border-color:var(--pacific);box-shadow:0 0 0 3px rgba(25,211,230,.18)}}
+ .svc-reply .btn{{align-self:flex-start}}
+ .svc-resolve{{padding:0 14px 14px}}
  /* Pill nav */
  .pnav{{display:flex;gap:8px;overflow-x:auto;padding:12px 18px 0;max-width:980px;margin:0 auto;
    -webkit-overflow-scrolling:touch;scrollbar-width:none}}
