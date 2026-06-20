@@ -2180,8 +2180,15 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
               "function(m){m.classList.remove('open');});}"
               "document.addEventListener('click',function(e){if(e.target.classList&&"
               "e.target.classList.contains('modal-ov'))closeSvc();});</script>")
+        relance = (
+            "<h3 style='margin:28px 0 4px'>À relancer</h3>"
+            "<p class='muted' style='margin:0 0 12px;font-size:13px'>Dossiers de voyage "
+            "en cours dont le suivi proactif est dû, du plus en retard au moins. "
+            "« Relancé&nbsp;✓ » reprogramme le prochain suivi à +2 jours ouvrables et "
+            "efface le drapeau « à risque ».</p>"
+            + _relance_table(db, datetime.utcnow(), nxt))
         body = (page_header(SEC_TITLE[nav_active], nxt)
-                + table_html + "".join(modals) + js)
+                + table_html + "".join(modals) + js + relance)
         return render_page(body, nav_active)
 
     # "À relancer": in-progress dossiers whose follow-up is due. No longer a nav
@@ -2988,23 +2995,9 @@ def admin_reports():
         else:
             leaderboard = ""
 
-        # Merged queues on the command center: relance then pool, under the board.
-        relance_section = (
-            "<h3 style='margin:24px 0 4px'>À relancer</h3>"
-            "<p class='muted' style='margin:0 0 12px;font-size:13px'>Suivis dus, du "
-            "plus en retard au moins. « Relancé&nbsp;✓ » reprogramme à +2 jours "
-            "ouvrables et efface le drapeau « à risque ».</p>"
-            + _relance_table(db, now))
-        pool_section = (
-            "<h3 style='margin:24px 0 4px'>Dossier à réclamer</h3>"
-            "<p class='muted' style='margin:0 0 12px;font-size:13px'>Dossiers en cours "
-            "sans responsable. « Réclamer » te l'attribue (staff courant).</p>"
-            + _pool_table(db, now))
-
     body = (page_header("Pipeline & performance", "/admin/reports")
             + kpis
             + "<h3 style='margin:4px 0 12px'>Board pipeline</h3>" + board
-            + relance_section + pool_section
             + leaderboard)
     return render_page(body, "reports")
 
