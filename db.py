@@ -518,6 +518,53 @@ def mark_follow_up_for_status(case: "Case", status: str,
 
 
 # --------------------------------------------------------------------------- #
+# Ownership helpers (Phase 2) — who's on each dossier
+# --------------------------------------------------------------------------- #
+
+def active_staff(db):
+    """Active back-office members, for owner pickers and 'acting as' menus."""
+    return (db.query(Staff).filter(Staff.active.is_(True))
+            .order_by(Staff.name.asc()).all())
+
+
+def default_staff_id(db) -> Optional[int]:
+    """Fallback 'current' staff while the team shares one login: the first active
+    admin (Phase 4 replaces this with the authenticated session's staff)."""
+    s = (db.query(Staff).filter(Staff.active.is_(True))
+         .order_by(Staff.role.asc(), Staff.id.asc()).first())   # 'admin' < 'agent'
+    return s.id if s else None
+
+
+def unclaimed_cases(db):
+    """In-progress trip dossiers with no owner — the shared 'À réclamer' pool,
+    oldest first (the ones waiting longest to be picked up)."""
+    return (db.query(Case)
+            .filter(Case.kind == "trip",
+                    Case.status.in_(FOLLOW_UP_STATUSES),
+                    Case.owner_id.is_(None))
+            .order_by(Case.created_at.asc()).all())
+
+
+def cases_for_owner(db, owner_id: int):
+    """In-progress trip dossiers owned by a staff member ('Mes dossiers'):
+    follow-up due first (most overdue on top), then the rest by oldest."""
+    return (db.query(Case)
+            .filter(Case.kind == "trip",
+                    Case.status.in_(FOLLOW_UP_STATUSES),
+                    Case.owner_id == owner_id)
+            .order_by(Case.next_follow_up_at.is_(None).asc(),
+                      Case.next_follow_up_at.asc(),
+                      Case.created_at.asc()).all())
+
+
+def count_unclaimed(db) -> int:
+    return (db.query(Case)
+            .filter(Case.kind == "trip",
+                    Case.status.in_(FOLLOW_UP_STATUSES),
+                    Case.owner_id.is_(None)).count())
+
+
+# --------------------------------------------------------------------------- #
 # Client identity resolution (recognize returning clients across channels)
 # --------------------------------------------------------------------------- #
 import re as _re

@@ -54,7 +54,9 @@ from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLoca
                 merge_clients, normalize_email, normalize_phone, push_notification,
                 replace_primary_identity, resolve_or_create_client, SUPPORT_STATUSES,
                 Staff, FOLLOW_UP_STATUSES, due_follow_ups, is_stale_quoted,
-                mark_follow_up_for_status, schedule_follow_up, touch_activity)
+                mark_follow_up_for_status, schedule_follow_up, touch_activity,
+                active_staff, default_staff_id, unclaimed_cases, cases_for_owner,
+                count_unclaimed)
 from facebook import (extract_messages, extract_postbacks, extract_quick_replies,
                       get_user_name, send_quick_replies, send_text, set_ice_breakers,
                       set_messenger_profile, set_persistent_menu, valid_signature,
@@ -1748,6 +1750,38 @@ def _bell_html() -> str:
     )
 
 
+def current_staff(request: Request, db) -> Optional[Staff]:
+    """The staff member the logged-in admin is currently acting as. While the
+    team shares one login, this is picked from a menu and kept in the session;
+    Phase 4 will source it from the authenticated session instead. Falls back to
+    the first active admin so ownership always resolves to someone."""
+    sid = request.session.get("staff_id")
+    s = db.get(Staff, sid) if sid else None
+    if s and s.active:
+        return s
+    did = default_staff_id(db)
+    return db.get(Staff, did) if did else None
+
+
+def _acting_bar(request: Request, db, back: str) -> str:
+    """A compact 'tu agis comme …' selector so claims/Mes dossiers know who you
+    are while the team shares one login. Posts to /admin/acting and comes back."""
+    me = current_staff(request, db)
+    staff = active_staff(db)
+    if not staff:
+        return ""
+    opts = "".join(
+        f"<option value='{s.id}'{' selected' if me and s.id == me.id else ''}>"
+        f"{escape(s.name)}</option>" for s in staff)
+    return (
+        "<form method='post' action='/admin/acting' "
+        "style='display:flex;gap:8px;align-items:center;margin:0 0 14px'>"
+        f"<input type='hidden' name='next' value=\"{escape(back)}\">"
+        "<span class='muted'>Tu agis comme</span>"
+        f"<select name='staff_id' onchange='this.form.submit()'>{opts}</select>"
+        "<noscript><button>OK</button></noscript></form>")
+
+
 def _nav_html(active: str = "") -> str:
     """Top navigation row, travel-domain sections, with a live count on the
     new-requests queue."""
@@ -1756,11 +1790,14 @@ def _nav_html(active: str = "") -> str:
         n_svc = db.query(Case).filter(Case.kind == "support", Case.awaiting_reply.is_(True),
                                       Case.status.notin_(("closed", "resolved"))).count()
         n_relance = len(due_follow_ups(db))
+        n_unclaimed = count_unclaimed(db)
     items = [
         ("queue", "Nouvelle demande de voyage", "/admin/cases?status=new", n_new),
         ("queue_service", "Nouvelle demande de service client",
          "/admin/cases?status=service", n_svc),
         ("relance", "À relancer", "/admin/cases?status=relance", n_relance),
+        ("mine", "Mes dossiers", "/admin/cases?status=mine", None),
+        ("unclaimed", "À réclamer", "/admin/cases?status=unclaimed", n_unclaimed),
         ("cases", "Demandes", "/admin/cases", None),
         ("clients", "Clients", "/admin/clients", None),
         ("traveling", "Clients en voyage", "/admin/cases?status=booked", None),
@@ -1881,12 +1918,13 @@ def admin_logout(request: Request):
 
 
 @app.get("/admin/cases", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
-def admin_cases(status: str = "all", view: str = "voyage",
+def admin_cases(request: Request, status: str = "all", view: str = "voyage",
                 fstatus: str = "all", fcanal: str = "all", minconf: str = "0",
                 sort: str = "recu", dir: str = "desc"):
     # Top-nav travel sections (status filters, trip only).
     SECTION = {"new": "queue", "service": "queue_service",
-               "booked": "traveling", "closed": "completed", "relance": "relance"}
+               "booked": "traveling", "closed": "completed", "relance": "relance",
+               "mine": "mine", "unclaimed": "unclaimed"}
     SEC_TITLE = {"queue": "Nouvelle demande de voyage",
                  "queue_service": "Nouvelle demande de service client",
                  "traveling": "Clients en voyage", "completed": "Voyages complétés"}
@@ -2101,6 +2139,86 @@ def admin_cases(status: str = "all", view: str = "voyage",
                      "ouvrables et efface le drapeau « à risque ».</p>")
             body = page_header("À relancer", nxt) + intro + table_html
         return render_page(body, "relance")
+
+    # "Mes dossiers" / "À réclamer": ownership lenses (Phase 2). Both list
+    # in-progress trip dossiers — 'mine' = owned by the acting staff, 'unclaimed'
+    # = the shared pool waiting for someone to pick them up.
+    if nav_active in ("mine", "unclaimed"):
+        now = datetime.utcnow()
+        with SessionLocal() as db:
+            me = current_staff(request, db)
+            staff = active_staff(db)
+            if nav_active == "mine":
+                title = "Mes dossiers"
+                base = "/admin/cases?status=mine"
+                cases = cases_for_owner(db, me.id) if me else []
+                intro = ("<p class='muted' style='margin:6px 0 14px'>Tes dossiers en "
+                         "cours, suivi le plus en retard en haut. Réassigne-en un pour "
+                         "le passer à un collègue ou le remettre au pool.</p>")
+            else:
+                title = "À réclamer"
+                base = "/admin/cases?status=unclaimed"
+                cases = unclaimed_cases(db)
+                intro = ("<p class='muted' style='margin:6px 0 14px'>Dossiers en cours "
+                         "sans responsable. « Réclamer » te les attribue "
+                         "(staff sélectionné ci-dessus).</p>")
+            acting = _acting_bar(request, db, base)
+            rows = []
+            for c in cases:
+                t = c.trip or {}
+                name = escape(str(t.get("customer_name") or "Client inconnu"))
+                where = escape(str(t.get("hotel_name_raw") or t.get("destination") or "—"))
+                due = c.next_follow_up_at
+                if due and due <= now:
+                    dd = (now - due).days
+                    retard = ("<b style='color:var(--gold)'>"
+                              + ("aujourd'hui" if dd <= 0 else f"{dd}\u00a0j") + "</b>")
+                elif due:
+                    retard = f"<span class='muted'>{due:%Y-%m-%d}</span>"
+                else:
+                    retard = "<span class='muted'>—</span>"
+                risk = (" <span class='tag' style='background:rgba(255,90,90,.18);"
+                        "color:#ff9b9b'>à risque</span>" if is_stale_quoted(c, now) else "")
+                if nav_active == "unclaimed":
+                    owner_lbl = (escape(c.owner.name) if c.owner
+                                 else "<span class='muted'>—</span>")
+                    action = (
+                        f"<form method='post' action='/admin/cases/{c.id}/claim' "
+                        "style='margin:0;display:inline'>"
+                        f"<input type='hidden' name='next' value=\"{base}\">"
+                        "<button title='Réclamer ce dossier'>Réclamer</button></form>")
+                else:
+                    sel = "".join(
+                        f"<option value='{s.id}'{' selected' if c.owner_id == s.id else ''}>"
+                        f"{escape(s.name)}</option>" for s in staff)
+                    action = (
+                        f"<form method='post' action='/admin/cases/{c.id}/assign' "
+                        "style='margin:0;display:inline-flex;gap:6px'>"
+                        f"<input type='hidden' name='next' value=\"{base}\">"
+                        "<select name='staff_id'><option value=''>— remettre au pool —"
+                        f"</option>{sel}</select>"
+                        "<button class='btn-ghost'>Réassigner</button></form>")
+                rows.append(
+                    f"<tr data-href='/admin/cases/{c.id}'>"
+                    f"<td><a href='/admin/cases/{c.id}'>#{c.id}</a></td>"
+                    f"<td><b>{name}</b>{risk}</td>"
+                    f"<td><span class='tag {c.status}'>{c.status}</span></td>"
+                    f"<td>{where}</td>"
+                    f"<td>{retard}</td>"
+                    + (f"<td class='muted'>{owner_lbl}</td>" if nav_active == "unclaimed" else "")
+                    + f"<td onclick='event.stopPropagation()'>{action} "
+                    f"<a class='btn-ghost' href='/admin/cases/{c.id}'>Ouvrir</a></td></tr>")
+            head = ("<th>#</th><th>Client</th><th>Statut</th><th>Hôtel / Dest.</th>"
+                    "<th>Suivi</th>"
+                    + ("<th>Resp.</th>" if nav_active == "unclaimed" else "")
+                    + "<th>Action</th>")
+            ncol = 7 if nav_active == "unclaimed" else 6
+            empty_msg = ("Tu n'as aucun dossier en cours. 🎉" if nav_active == "mine"
+                         else "Aucun dossier à réclamer. 🎉")
+            empty = f"<tr><td colspan='{ncol}' class='muted'>{empty_msg}</td></tr>"
+            table_html = f"<table><tr>{head}</tr>" + ("".join(rows) or empty) + "</table>"
+            body = page_header(title, base) + acting + intro + table_html
+        return render_page(body, nav_active)
 
     # Focused travel sections (trip only) — rows expand into the full card.
     if nav_active in ("queue", "traveling", "completed"):
@@ -2761,7 +2879,7 @@ def admin_espace_client():
 
 @app.get("/admin/cases/{case_id}", response_class=HTMLResponse,
          dependencies=[Depends(require_admin)])
-def admin_case_detail(case_id: int, warn: str = ""):
+def admin_case_detail(request: Request, case_id: int, warn: str = ""):
     import json as _json
 
     BOARD_FR = {"all_inclusive": "Tout inclus", "breakfast": "Petit-déjeuner",
@@ -2996,6 +3114,28 @@ def admin_case_detail(case_id: int, warn: str = ""):
             f"<pre>{escape(_json.dumps(t, indent=2, ensure_ascii=False))}</pre></details>"
         )
 
+        # Ownership card (Phase 2): who's on this dossier + claim / reassign.
+        me = current_staff(request, db)
+        staff = active_staff(db)
+        owner_name = escape(c.owner.name) if c.owner else "<span class='muted'>—</span>"
+        sel = "".join(
+            f"<option value='{s.id}'{' selected' if c.owner_id == s.id else ''}>"
+            f"{escape(s.name)}</option>" for s in staff)
+        claim_btn = (
+            f"<form method='post' action='/admin/cases/{c.id}/claim' style='margin-top:8px'>"
+            f"<input type='hidden' name='next' value=\"/admin/cases/{c.id}\">"
+            f"<button>Me l'attribuer ({escape(me.name)})</button></form>"
+            if me and c.owner_id != me.id else "")
+        owner_widget = (
+            "<div class='card'><h3>Responsable</h3>"
+            f"<div class='kv'><span class='k'>Owner</span><span class='v'>{owner_name}</span></div>"
+            f"<form method='post' action='/admin/cases/{c.id}/assign' "
+            "style='display:flex;gap:8px;margin-top:10px'>"
+            f"<input type='hidden' name='next' value=\"/admin/cases/{c.id}\">"
+            f"<select name='staff_id'><option value=''>— pool (sans responsable) —</option>"
+            f"{sel}</select><button class='btn-ghost'>Assigner</button></form>"
+            f"{claim_btn}</div>")
+
         body = (
             "<p><a href='/admin/cases'>&larr; Tous les dossiers</a></p>"
             + ("<div class='warnbar'>\u26a0\ufe0f Pour marquer ce voyage comme "
@@ -3005,7 +3145,7 @@ def admin_case_detail(case_id: int, warn: str = ""):
             + "<div class='pagehdr'>"
             f"<h2 style='margin:0'>#{c.id} · {name} <span class='tag {c.status}'>{c.status}</span></h2>"
             f"{status_form}</div>"
-            f"<div class='grid2'>{cards}{screenshot_card}</div>"
+            f"<div class='grid2'>{cards}{owner_widget}{screenshot_card}</div>"
             + _trip_fulfillment_section(c, f"/admin/cases/{c.id}")
             + f"<div class='grid2'>{profil}{convo}{send_panel}</div>"
             f"{raw}"
@@ -3120,6 +3260,66 @@ async def admin_case_relance(case_id: int, request: Request):
             touch_activity(c)                  # resets staleness clock
             log_activity(db, c.client_id, "follow_up",
                          "Relance effectuée — prochain suivi reprogrammé", c.id)
+            db.commit()
+    if not nxt.startswith("/admin/"):
+        nxt = f"/admin/cases/{case_id}"
+    return RedirectResponse(nxt, status_code=303)
+
+
+@app.post("/admin/acting", dependencies=[Depends(require_admin)])
+async def admin_set_acting(request: Request):
+    """Set which staff member the shared-login admin is acting as (Phase 2).
+    Kept in the session; drives 'Mes dossiers' and who a claim assigns to.
+    Phase 4 replaces this with the authenticated session's own staff."""
+    form = await request.form()
+    raw = (form.get("staff_id") or "").strip()
+    nxt = form.get("next") or "/admin/cases?status=mine"
+    if raw.isdigit():
+        with SessionLocal() as db:
+            s = db.get(Staff, int(raw))
+            if s and s.active:
+                request.session["staff_id"] = s.id
+    if not nxt.startswith("/admin/"):
+        nxt = "/admin/cases?status=mine"
+    return RedirectResponse(nxt, status_code=303)
+
+
+@app.post("/admin/cases/{case_id}/claim", dependencies=[Depends(require_admin)])
+async def admin_case_claim(case_id: int, request: Request):
+    """Take ownership of a dossier as the acting staff member (Phase 2). Logs a
+    'claim' event to the client timeline. Does not touch staleness — claiming is
+    internal, a cooling quote stays 'à risque' until we actually follow up."""
+    form = await request.form()
+    nxt = form.get("next") or f"/admin/cases/{case_id}"
+    with SessionLocal() as db:
+        c = db.get(Case, case_id)
+        me = current_staff(request, db)
+        if c and c.kind == "trip" and me:
+            c.owner_id = me.id
+            log_activity(db, c.client_id, "claim", f"Dossier réclamé par {me.name}", c.id)
+            db.commit()
+    if not nxt.startswith("/admin/"):
+        nxt = f"/admin/cases/{case_id}"
+    return RedirectResponse(nxt, status_code=303)
+
+
+@app.post("/admin/cases/{case_id}/assign", dependencies=[Depends(require_admin)])
+async def admin_case_assign(case_id: int, request: Request):
+    """Assign a dossier to a chosen staff member, or release it to the shared
+    pool (empty staff_id). Logs an 'assign' event to the client timeline."""
+    form = await request.form()
+    nxt = form.get("next") or f"/admin/cases/{case_id}"
+    raw = (form.get("staff_id") or "").strip()
+    with SessionLocal() as db:
+        c = db.get(Case, case_id)
+        if c and c.kind == "trip":
+            if raw.isdigit() and (s := db.get(Staff, int(raw))) and s.active:
+                c.owner_id = s.id
+                log_activity(db, c.client_id, "assign", f"Dossier assigné à {s.name}", c.id)
+            else:
+                c.owner_id = None
+                log_activity(db, c.client_id, "assign",
+                             "Dossier remis au pool (sans responsable)", c.id)
             db.commit()
     if not nxt.startswith("/admin/"):
         nxt = f"/admin/cases/{case_id}"

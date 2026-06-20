@@ -45,11 +45,11 @@ le même schéma. Quand les logins individuels arrivent, `owner_id` passe de
 - [x] `last_activity_at` mis à jour à chaque event.
 
 ### Phase 2 — Ownership (modèle "Réclamer")
-- [ ] Bouton "Réclamer" → set `owner_id`.
-- [ ] Pool "À réclamer" (dossiers en cours, owner null).
-- [ ] Vue "Mes dossiers" (filtre owner courant — choisi dans menu staff tant que
+- [x] Bouton "Réclamer" → set `owner_id`.
+- [x] Pool "À réclamer" (dossiers en cours, owner null).
+- [x] Vue "Mes dossiers" (filtre owner courant — choisi dans menu staff tant que
       login partagé).
-- [ ] Réassignation manuelle (admin) + log `assign`.
+- [x] Réassignation manuelle (admin) + log `assign`.
 
 ### Phase 3 — Board pipeline + métriques (performance d'affaire)
 - [ ] Board par statut (chips owner + âge du dossier).
