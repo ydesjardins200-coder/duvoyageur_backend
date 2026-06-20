@@ -118,7 +118,10 @@ class ClientIdentity(Base):
 
 # Kinds of timeline events we record per client.
 ACTIVITY_KINDS = ("request_created", "message_in", "status_change", "reply_out",
-                  "merge", "note")
+                  "merge", "note", "follow_up", "claim", "assign")
+
+# Back-office roles. 'admin' can do everything; 'agent' owns/follows up on cases.
+STAFF_ROLES = ("admin", "agent")
 
 
 class Interaction(Base):
@@ -137,6 +140,29 @@ class Interaction(Base):
     summary: Mapped[str] = mapped_column(Text)
 
     client = relationship("Client", back_populates="activities")
+
+
+class Staff(Base):
+    """A back-office team member who owns and follows up on cases.
+
+    Phase 0: rows exist so a case can carry an owner even while the whole team
+    shares one admin login (owner is then a convention picked from a menu).
+    Phase 4: `password_hash` + individual sessions turn these into real per-user
+    logins, and `owner_id` auto-fills from the session instead of a menu.
+    Designed once here so no later phase needs a schema change."""
+    __tablename__ = "staff"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    name: Mapped[str] = mapped_column(String(80))
+    initials: Mapped[str] = mapped_column(String(6), default="")
+    email: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, index=True)
+    role: Mapped[str] = mapped_column(String(20), default="admin")  # STAFF_ROLES
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    # Phase 4 (individual logins). Null = no direct login yet (shared admin).
+    password_hash: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+
+    owned_cases = relationship("Case", back_populates="owner")
 
 
 class Case(Base):
@@ -182,11 +208,26 @@ class Case(Base):
     # Client-submitted review on a finished trip: {rating:int, text:str, at:iso}
     review: Mapped[dict] = mapped_column(JSON, default=dict)
 
+    # --- Ownership & follow-up (Phase 0/1) ---
+    # Who's driving this dossier toward booked. Null = unclaimed (shared pool).
+    owner_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("staff.id", ondelete="SET NULL"), nullable=True, index=True)
+    owner = relationship("Staff", back_populates="owned_cases")
+    # When the next proactive touch is due — drives the "À relancer" queue.
+    next_follow_up_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True, index=True)
+    # Last time anything happened on this dossier (message, status change, note,
+    # follow-up). Backfilled from the timeline; drives staleness / "à risque".
+    last_activity_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True, index=True)
+
 
 def init_db() -> None:
     Base.metadata.create_all(engine)
     _ensure_columns()
     _backfill_clients()
+    _seed_staff()
+    _backfill_last_activity()
 
 
 def _ensure_columns() -> None:
@@ -211,6 +252,9 @@ def _ensure_columns() -> None:
             conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS flight_return VARCHAR(40)"))
             conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS booking_ref VARCHAR(80)"))
             conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS review JSONB DEFAULT '{}'::jsonb"))
+            conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS owner_id INTEGER"))
+            conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS next_follow_up_at TIMESTAMP"))
+            conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMP"))
             # Support cases use open/resolved; remap any legacy trip-statuses.
             conn.execute(text(
                 "UPDATE cases SET status='resolved' "
@@ -269,6 +313,12 @@ def _ensure_columns() -> None:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN booking_ref VARCHAR(80)"))
             if "review" not in cols:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN review JSON"))
+            if "owner_id" not in cols:
+                conn.execute(text("ALTER TABLE cases ADD COLUMN owner_id INTEGER"))
+            if "next_follow_up_at" not in cols:
+                conn.execute(text("ALTER TABLE cases ADD COLUMN next_follow_up_at DATETIME"))
+            if "last_activity_at" not in cols:
+                conn.execute(text("ALTER TABLE cases ADD COLUMN last_activity_at DATETIME"))
             conn.execute(text(
                 "UPDATE cases SET status='resolved' "
                 "WHERE kind='support' AND status IN ('closed','resolved')"))
@@ -297,6 +347,36 @@ def _ensure_columns() -> None:
                 conn.execute(text(
                     "UPDATE cases SET kind='support' "
                     "WHERE needs_clarification LIKE '%support humain%'"))
+
+
+def _seed_staff() -> None:
+    """Ensure at least one staff row exists so a case can have an owner from day
+    one. Seeds from ADMIN_USER (the shared login) when the table is empty.
+    Idempotent: does nothing once any staff row exists."""
+    with SessionLocal() as s:
+        if s.query(Staff).count() == 0:
+            name = (settings.ADMIN_USER or "Admin").strip() or "Admin"
+            parts = [p for p in name.replace(".", " ").split() if p]
+            initials = ("".join(p[0] for p in parts[:2]) or name[:2]).upper()
+            s.add(Staff(name=name, initials=initials, role="admin", active=True))
+            s.commit()
+
+
+def _backfill_last_activity() -> None:
+    """One-time fill of last_activity_at for rows that don't have it yet: the most
+    recent interaction on the case, falling back to the case's created_at.
+    Idempotent: only touches rows where last_activity_at IS NULL."""
+    with engine.begin() as conn:
+        if engine.dialect.name == "postgresql":
+            conn.execute(text(
+                "UPDATE cases c SET last_activity_at = COALESCE("
+                "(SELECT MAX(i.created_at) FROM interactions i WHERE i.request_id = c.id), "
+                "c.created_at) WHERE c.last_activity_at IS NULL"))
+        else:  # sqlite
+            conn.execute(text(
+                "UPDATE cases SET last_activity_at = COALESCE("
+                "(SELECT MAX(created_at) FROM interactions WHERE request_id = cases.id), "
+                "created_at) WHERE last_activity_at IS NULL"))
 
 
 # Statuses that mean "this request is still in progress" — new messages from the
