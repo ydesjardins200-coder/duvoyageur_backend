@@ -273,8 +273,15 @@ class TripRequest(BaseModel):
         # Children's ages matter for pricing — only ask if there ARE children.
         if (self.num_children or 0) > 0 and not any(p.age is not None for p in self.passengers):
             rem.append("âge des enfants")
-        # Rooms: number (and type) — a single question covers both.
-        if not self.num_rooms:
+        # Rooms: one question covers count + type. Only worth asking when the
+        # party is big enough that a single room won't obviously fit (resort rooms
+        # typically hold up to 4) — a solo traveller, couple or small family gets
+        # one room by default, no interrogation. And it counts as answered the
+        # moment we have EITHER a count or a stated type, so "une suite" or "peu
+        # importe" can never loop back to the same question.
+        party = max(len(self.passengers or []),
+                    (self.num_adults or 0) + (self.num_children or 0))
+        if party >= 4 and not self.num_rooms and not self.room_type:
             rem.append("nombre et type de chambre")
         # Price is the heart of the rebate.
         if not (self.price_seen and self.price_seen.amount is not None):

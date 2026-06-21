@@ -35,6 +35,14 @@ RÈGLES STRICTES
    adulte » et que le total = 2 × ce prix, déduis num_adults = 2. Si la capture
    d'un forfait ne montre aucun enfant, tu peux mettre num_children = 0. Capture
    aussi le type de chambre (room_type) et, si visible, le nombre de chambres.
+4c. CHAMBRES vs VOYAGEURS : `num_rooms` = nombre de CHAMBRES d'hôtel, JAMAIS le
+   nombre de voyageurs (« on est 4 » → c'est 4 voyageurs, pas 4 chambres). Règles :
+   - Si le client nomme un type de chambre (« une suite », « swim-up », « vue mer »,
+     « junior suite ») sans donner de nombre, mets room_type ET num_rooms = 1.
+   - S'il donne un nombre (« 2 chambres »), mets num_rooms ; un type en plus si dit.
+   - S'il répond « peu importe / comme tu veux / pas sûr » à la question des
+     chambres, mets num_rooms = 1 et laisse room_type à null (ne reste pas bloqué).
+   - Une seule chambre est l'hypothèse normale pour 1 à 3 voyageurs.
 5. AÉROPORT : déduis l'IATA seulement si tu es certain —
    Montréal = YUL, Québec = YQB, Ottawa = YOW, Toronto = YYZ, Bagotville = YBG,
    Mont-Tremblant = YTM. Sinon laisse origin_airport_iata à null et garde juste
