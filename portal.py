@@ -31,6 +31,7 @@ import re
 import secrets
 import time
 import logging
+import unicodedata
 from datetime import datetime
 from html import escape
 
@@ -207,6 +208,126 @@ def _trip_travelers(t: dict):
     return ", ".join(bits) if bits else None
 
 
+_SITE = "https://duvoyageur.netlify.app"
+
+# Destination keyword -> (hub slug, label). Ordered: more specific first, first
+# substring match wins (matched against destination + hotel, accent-insensitive).
+_HUBS = [
+    ("punta cana", "voyage-punta-cana", "Punta Cana"),
+    ("riviera maya", "voyage-cancun-riviera-maya", "Cancún / Riviera Maya"),
+    ("cancun", "voyage-cancun-riviera-maya", "Cancún / Riviera Maya"),
+    ("puerto plata", "voyage-puerto-plata-samana", "Puerto Plata / Samaná"),
+    ("playa del carmen", "voyage-playa-del-carmen", "Playa del Carmen"),
+    ("costa mujeres", "voyage-costa-mujeres", "Costa Mujeres"),
+    ("cayo coco", "voyage-cayo-coco-cuba", "Cayo Coco"),
+    ("cayo santa maria", "voyage-cayo-santa-maria-cuba", "Cayo Santa María"),
+    ("cayo largo", "voyage-cayo-largo-cuba", "Cayo Largo"),
+    ("cayo guillermo", "voyage-cayo-guillermo-cuba", "Cayo Guillermo"),
+    ("montego bay", "voyage-montego-bay-jamaique", "Montego Bay"),
+    ("ocho rios", "voyage-ocho-rios-jamaique", "Ocho Rios"),
+    ("puerto vallarta", "voyage-puerto-vallarta", "Puerto Vallarta"),
+    ("nuevo vallarta", "voyage-nuevo-vallarta-riviera-nayarit", "Nuevo Vallarta"),
+    ("riviera nayarit", "voyage-nuevo-vallarta-riviera-nayarit", "Riviera Nayarit"),
+    ("los cabos", "voyage-los-cabos", "Los Cabos"),
+    ("juan dolio", "voyage-juan-dolio", "Juan Dolio"),
+    ("cap cana", "voyage-cap-cana", "Cap Cana"),
+    ("la romana", "voyage-la-romana", "La Romana"),
+    ("playa blanca", "voyage-playa-blanca-panama", "Playa Blanca (Panama)"),
+    ("saint-martin", "voyage-saint-martin", "Saint-Martin / Sint Maarten"),
+    ("st-martin", "voyage-saint-martin", "Saint-Martin / Sint Maarten"),
+    ("sint maarten", "voyage-saint-martin", "Saint-Martin / Sint Maarten"),
+    ("turks", "voyage-turks-caicos", "Turks & Caicos"),
+    ("caicos", "voyage-turks-caicos", "Turks & Caicos"),
+    ("sainte-lucie", "voyage-sainte-lucie", "Sainte-Lucie"),
+    ("sainte lucie", "voyage-sainte-lucie", "Sainte-Lucie"),
+    ("negril", "voyage-negril-jamaique", "Negril"),
+    ("nassau", "voyage-nassau-bahamas", "Nassau"),
+    ("freeport", "voyage-freeport-bahamas", "Freeport"),
+    ("varadero", "voyage-varadero-cuba", "Varadero"),
+    ("holguin", "voyage-holguin-cuba", "Holguín"),
+    ("trinidad", "voyage-trinidad-cuba", "Trinidad"),
+    ("bayahibe", "voyage-bayahibe", "Bayahíbe"),
+    ("samana", "voyage-samana", "Samaná"),
+    ("cozumel", "voyage-cozumel", "Cozumel"),
+    ("huatulco", "voyage-huatulco", "Huatulco"),
+    ("cabo", "voyage-los-cabos", "Los Cabos"),
+    ("costa rica", "voyage-costa-rica", "Costa Rica"),
+    ("guanacaste", "voyage-costa-rica", "Costa Rica"),
+    ("aruba", "voyage-aruba", "Aruba"),
+    ("curacao", "voyage-curacao", "Curaçao"),
+    ("antigua", "voyage-antigua", "Antigua"),
+    ("grenade", "voyage-grenade", "Grenade"),
+    ("carthagene", "voyage-carthagene-colombie", "Carthagène"),
+    ("cartagena", "voyage-carthagene-colombie", "Carthagène"),
+    ("belize", "voyage-belize", "Belize"),
+    ("roatan", "voyage-roatan-honduras", "Roatán"),
+    ("panama", "voyage-playa-blanca-panama", "Playa Blanca (Panama)"),
+]
+
+
+def _norm(s) -> str:
+    s = unicodedata.normalize("NFD", str(s or ""))
+    return "".join(ch for ch in s if unicodedata.category(ch) != "Mn").lower()
+
+
+def _trip_hub(t: dict):
+    """Match a trip's destination/hotel to one of our destination hub pages."""
+    hay = _norm(f"{t.get('destination') or ''} {t.get('hotel_name_raw') or ''}")
+    for kw, slug, label in _HUBS:
+        if kw in hay:
+            return slug, label
+    return None
+
+
+def _dep_date(c, t: dict):
+    raw = t.get("departure_date") or getattr(c, "flight_depart", None)
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw)[:10]).date()
+    except (ValueError, TypeError):
+        return None
+
+
+def _countdown_html(c, t: dict) -> str:
+    """A friendly countdown banner for a booked trip with a known departure date."""
+    d = _dep_date(c, t)
+    if not d:
+        return ""
+    days = (d - datetime.utcnow().date()).days
+    if days > 1:
+        return (f"<div class='cdown'><div class='cdown-n'>J-{days}</div>"
+                f"<div class='cdown-l'>Plus que {days} jours avant le grand départ ✈️</div></div>")
+    if days == 1:
+        return ("<div class='cdown'><div class='cdown-n'>J-1</div>"
+                "<div class='cdown-l'>C'est demain ! Prépare tes valises 🧳</div></div>")
+    if days == 0:
+        return ("<div class='cdown'><div class='cdown-n'>Jour J</div>"
+                "<div class='cdown-l'>C'est aujourd'hui ! Bon voyage 🌴</div></div>")
+    return ("<div class='cdown live'><div class='cdown-n'>🌴</div>"
+            "<div class='cdown-l'>Bon voyage ! Profite bien de ton séjour.</div></div>")
+
+
+def _resources_html(t: dict) -> str:
+    """Guides + the destination hub relevant to this trip (shown once booked)."""
+    links = [
+        ("🛂", "Documents et passeport", f"{_SITE}/guide-documents-passeport"),
+        ("🧳", "Quoi apporter — la checklist", f"{_SITE}/guide-quoi-apporter"),
+    ]
+    hub = _trip_hub(t)
+    if hub:
+        slug, label = hub
+        links.append(("📍", f"Tout savoir sur {label}", f"{_SITE}/{slug}"))
+    links.append(("📅", "Météo & meilleure période", f"{_SITE}/guide-meilleure-periode"))
+    items = "".join(
+        f"<a class='res-i' href='{escape(url)}' target='_blank' rel='noopener'>"
+        f"<span class='res-ic'>{ic}</span><span>{escape(lab)}</span>"
+        "<span class='res-go'>→</span></a>"
+        for ic, lab, url in links)
+    return ("<div class='res'><div class='res-h'>📚 Pour bien préparer ton voyage</div>"
+            f"{items}</div>")
+
+
 def _trip_card(c) -> str:
     t = c.trip or {}
     label, cls = _STATUS_FR.get(c.status, ("En cours", "prep"))
@@ -237,7 +358,10 @@ def _trip_card(c) -> str:
                if c.booking_ref else "")
         eco = (f"<div class='eco'>Économie réalisée : <b>{escape(c.savings)}</b> 🎉</div>"
                if c.savings else "")
-        action = f"{ref}{eco}<div class='muted'>Confirmation détaillée envoyée par Tripbook. Bon voyage ! 🌴</div>"
+        cd = _countdown_html(c, t)
+        res = _resources_html(t)
+        action = (f"{cd}{ref}{eco}<div class='muted'>Confirmation détaillée envoyée "
+                  f"par Tripbook. Bon voyage ! 🌴</div>{res}")
     elif c.status == "closed":
         action = "<div class='muted'>Voyage terminé — merci de voyager avec nous ! 🙌</div>"
     else:  # new / needs_info
@@ -1899,6 +2023,22 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .pm-head{{display:flex;align-items:center;gap:10px;margin:2px 34px 14px 2px}}
  .pm-title{{font-weight:700;font-size:16px;flex:1;min-width:0}}
  .pm-load{{color:var(--mist);padding:24px;text-align:center}}
+ .cdown{{display:flex;flex-direction:column;align-items:center;text-align:center;
+   background:linear-gradient(135deg,rgba(255,210,63,.16),rgba(61,240,197,.10));
+   border:1px solid rgba(255,210,63,.3);border-radius:14px;padding:16px;margin:12px 0}}
+ .cdown-n{{font-family:"Space Grotesk",monospace;font-size:34px;font-weight:800;
+   color:var(--gold);line-height:1}}
+ .cdown-l{{font-size:13px;color:var(--foam);margin-top:6px}}
+ .cdown.live{{background:rgba(61,240,197,.1);border-color:rgba(61,240,197,.3)}}
+ .cdown.live .cdown-n{{font-size:30px;color:var(--lagoon)}}
+ .res{{margin:14px 0 2px}}
+ .res-h{{font-size:13px;font-weight:700;color:var(--mist);margin-bottom:8px}}
+ .res-i{{display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:11px;
+   background:rgba(6,33,47,.5);border:1px solid var(--line);text-decoration:none;
+   color:var(--foam);margin-bottom:7px;font-size:14px}}
+ .res-i:hover{{border-color:rgba(25,211,230,.4)}}
+ .res-ic{{font-size:18px}}
+ .res-go{{margin-left:auto;color:var(--surf)}}
 </style></head><body>
  <div class="top">
    <div class="brand"><img src="/static/logo.png" alt="Du Voyageur">
