@@ -41,6 +41,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
                                RedirectResponse)
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from sqlalchemy import func, text
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -1359,6 +1360,63 @@ def intake_form(trip: TripRequest):
             "needs": trip.remaining_fields()}
 
 
+class ContactForm(BaseModel):
+    name: str = ""
+    email: str = ""
+    phone: str = ""
+    subject: str = ""
+    message: str = ""
+
+
+def store_contact(name: str, email: str, phone: str, subject: str,
+                  message: str) -> int:
+    """Public contact form -> a service-client (support) case that lands in the
+    service pipeline. Channel 'formulaire' distinguishes it from Messenger."""
+    now = datetime.utcnow()
+    subj = (subject or "").strip()
+    body = (message or "").strip()
+    text_in = (f"Sujet : {subj}\n\n{body}" if subj else body).strip()
+    with SessionLocal() as db:
+        client = resolve_or_create_client(
+            db, email=email or None, phone=phone or None,
+            name=name or None, channel="formulaire")
+        case = Case(
+            client_id=client.id,
+            channel="formulaire",
+            status="open",
+            kind="support",
+            awaiting_reply=True,
+            customer_email=email or None,
+            customer_phone=phone or None,
+            raw_message=text_in,
+            trip={"customer_name": name or "Contact", "subject": subj},
+            messages=[{"dir": "in", "text": text_in,
+                       "at": now.isoformat(timespec="seconds")}],
+        )
+        db.add(case)
+        db.flush()
+        log_activity(db, client.id, "request_created",
+                     "Nouveau contact via formulaire", case.id)
+        db.commit()
+        db.refresh(case)
+        log.info("Stored contact case #%s via formulaire", case.id)
+        return case.id
+
+
+@app.post("/contact")
+def contact_form(form: ContactForm):
+    """Public contact form -> creates a service-client (support) case in the
+    service pipeline (channel 'formulaire'), awaiting our reply."""
+    email = (form.email or "").strip()
+    phone = (form.phone or "").strip()
+    message = (form.message or "").strip()
+    if not message or not (email or phone):
+        return JSONResponse({"ok": False, "error": "missing_fields"},
+                            status_code=400)
+    case_id = store_contact(form.name, email, phone, form.subject, message)
+    return {"ok": True, "case_id": case_id}
+
+
 def _trip_from_form(email, name, origin_city, origin_airport_iata, where,
                     dep, ret, adults, children, operator, notes, price, basis,
                     phone=None) -> TripRequest:
@@ -2209,10 +2267,18 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
                             f"{escape(c.owner.initials or c.owner.name[:2])}</span>")
                 else:
                     chip = "<span class='muted' style='font-size:11px'>non réclamé</span>"
+                CH = {"messenger": "💬 Messenger", "formulaire": "📋 Formulaire",
+                      "portal": "🌐 Espace client"}
+                chan = CH.get(c.channel, escape(c.channel or "—"))
+                chan_pill = ("<span style='font-size:10px;color:#94b8c6;border:1px solid "
+                             "rgba(155,246,236,.18);border-radius:6px;padding:1px 6px;"
+                             f"white-space:nowrap'>{chan}</span>")
                 return (
                     f"<div onclick='openSvc({c.id})' style='{CARD}'>"
-                    f"<div style='font-weight:600'>{name}</div>"
-                    f"<div class='muted' style='font-size:12px;margin:2px 0 7px'>{subj}</div>"
+                    "<div style='display:flex;justify-content:space-between;gap:8px;"
+                    "align-items:start'>"
+                    f"<span style='font-weight:600'>{name}</span>{chan_pill}</div>"
+                    f"<div class='muted' style='font-size:12px;margin:4px 0 7px'>{subj}</div>"
                     "<div style='display:flex;justify-content:space-between;align-items:center'>"
                     f"{chip}<span class='muted' style='font-size:11px'>{when}</span></div></div>")
 
