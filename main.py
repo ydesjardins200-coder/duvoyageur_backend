@@ -2124,72 +2124,133 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
         empty = f"<tr><td colspan='{ncol}' class='muted'>Aucun dossier ici.</td></tr>"
         return f"<table><tr>{head}</tr>" + ("".join(rows) or empty) + "</table>"
 
-    # Focused service-client queue: support cases awaiting our reply — each row
-    # opens a modal with the conversation + a quick reply (like the client fiche).
+    # Service-client board (Pipeline-style): support cases in three columns —
+    # Nouvelle demande (our turn), En attente du client (their turn), Résolue —
+    # with a satisfaction KPI, the conversation modal, and the relance queue.
     if nav_active == "queue_service":
+        now = datetime.utcnow()
+        TILE = ("background:rgba(6,33,47,.5);border:1px solid rgba(25,211,230,.18);"
+                "border-radius:12px;padding:14px 16px;min-width:120px;display:block")
+        CARD = ("background:rgba(6,33,47,.55);border:1px solid rgba(25,211,230,.14);"
+                "border-radius:10px;padding:9px 11px;margin-bottom:8px;cursor:pointer")
+        CHIP = ("display:inline-flex;align-items:center;justify-content:center;width:22px;"
+                "height:22px;border-radius:999px;background:var(--deep);color:var(--surf);"
+                "font-size:10px;font-weight:700")
+        COLHEAD = ("font-weight:700;padding:8px 11px;background:rgba(25,211,230,.08);"
+                   "border-radius:8px;margin-bottom:10px;display:flex;justify-content:space-between")
+        nxt = "/admin/cases?status=service"
         with SessionLocal() as db:
-            cases = (db.query(Case)
-                     .filter(Case.kind == "support", Case.awaiting_reply.is_(True),
-                             Case.status.notin_(("closed", "resolved")))
-                     .order_by(Case.created_at.desc()).limit(200).all())
-            nxt = "/admin/cases?status=service"
-            rows, modals = [], []
-            for c in cases:
+            staff = active_staff(db)
+            open_cases = (db.query(Case)
+                          .filter(Case.kind == "support",
+                                  Case.status.notin_(("closed", "resolved")))
+                          .order_by(Case.created_at.desc()).limit(200).all())
+            resolved_cases = (db.query(Case)
+                              .filter(Case.kind == "support", Case.status == "resolved")
+                              .order_by(Case.created_at.desc()).limit(40).all())
+            col_new = [c for c in open_cases if c.awaiting_reply]       # notre tour
+            col_wait = [c for c in open_cases if not c.awaiting_reply]  # on attend le client
+            col_done = resolved_cases
+            ratings = [int((c.review or {}).get("rating"))
+                       for c in resolved_cases if (c.review or {}).get("rating")]
+            avg_rating = f"{sum(ratings) / len(ratings):.1f}★" if ratings else "—"
+
+            def _svc_card(c):
                 t = c.trip or {}
                 name = escape(str(t.get("customer_name") or "Client"))
-                msgs = _conversation(c)
-                last_in = next((m for m in reversed(msgs) if m.get("dir") == "in"), None)
-                preview = (last_in.get("text") if last_in else (c.raw_message or "")) or "—"
-                if len(preview) > 90:
-                    preview = preview[:90] + "…"
-                opts = "".join(f"<option value='{s}'{' selected' if s == c.status else ''}>{s}</option>"
-                               for s in SUPPORT_STATUSES)
+                first_in = next((m.get("text") for m in _conversation(c)
+                                 if m.get("dir") == "in"), c.raw_message or "")
+                subj = escape((first_in or "Demande de service").splitlines()[0][:70])
+                when = c.created_at.strftime("%Y-%m-%d") if c.created_at else "—"
+                if c.owner:
+                    chip = (f"<span style='{CHIP}'>"
+                            f"{escape(c.owner.initials or c.owner.name[:2])}</span>")
+                else:
+                    chip = "<span class='muted' style='font-size:11px'>non réclamé</span>"
+                return (
+                    f"<div onclick='openSvc({c.id})' style='{CARD}'>"
+                    f"<div style='font-weight:600'>{name}</div>"
+                    f"<div class='muted' style='font-size:12px;margin:2px 0 7px'>{subj}</div>"
+                    "<div style='display:flex;justify-content:space-between;align-items:center'>"
+                    f"{chip}<span class='muted' style='font-size:11px'>{when}</span></div></div>")
+
+            cols_html = []
+            for label, items in [("Nouvelle demande", col_new),
+                                 ("En attente du client", col_wait),
+                                 ("Résolue", col_done)]:
+                cards = "".join(_svc_card(c) for c in items) or \
+                    "<p class='muted' style='font-size:12px'>—</p>"
+                cols_html.append(
+                    "<div style='flex:1;min-width:210px'>"
+                    f"<div style='{COLHEAD}'><span>{label}</span>"
+                    f"<span class='n'>{len(items)}</span></div>{cards}</div>")
+            board = ("<div style='display:flex;gap:14px;overflow-x:auto;padding-bottom:6px'>"
+                     + "".join(cols_html) + "</div>")
+
+            tiles = "".join(
+                f"<div style='{TILE}'><div style='font-size:26px;font-weight:700;"
+                f"color:{color}'>{val}</div>"
+                f"<div class='muted' style='font-size:12px'>{lab}</div></div>"
+                for val, lab, color in [
+                    (len(col_new), "À traiter",
+                     "var(--gold)" if col_new else "var(--foam)"),
+                    (len(col_wait), "En attente du client", "var(--foam)"),
+                    (len(col_done), "Résolues (récent)", "var(--foam)"),
+                    (avg_rating, "Satisfaction", "var(--lagoon)")])
+            kpis = ("<div style='display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px'>"
+                    + tiles + "</div>")
+
+            modals = []
+            for c in (col_new + col_wait + col_done):
+                t = c.trip or {}
+                name = escape(str(t.get("customer_name") or "Client"))
+                opts = "".join(
+                    f"<option value='{s}'{' selected' if s == c.status else ''}>{s}</option>"
+                    for s in SUPPORT_STATUSES)
                 sform = (f"<form method='post' action='/admin/cases/{c.id}/status' "
                          "style='display:flex;gap:8px;align-items:center;margin:0'>"
                          f"<input type='hidden' name='next' value=\"{nxt}\">"
                          f"<select name='status'>{opts}</select>"
                          "<button>Mettre à jour</button></form>")
-                rows.append(
-                    f"<tr onclick=\"openSvc({c.id})\" style='cursor:pointer'>"
-                    f"<td>#{c.id}</td><td><b>{name}</b></td>"
-                    f"<td><span class='tag {c.status}'>{c.status}</span></td>"
-                    f"<td>{escape(c.channel)}</td>"
-                    f"<td>{escape(preview)}</td>"
-                    f"<td class='muted'>{c.created_at:%Y-%m-%d %H:%M}</td></tr>"
-                )
+                osel = "".join(
+                    f"<option value='{s.id}'{' selected' if c.owner_id == s.id else ''}>"
+                    f"{escape(s.name)}</option>" for s in staff)
+                oform = (f"<form method='post' action='/admin/cases/{c.id}/assign' "
+                         "style='display:flex;gap:6px;align-items:center;margin:0 0 12px'>"
+                         f"<input type='hidden' name='next' value=\"{nxt}\">"
+                         "<span class='muted' style='font-size:12px'>Responsable</span>"
+                         "<select name='staff_id'><option value=''>— non réclamé —</option>"
+                         f"{osel}</select><button class='btn-ghost'>Assigner</button></form>")
                 modals.append(
                     f"<div class='modal-ov' id='svc-{c.id}'><div class='modal'>"
                     "<div class='modal-hd'>"
-                    f"<h3 style='margin:0'>#{c.id} · {name} <span class='tag {c.status}'>{c.status}</span></h3>"
+                    f"<h3 style='margin:0'>#{c.id} · {name} "
+                    f"<span class='tag {c.status}'>{c.status}</span></h3>"
                     + sform
                     + "<button type='button' class='modal-x' onclick='closeSvc()'>✕</button></div>"
-                    f"<div class='modal-bd'>{_render_thread(c, name)}</div>"
+                    f"<div class='modal-bd'>{oform}{_render_thread(c, name)}</div>"
                     "<div class='modal-ft'>"
                     f"<form method='post' action='/admin/cases/{c.id}/send'>"
                     f"<input type='hidden' name='next' value=\"{nxt}\">"
                     "<textarea name='message' rows='3' placeholder='Répondre au client…' "
                     "style='width:100%'></textarea>"
                     "<button style='margin-top:10px'>Répondre au client</button></form>"
-                    "</div></div></div>"
-                )
-        empty = "<tr><td colspan='6' class='muted'>Aucune demande de service.</td></tr>"
-        table_html = ("<table class='svc'><tr><th>#</th><th>Client</th><th>Statut</th>"
-                      "<th>Canal</th><th>Message</th><th>Reçu</th></tr>"
-                      + ("".join(rows) or empty) + "</table>")
-        js = ("<script>function openSvc(i){document.getElementById('svc-'+i).classList.add('open');}"
-              "function closeSvc(){document.querySelectorAll('.modal-ov.open').forEach("
-              "function(m){m.classList.remove('open');});}"
-              "document.addEventListener('click',function(e){if(e.target.classList&&"
-              "e.target.classList.contains('modal-ov'))closeSvc();});</script>")
-        relance = (
-            "<h3 style='margin:28px 0 4px'>À relancer</h3>"
-            "<p class='muted' style='margin:0 0 12px;font-size:13px'>Dossiers de voyage "
-            "en cours dont le suivi proactif est dû, du plus en retard au moins. "
-            "« Relancé&nbsp;✓ » reprogramme le prochain suivi à +2 jours ouvrables et "
-            "efface le drapeau « à risque ».</p>"
-            + _relance_table(db, datetime.utcnow(), nxt))
-        body = (page_header(SEC_TITLE[nav_active], nxt)
-                + table_html + "".join(modals) + js + relance)
+                    "</div></div></div>")
+            js = ("<script>function openSvc(i){document.getElementById('svc-'+i).classList.add('open');}"
+                  "function closeSvc(){document.querySelectorAll('.modal-ov.open').forEach("
+                  "function(m){m.classList.remove('open');});}"
+                  "document.addEventListener('click',function(e){if(e.target.classList&&"
+                  "e.target.classList.contains('modal-ov'))closeSvc();});</script>")
+            relance = (
+                "<h3 style='margin:30px 0 4px'>À relancer</h3>"
+                "<p class='muted' style='margin:0 0 12px;font-size:13px'>Dossiers de voyage "
+                "en cours dont le suivi proactif est dû, du plus en retard au moins. "
+                "« Relancé&nbsp;✓ » reprogramme le prochain suivi à +2 jours ouvrables et "
+                "efface le drapeau « à risque ».</p>"
+                + _relance_table(db, now, nxt))
+            body = (page_header(SEC_TITLE[nav_active], nxt) + kpis
+                    + "<h3 style='margin:4px 0 12px'>Board service client</h3>" + board
+                    + "".join(modals) + js + relance)
         return render_page(body, nav_active)
 
     # "À relancer": in-progress dossiers whose follow-up is due. No longer a nav
@@ -3488,7 +3549,7 @@ async def admin_case_claim(case_id: int, request: Request):
     with SessionLocal() as db:
         c = db.get(Case, case_id)
         me = current_staff(request, db)
-        if c and c.kind == "trip" and me:
+        if c and c.kind in ("trip", "support") and me:
             c.owner_id = me.id
             log_activity(db, c.client_id, "claim", f"Dossier réclamé par {me.name}", c.id)
             db.commit()
@@ -3506,7 +3567,7 @@ async def admin_case_assign(case_id: int, request: Request):
     raw = (form.get("staff_id") or "").strip()
     with SessionLocal() as db:
         c = db.get(Case, case_id)
-        if c and c.kind == "trip":
+        if c and c.kind in ("trip", "support"):
             if raw.isdigit() and (s := db.get(Staff, int(raw))) and s.active:
                 c.owner_id = s.id
                 log_activity(db, c.client_id, "assign", f"Dossier assigné à {s.name}", c.id)
