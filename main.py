@@ -38,7 +38,8 @@ from html import escape
 from fastapi import (BackgroundTasks, Depends, FastAPI, File, Form, HTTPException,
                      Request, Response, UploadFile)
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
+                               RedirectResponse)
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, text
 from starlette.middleware.sessions import SessionMiddleware
@@ -2700,10 +2701,25 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
             "<p><a href='/admin/clients'>&larr; Tous les clients</a></p>"
             "<div class='pagehdr'>"
             f"<h2 style='margin:0'>{name}</h2>"
+            "<div style='display:flex;gap:8px;flex-wrap:wrap'>"
             f"<form method='post' action='/admin/clients/{cl.id}/portal-link' style='margin:0'>"
-            "<button class='btn-ghost'>🔐 Envoyer le lien espace client</button></form>"
-            "</div>"
+            "<button class='btn-ghost'>🔐 Envoyer le lien — Messenger</button></form>"
+            f"<button type='button' class='btn-ghost' onclick='copyPortalLink({cl.id},this)'>"
+            "📋 Copier le lien espace client</button>"
+            "</div></div>"
             f"{stats}{tabs}{content}"
+            "<script>function copyPortalLink(id,btn){"
+            "var orig=btn.textContent;"
+            "fetch('/admin/clients/'+id+'/portal-link-url',{method:'POST'})"
+            ".then(function(r){return r.json();}).then(function(d){"
+            "if(!d.ok||!d.url){throw new Error('no url');}"
+            "if(navigator.clipboard&&navigator.clipboard.writeText){"
+            "navigator.clipboard.writeText(d.url).then(function(){"
+            "btn.textContent='✓ Lien copié';setTimeout(function(){btn.textContent=orig;},2000);"
+            "},function(){window.prompt('Copie le lien espace client :',d.url);});"
+            "}else{window.prompt('Copie le lien espace client :',d.url);}"
+            "}).catch(function(){btn.textContent='⚠️ Erreur';"
+            "setTimeout(function(){btn.textContent=orig;},2000);});}</script>"
         )
     return render_page(body, "clients")
 
@@ -2749,7 +2765,12 @@ def admin_client_dedup_identities(client_id: int):
             log_activity(db, cl.id, "note", "Identifiants en double nettoyés")
             db.commit()
     return RedirectResponse(f"/admin/clients/{client_id}?tab=identite", status_code=303)
-    """Issue a fresh magic link and send it to the client on their channel."""
+
+
+@app.post("/admin/clients/{client_id}/portal-link", dependencies=[Depends(require_admin)])
+def admin_client_send_portal_link(client_id: int):
+    """Issue a fresh magic link and send it to the client on their channel
+    (Messenger if available, e-mail otherwise)."""
     url = build_portal_login_url(client_id)
     if url:
         with SessionLocal() as db:
@@ -2767,6 +2788,16 @@ def admin_client_dedup_identities(client_id: int):
         except Exception as e:  # noqa: BLE001
             log.exception("Portal link dispatch failed for client #%s: %s", client_id, e)
     return RedirectResponse(f"/admin/clients/{client_id}", status_code=303)
+
+
+@app.post("/admin/clients/{client_id}/portal-link-url", dependencies=[Depends(require_admin)])
+def admin_client_portal_link_url(client_id: int):
+    """Return a fresh magic link for copy/paste — works for ANY client whatever
+    the channel. Single-use: issuing a new link invalidates the previous one."""
+    url = build_portal_login_url(client_id)
+    if not url:
+        return JSONResponse({"ok": False}, status_code=404)
+    return JSONResponse({"ok": True, "url": url})
 
 
 @app.post("/admin/clients/merge", dependencies=[Depends(require_admin)])
