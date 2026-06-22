@@ -1926,6 +1926,34 @@ def _case_vars_attr(c) -> str:
     return escape(json.dumps(_case_vars(c), ensure_ascii=False), quote=True)
 
 
+def _owner_card(c, me, staff_list) -> str:
+    """Ownership control for a case detail page: current owner, a one-click
+    « Me l'assigner » (claim as the acting staff), and an assign/release select.
+    Same actions as the board modal, available straight from the dossier."""
+    owner_name = escape(c.owner.name) if c.owner else None
+    osel = "".join(
+        f"<option value='{s.id}'{' selected' if c.owner_id == s.id else ''}>"
+        f"{escape(s.name)}</option>" for s in staff_list)
+    self_btn = ""
+    if me and c.owner_id != me.id:
+        self_btn = (
+            f"<form method='post' action='/admin/cases/{c.id}/claim' "
+            "style='margin:0 0 10px'>"
+            f"<input type='hidden' name='next' value='/admin/cases/{c.id}'>"
+            f"<button>👤 Me l'assigner ({escape(me.name)})</button></form>")
+    head = (f"<div class='kv'><span class='k'>Actuel</span>"
+            f"<span class='v'>{owner_name}</span></div>" if owner_name
+            else "<p class='sub' style='margin:0 0 10px'>Aucun responsable "
+                 "pour l'instant.</p>")
+    return (
+        "<div class='card'><h3>Responsable</h3>" + head + self_btn
+        + f"<form method='post' action='/admin/cases/{c.id}/assign' "
+        "style='display:flex;gap:8px;align-items:center;flex-wrap:wrap'>"
+        f"<input type='hidden' name='next' value='/admin/cases/{c.id}'>"
+        "<select name='staff_id'><option value=''>— remettre au pool —</option>"
+        f"{osel}</select><button class='btn-ghost'>Assigner</button></form></div>")
+
+
 def _tpl_select_html(all_tpls, channel) -> str:
     """A <select> of reply templates relevant to this channel (+ 'general'),
     rendered inside a reply <form>. Pairs with the applyTpl() JS, which drops the
@@ -3608,6 +3636,7 @@ def admin_case_detail(request: Request, case_id: int, warn: str = ""):
                 "</div>"
             )
             msg_card = f"<div class='card full'><h3>Conversation</h3>{msg_html}</div>"
+            owner_card = _owner_card(c, current_staff(request, db), active_staff(db))
             status_form = (
                 f"<form method='post' action='/admin/cases/{c.id}/status' "
                 "style='display:flex;gap:8px;align-items:center;margin:0'>"
@@ -3628,7 +3657,7 @@ def admin_case_detail(request: Request, case_id: int, warn: str = ""):
                 f"<h2 style='margin:0'>#{c.id} · {name} <span class='tag {c.status}'>{c.status}</span> "
                 "<span class='tag'>service client</span></h2>"
                 f"{status_form}</div>"
-                f"<div class='grid2'>{info}{msg_card}{reply}{shot_html}</div>"
+                f"<div class='grid2'>{info}{owner_card}{msg_card}{reply}{shot_html}</div>"
             )
             return render_page(body, "cases")
 
