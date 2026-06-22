@@ -2171,18 +2171,30 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
         nxt = "/admin/cases?status=service"
         with SessionLocal() as db:
             staff = active_staff(db)
-            open_cases = (db.query(Case)
-                          .filter(Case.kind == "support",
-                                  Case.status.notin_(("closed", "resolved")))
-                          .order_by(Case.created_at.desc()).limit(200).all())
-            resolved_cases = (db.query(Case)
-                              .filter(Case.kind == "support", Case.status == "resolved")
-                              .order_by(Case.created_at.desc()).limit(40).all())
-            col_new = [c for c in open_cases if c.awaiting_reply]       # notre tour
-            col_wait = [c for c in open_cases if not c.awaiting_reply]  # on attend le client
-            col_done = resolved_cases
+            CAP = 25  # cards rendered per column; the header shows the true total
+            base_open = db.query(Case).filter(
+                Case.kind == "support", Case.status.notin_(("closed", "resolved")))
+            n_new = base_open.filter(Case.awaiting_reply.is_(True)).count()
+            n_wait = base_open.filter(Case.awaiting_reply.is_(False)).count()
+            n_done = (db.query(Case)
+                      .filter(Case.kind == "support", Case.status == "resolved").count())
+            # 'Nouvelle demande' sorted oldest-first so the longest-waiting client
+            # surfaces at the top; the others newest-first.
+            col_new = (db.query(Case)
+                       .filter(Case.kind == "support",
+                               Case.status.notin_(("closed", "resolved")),
+                               Case.awaiting_reply.is_(True))
+                       .order_by(Case.created_at.asc()).limit(CAP).all())
+            col_wait = (db.query(Case)
+                        .filter(Case.kind == "support",
+                                Case.status.notin_(("closed", "resolved")),
+                                Case.awaiting_reply.is_(False))
+                        .order_by(Case.created_at.desc()).limit(CAP).all())
+            col_done = (db.query(Case)
+                        .filter(Case.kind == "support", Case.status == "resolved")
+                        .order_by(Case.created_at.desc()).limit(CAP).all())
             ratings = [int((c.review or {}).get("rating"))
-                       for c in resolved_cases if (c.review or {}).get("rating")]
+                       for c in col_done if (c.review or {}).get("rating")]
             avg_rating = f"{sum(ratings) / len(ratings):.1f}★" if ratings else "—"
 
             def _svc_card(c):
@@ -2204,28 +2216,39 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
                     "<div style='display:flex;justify-content:space-between;align-items:center'>"
                     f"{chip}<span class='muted' style='font-size:11px'>{when}</span></div></div>")
 
+            SVC_MORE = {
+                "Nouvelle demande": "/admin/cases?view=service&fstatus=open",
+                "En attente du client": "/admin/cases?view=service&fstatus=open",
+                "Résolue": "/admin/cases?view=service&fstatus=resolved"}
             cols_html = []
-            for label, items in [("Nouvelle demande", col_new),
-                                 ("En attente du client", col_wait),
-                                 ("Résolue", col_done)]:
+            for label, items, total in [("Nouvelle demande", col_new, n_new),
+                                        ("En attente du client", col_wait, n_wait),
+                                        ("Résolue", col_done, n_done)]:
                 cards = "".join(_svc_card(c) for c in items) or \
                     "<p class='muted' style='font-size:12px'>—</p>"
+                more = ""
+                if total > len(items):
+                    more = (f"<a href='{SVC_MORE[label]}' style='display:block;"
+                            "text-align:center;padding:8px;margin-top:6px;font-size:13px;"
+                            "color:var(--surf);text-decoration:none;border:1px dashed "
+                            f"var(--line);border-radius:8px'>+ {total - len(items)} autres "
+                            "· voir la liste →</a>")
                 cols_html.append(
                     "<div style='flex:1;min-width:210px'>"
                     f"<div style='{COLHEAD}'><span>{label}</span>"
-                    f"<span class='n'>{len(items)}</span></div>{cards}</div>")
-            board = ("<div style='display:flex;gap:14px;overflow-x:auto;padding-bottom:6px'>"
-                     + "".join(cols_html) + "</div>")
+                    f"<span class='n'>{total}</span></div>"
+                    f"<div style='max-height:62vh;overflow:auto'>{cards}</div>{more}</div>")
+            board = ("<div style='display:flex;gap:14px;overflow-x:auto;padding-bottom:6px;"
+                     "align-items:flex-start'>" + "".join(cols_html) + "</div>")
 
             tiles = "".join(
                 f"<div style='{TILE}'><div style='font-size:26px;font-weight:700;"
                 f"color:{color}'>{val}</div>"
                 f"<div class='muted' style='font-size:12px'>{lab}</div></div>"
                 for val, lab, color in [
-                    (len(col_new), "À traiter",
-                     "var(--gold)" if col_new else "var(--foam)"),
-                    (len(col_wait), "En attente du client", "var(--foam)"),
-                    (len(col_done), "Résolues (récent)", "var(--foam)"),
+                    (n_new, "À traiter", "var(--gold)" if n_new else "var(--foam)"),
+                    (n_wait, "En attente du client", "var(--foam)"),
+                    (n_done, "Résolues", "var(--foam)"),
                     (avg_rating, "Satisfaction", "var(--lagoon)")])
             kpis = ("<div style='display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px'>"
                     + tiles + "</div>")
@@ -3073,10 +3096,11 @@ def admin_reports():
 
         # --- status board ---
         cols = []
+        BCAP = 25  # cards rendered per column; the header shows the true total
         for status in BOARD:
             cases = (db.query(Case)
                      .filter(Case.kind == "trip", Case.status == status)
-                     .order_by(Case.created_at.desc()).limit(40).all())
+                     .order_by(Case.created_at.desc()).limit(BCAP).all())
             cards = []
             for c in cases:
                 t = c.trip or {}
@@ -3100,15 +3124,23 @@ def admin_reports():
                     f"{chip}<span class='muted' style='font-size:11px'>{age}\u00a0j</span></div></a>")
             n = st["by_status"].get(status, 0)
             body_cards = "".join(cards) or "<p class='muted' style='font-size:12px'>—</p>"
+            more = ""
+            if n > len(cards):
+                more = (f"<a href='/admin/cases?view=voyage&fstatus={status}' "
+                        "style='display:block;text-align:center;padding:8px;margin-top:6px;"
+                        "font-size:13px;color:var(--surf);text-decoration:none;border:1px "
+                        f"dashed var(--line);border-radius:8px'>+ {n - len(cards)} autres "
+                        "· voir la liste →</a>")
             cols.append(
                 "<div style='flex:1;min-width:190px'>"
                 f"<a href='/admin/cases?view=voyage&fstatus={status}' "
                 f"style='{COLHEAD};text-decoration:none;color:var(--foam)' "
                 f"title='Ouvrir la liste · {STAGE_FR[status]} (filtres + tri)'>"
                 f"<span>{STAGE_FR[status]}</span>"
-                f"<span class='n'>{n} ↗</span></a>{body_cards}</div>")
-        board = ("<div style='display:flex;gap:14px;overflow-x:auto;padding-bottom:6px'>"
-                 + "".join(cols) + "</div>")
+                f"<span class='n'>{n} ↗</span></a>"
+                f"<div style='max-height:62vh;overflow:auto'>{body_cards}</div>{more}</div>")
+        board = ("<div style='display:flex;gap:14px;overflow-x:auto;padding-bottom:6px;"
+                 "align-items:flex-start'>" + "".join(cols) + "</div>")
 
         # --- per-owner leaderboard ---
         if st["per_owner"]:
