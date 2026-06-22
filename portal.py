@@ -302,6 +302,38 @@ def _unread(client) -> int:
     return sum(1 for n in (client.notifications or []) if not n.get("read"))
 
 
+def _notif_item(n) -> str:
+    """One notification row. Support notifications (href -> a thread) open the
+    case in a modal (data-case) instead of navigating; others stay plain links."""
+    href = n.get("href") or ""
+    text = escape(n.get("text") or "")
+    when = _short_dt(n.get("at"))
+    cls = "nf" if n.get("read") else "nf un"
+    inner = f"<div class='nf-t'>{text}</div><div class='nf-at'>{when}</div>"
+    m = re.match(r"/portail/service#thread-(\d+)", href)
+    if m:
+        return f"<button type='button' class='{cls}' data-case='{m.group(1)}'>{inner}</button>"
+    if href:
+        return f"<a class='{cls}' href='{escape(href)}'>{inner}</a>"
+    return f"<div class='{cls}'>{inner}</div>"
+
+
+def _bell_panel(client) -> str:
+    """The bell with an inline dropdown of notifications — no page change. Newest
+    first; support notifications open the case in a modal."""
+    notifs = list(reversed(client.notifications or []))
+    count = sum(1 for n in notifs if not n.get("read"))
+    badge = f"<span class='bdot'>{count if count < 10 else '9+'}</span>" if count else ""
+    items = ("".join(_notif_item(n) for n in notifs[:30]) if notifs
+             else "<div class='nf-empty'>Aucune notification pour l'instant.</div>")
+    return (
+        "<div class='bell'>"
+        f"<button type='button' class='bell-btn' id='pbellBtn' "
+        f"aria-label='Notifications'>🔔{badge}</button>"
+        "<div class='bell-panel' id='pbellPanel'>"
+        f"<div class='nf-head'>Notifications</div>{items}</div></div>")
+
+
 _MONEY_RE = re.compile(r"(\d[\d\s\u202f,.]*)")
 
 
@@ -707,6 +739,40 @@ def _service_stars_form(c) -> str:
         "</form>")
 
 
+def _thread_foot(c) -> str:
+    """The footer of one support thread: reply + resolve while open, or the
+    feedback stars once resolved. Shared by the accordion and the modal."""
+    if c.status == "resolved":
+        return _service_stars_form(c)
+    return (
+        f"<form class='svc-reply' method='post' action='/portail/service/{c.id}/repondre'>"
+        "<textarea name='message' rows='2' placeholder='Écris ta réponse…' "
+        "required></textarea>"
+        "<button class='btn small' type='submit'>Répondre</button></form>"
+        f"<form class='svc-resolve' method='post' "
+        f"action='/portail/service/{c.id}/resoudre'>"
+        "<button class='btn ghost small' type='submit'>Marquer comme résolue</button>"
+        "</form>")
+
+
+def _thread_modal_html(c) -> str:
+    """One support thread rendered for the in-page modal (no navigation): header,
+    messages, and the reply/resolve or feedback footer."""
+    msgs = c.messages or []
+    resolved = c.status == "resolved"
+    label, cls = ("Résolue", "done") if resolved else ("En cours", "quote")
+    first = next((m.get("text") for m in msgs if m.get("dir") == "in"),
+                 c.raw_message or "Demande de service")
+    title = escape((first or "Demande de service").splitlines()[0][:60])
+    bubbles = ("".join(_msg_bubble(m) for m in msgs)
+               or "<div class='muted'>Demande envoyée. On te répond bientôt.</div>")
+    return (
+        "<div class='pm-head'>"
+        f"<span class='pm-title'>{title}</span>"
+        f"<span class='badge {cls}'>{label}</span></div>"
+        f"<div class='msgs'>{bubbles}</div>{_thread_foot(c)}")
+
+
 def _service_threads(cases) -> str:
     threads = sorted([c for c in cases if (c.kind or "") == "support"],
                      key=lambda x: x.created_at or datetime.min, reverse=True)
@@ -722,18 +788,7 @@ def _service_threads(cases) -> str:
         label, cls = ("Résolue", "done") if resolved else ("En cours", "quote")
         bubbles = ("".join(_msg_bubble(m) for m in msgs)
                    or "<div class='muted'>Demande envoyée. On te répond bientôt.</div>")
-        if resolved:
-            foot = _service_stars_form(c)
-        else:
-            foot = (
-                f"<form class='svc-reply' method='post' action='/portail/service/{c.id}/repondre'>"
-                "<textarea name='message' rows='2' placeholder='Écris ta réponse…' "
-                "required></textarea>"
-                "<button class='btn small' type='submit'>Répondre</button></form>"
-                f"<form class='svc-resolve' method='post' "
-                f"action='/portail/service/{c.id}/resoudre'>"
-                "<button class='btn ghost small' type='submit'>Marquer comme résolue</button>"
-                "</form>")
+        foot = _thread_foot(c)
         out.append(
             f"<details class='thread' id='thread-{c.id}'><summary>"
             f"<span class='th-sum'>{preview}</span>"
@@ -768,15 +823,10 @@ def _nav(active: str, locked: bool = False) -> str:
 # Shell
 # --------------------------------------------------------------------------- #
 def _shell(title: str, body: str, logged_in: bool = False, nav: str = "",
-           bell: int = 0) -> str:
-    bell_html = ""
-    if logged_in:
-        badge = f"<span class='bdot'>{bell if bell < 10 else '9+'}</span>" if bell else ""
-        bell_html = ("<a class='bell' href='/portail/notifications' "
-                     f"aria-label='Notifications'>🔔{badge}</a>")
+           bell: str = "") -> str:
     logout = ("<a class='logout' href='/portail/logout'>Déconnexion</a>"
               if logged_in else "")
-    actions = f"<div class='topact'>{bell_html}{logout}</div>" if logged_in else logout
+    actions = f"<div class='topact'>{bell}{logout}</div>" if logged_in else logout
     return _PORTAL_PAGE.format(title=escape(title), body=body, logout=actions, nav=nav)
 
 
@@ -890,7 +940,7 @@ def portal_home(request: Request, new: int = 0, avis: int = 0):
         if not kyc_complete(client):
             return RedirectResponse("/portail/profil", status_code=303)
         body = _accueil(client, cases, flash=flash)
-        bell = _unread(client)
+        bell = _bell_panel(client)
     resp = HTMLResponse(_shell("Accueil", body, logged_in=True,
                                nav=_nav("accueil"), bell=bell))
     _set_session_cookie(resp, cid)          # sliding expiry on every visit
@@ -912,7 +962,7 @@ def portal_notifications(request: Request):
         items = list(reversed(notifs))                   # newest first
         body = _notifications_page(items)
     resp = HTMLResponse(_shell("Notifications", body, logged_in=True,
-                               nav=_nav("accueil"), bell=0))
+                               nav=_nav("accueil"), bell=_bell_panel(client)))
     _set_session_cookie(resp, cid)
     return resp
 
@@ -931,7 +981,7 @@ def portal_profile(request: Request, saved: int = 0):
                 if locked else "Ces infos nous servent à réserver tes voyages au bon nom.")
         body = (f"<div class='hello'><h2>Mon profil</h2><p class='lede'>{lede}</p></div>"
                 + _profile_form(client, saved=bool(saved), locked=locked))
-        bell = _unread(client)
+        bell = _bell_panel(client)
     resp = HTMLResponse(_shell("Mon profil", body, logged_in=True,
                                nav=_nav("profil", locked=locked), bell=bell))
     _set_session_cookie(resp, cid)
@@ -980,7 +1030,7 @@ def portal_new_trip(request: Request):
     if gate:
         return gate
     with SessionLocal() as db:
-        bell = _unread(db.get(Client, cid))
+        bell = _bell_panel(db.get(Client, cid))
     body = ("<div class='hello'><h2>Nouvelle demande de voyage</h2>"
             "<p class='lede'>Dis-nous ce que tu cherches — on retrouve le même "
             "forfait avec ton rabais. 🌴</p></div>" + _new_trip_form())
@@ -1116,7 +1166,7 @@ def portal_avis(request: Request, ok: int = 0):
         cases = list(client.requests)
         flash = "Merci pour ton avis ✓" if ok else ""
         body = _avis_page(client, cases, flash=flash)
-        bell = _unread(client)
+        bell = _bell_panel(client)
     resp = HTMLResponse(_shell("Mes avis", body, logged_in=True, nav=_nav("avis"), bell=bell))
     _set_session_cookie(resp, cid)
     return resp
@@ -1172,7 +1222,7 @@ def portal_service(request: Request, sent: int = 0):
                 "<p class='lede'>Une question, un changement, un pépin ? Écris-nous, "
                 "un conseiller te répond.</p></div>"
                 + _service_form(cases) + _service_threads(cases))
-        bell = _unread(client)
+        bell = _bell_panel(client)
     resp = HTMLResponse(_shell("Aide", body, logged_in=True, nav=_nav("aide"), bell=bell))
     _set_session_cookie(resp, cid)
     return resp
@@ -1295,6 +1345,35 @@ async def portal_service_feedback(case_id: int, request: Request):
         log_activity(db, cid, "note", f"Évaluation service {rating}/5 (espace client)", case.id)
         db.commit()
     return RedirectResponse(f"/portail/service?sent=2#thread-{case_id}", status_code=303)
+
+
+@router.get("/portail/service/{case_id}/fragment", response_class=HTMLResponse)
+def portal_service_fragment(case_id: int, request: Request):
+    """HTML of one support thread, served for the in-page modal (no navigation)."""
+    cid, gate = _gate(request)
+    if gate:
+        return gate
+    with SessionLocal() as db:
+        case = db.get(Case, case_id)
+        if not case or case.client_id != cid or case.kind != "support":
+            return HTMLResponse("<div class='pm-load'>Demande introuvable.</div>",
+                                status_code=404)
+        return HTMLResponse(_thread_modal_html(case))
+
+
+@router.post("/portail/notifications/read")
+async def portal_notifications_read(request: Request):
+    """Mark every notification read — called by JS when the bell dropdown opens."""
+    cid, gate = _gate(request)
+    if gate:
+        return JSONResponse({"ok": False}, status_code=401)
+    with SessionLocal() as db:
+        client = db.get(Client, cid)
+        if (client and client.notifications
+                and any(not n.get("read") for n in client.notifications)):
+            client.notifications = [{**n, "read": True} for n in client.notifications]
+            db.commit()
+    return JSONResponse({"ok": True})
 
 
 @router.get("/portail/logout")
@@ -1793,6 +1872,33 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  @media (prefers-reduced-motion: reduce){{
    *{{transition:none !important;animation:none !important}}
  }}
+ .bell-btn{{background:none;border:0;cursor:pointer;font-size:20px;line-height:1;position:relative;padding:4px;color:inherit}}
+ .bell-panel{{position:absolute;right:0;top:44px;width:330px;max-width:88vw;max-height:72vh;overflow:auto;
+   background:var(--abyss,#04141d);border:1px solid var(--line);border-radius:16px;
+   box-shadow:0 24px 60px -18px rgba(0,0,0,.6);padding:6px;display:none;z-index:60}}
+ .bell-panel.open{{display:block}}
+ .nf-head{{font-family:"Space Grotesk",monospace;font-size:12px;text-transform:uppercase;
+   letter-spacing:.08em;color:var(--mist);padding:8px 10px 6px}}
+ .nf{{display:block;width:100%;text-align:left;background:none;border:0;border-radius:11px;
+   padding:10px 11px;cursor:pointer;color:var(--foam);text-decoration:none;font:inherit}}
+ .nf:hover{{background:rgba(25,211,230,.08)}}
+ .nf.un{{background:rgba(25,211,230,.06)}}
+ .nf.un .nf-t::before{{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;
+   background:var(--pacific);margin-right:7px;vertical-align:middle}}
+ .nf-t{{font-size:14px;line-height:1.35}}
+ .nf-at{{font-size:11px;color:var(--mist);margin-top:3px}}
+ .nf-empty{{padding:14px 12px;color:var(--mist);font-size:14px}}
+ .pm-ov{{position:fixed;inset:0;background:rgba(2,12,18,.62);backdrop-filter:blur(4px);
+   -webkit-backdrop-filter:blur(4px);display:none;align-items:flex-end;justify-content:center;z-index:80}}
+ .pm-ov.open{{display:flex}}
+ .pm{{background:var(--abyss,#04141d);border:1px solid var(--line);border-radius:20px 20px 0 0;
+   width:100%;max-width:620px;max-height:86vh;overflow:auto;padding:18px 16px 24px;position:relative}}
+ @media(min-width:620px){{.pm-ov{{align-items:center}}.pm{{border-radius:20px}}}}
+ .pm-x{{position:absolute;top:12px;right:14px;background:none;border:0;color:var(--mist);
+   font-size:22px;cursor:pointer;line-height:1}}
+ .pm-head{{display:flex;align-items:center;gap:10px;margin:2px 34px 14px 2px}}
+ .pm-title{{font-weight:700;font-size:16px;flex:1;min-width:0}}
+ .pm-load{{color:var(--mist);padding:24px;text-align:center}}
 </style></head><body>
  <div class="top">
    <div class="brand"><img src="/static/logo.png" alt="Du Voyageur">
@@ -1803,4 +1909,48 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  <div class="wrap">{body}
    <div class="foot">Du Voyageur · Permis d'agence 700495</div>
  </div>
+ <div class="pm-ov" id="pmOv"><div class="pm" id="pm">
+   <button type="button" class="pm-x" id="pmX" aria-label="Fermer">&times;</button>
+   <div id="pmBody"><div class="pm-load">Chargement…</div></div>
+ </div></div>
+ <script>
+ (function(){{
+  var btn=document.getElementById('pbellBtn');
+  var pan=document.getElementById('pbellPanel');
+  function markRead(){{
+   try{{fetch('/portail/notifications/read',{{method:'POST'}});}}catch(e){{}}
+   var d=btn&&btn.querySelector('.bdot'); if(d)d.remove();
+   var u=pan?pan.querySelectorAll('.nf.un'):[];
+   for(var i=0;i<u.length;i++)u[i].classList.remove('un');
+  }}
+  if(btn&&pan){{
+   btn.addEventListener('click',function(e){{
+    e.stopPropagation();
+    if(pan.classList.toggle('open'))markRead();
+   }});
+   document.addEventListener('click',function(e){{
+    if(!e.target.closest('.bell'))pan.classList.remove('open');
+   }});
+  }}
+  var ov=document.getElementById('pmOv');
+  var body=document.getElementById('pmBody');
+  function openCase(id){{
+   if(pan)pan.classList.remove('open');
+   body.innerHTML='<div class="pm-load">Chargement…</div>';
+   ov.classList.add('open');
+   fetch('/portail/service/'+id+'/fragment').then(function(r){{return r.text();}})
+    .then(function(h){{body.innerHTML=h;}})
+    .catch(function(){{body.innerHTML='<div class="pm-load">Impossible de charger la demande. '
+      +'<a href="/portail/service">Ouvrir la page</a></div>';}});
+  }}
+  document.addEventListener('click',function(e){{
+   var t=e.target.closest('[data-case]');
+   if(t){{e.preventDefault();openCase(t.getAttribute('data-case'));}}
+  }});
+  function closeModal(){{ov.classList.remove('open');}}
+  document.getElementById('pmX').addEventListener('click',closeModal);
+  ov.addEventListener('click',function(e){{if(e.target===ov)closeModal();}});
+  document.addEventListener('keydown',function(e){{if(e.key==='Escape')closeModal();}});
+ }})();
+ </script>
 </body></html>"""
