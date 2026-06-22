@@ -935,8 +935,9 @@ def _service_threads(cases) -> str:
 # Shell + nav
 # --------------------------------------------------------------------------- #
 def _nav(active: str, locked: bool = False) -> str:
-    if locked:                       # KYC incomplete -> no tabs, profile only
-        return ""
+    home = f"<a class='pill psite' href='{_SITE}'>← Site principal</a>"
+    if locked:                       # KYC incomplete -> no tabs, but still a way out
+        return f"<nav class='pnav'>{home}</nav>"
     items = [("accueil", "/portail", "Accueil"),
              ("nouveau", "/portail/nouveau-voyage", "Nouveau voyage"),
              ("aide", "/portail/service", "Aide"),
@@ -945,7 +946,7 @@ def _nav(active: str, locked: bool = False) -> str:
     links = "".join(
         f"<a class='pill{' on' if k == active else ''}' href='{href}'>{label}</a>"
         for k, href, label in items)
-    return f"<nav class='pnav'>{links}</nav>"
+    return f"<nav class='pnav'>{links}{home}</nav>"
 
 
 # --------------------------------------------------------------------------- #
@@ -1874,6 +1875,8 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
    padding:9px 16px;border-radius:999px;border:1px solid var(--line);
    background:rgba(8,33,47,.4)}}
  .pill.on{{color:#02161c;background:linear-gradient(120deg,var(--pacific),var(--lagoon));border-color:transparent}}
+ .psite{{margin-left:auto;color:var(--pacific);border-color:rgba(25,211,230,.4);background:rgba(25,211,230,.08)}}
+ .psite:hover,.psite:active{{color:#02161c;background:var(--pacific);border-color:transparent}}
  /* Layout */
  .wrap{{max-width:980px;margin:0 auto;padding:22px 18px 64px;
    padding-left:max(18px,env(safe-area-inset-left));padding-right:max(18px,env(safe-area-inset-right))}}
