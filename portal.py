@@ -537,9 +537,11 @@ def _accueil(client, cases, flash: str = "") -> str:
     pst = ("<h3 class='acc-h'>Voyages passés</h3><div class='tgrid'>"
            + "".join(_trip_card(c) for c in past) + "</div>") if past else ""
 
+    idcard = _identity_card(client)
+    toprow = f"<div class='toprow'>{idcard}{sav}</div>" if sav else idcard
     return (
         f"<div class='hello'><h2>{hello}</h2></div>"
-        + note + _identity_card(client) + sav + cta + fut + pst)
+        + note + toprow + cta + fut + pst)
 
 
 _MONTHS_FR = ["", "janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.",
@@ -1825,6 +1827,11 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
    border:1px solid rgba(61,240,197,.4);border-radius:18px;padding:18px 22px;margin-bottom:22px}}
  .savings .sv-l{{color:var(--surf);font-size:13px;text-transform:uppercase;letter-spacing:.12em;font-family:"Space Grotesk",monospace}}
  .savings .sv-n{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:26px;color:var(--lagoon)}}
+ .toprow{{display:flex;gap:14px;align-items:stretch;margin-bottom:22px}}
+ .toprow .idcard{{flex:1 1 60%;margin-bottom:0}}
+ .toprow .savings{{flex:1 1 40%;margin-bottom:0}}
+ @media(max-width:640px){{.toprow{{flex-direction:column;gap:0}}
+   .toprow .idcard{{margin-bottom:14px}}}}
  .acc-h{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:15px;
    margin:24px 0 12px;color:var(--surf);letter-spacing:-.01em}}
  .acc-h:first-of-type{{margin-top:8px}}
