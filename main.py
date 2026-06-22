@@ -32,6 +32,7 @@ import re
 import time
 import urllib.request
 import urllib.parse
+import json
 from contextlib import asynccontextmanager
 from datetime import datetime
 from html import escape
@@ -1801,8 +1802,14 @@ function applyTpl(sel){{
  var f=sel.closest('form');
  var ta=f?f.querySelector('textarea[name=message]'):null;
  if(ta){{
-  var nm=ta.getAttribute('data-client')||'';
-  ta.value=b.split('{{nom}}').join(nm);
+  var vars={{}};
+  try{{vars=JSON.parse(ta.getAttribute('data-vars')||'{{}}');}}catch(e){{}}
+  for(var k in vars){{
+   if(!vars.hasOwnProperty(k))continue;
+   var val=(vars[k]==null)?'':String(vars[k]);
+   b=b.replace(new RegExp('{{'+k+'}}','gi'),val);
+  }}
+  ta.value=b;
   ta.focus();
  }}
  sel.selectedIndex=0;
@@ -1853,6 +1860,70 @@ def _gear_html() -> str:
         "<a class='bell-item' href='/admin/config'>🛠️ System Config</a>"
         "</div></div>"
     )
+
+
+def _case_vars(c) -> dict:
+    """All the placeholder values a reply template can use for this case. Only
+    non-empty values are returned, so a missing field leaves its {tag} visible in
+    the draft (a cue to fill it) rather than blanking it out silently."""
+    t = c.trip or {}
+    client = getattr(c, "client", None)
+
+    def gv(*keys):
+        for k in keys:
+            v = t.get(k)
+            if v not in (None, "", []):
+                return v
+        return None
+
+    raw_name = (gv("customer_name")
+                or (getattr(client, "display_name", None) if client else None) or "")
+    raw_name = str(raw_name).strip()
+    prenom = raw_name.split()[0] if raw_name else ""
+    email = (c.customer_email or gv("customer_email")
+             or (getattr(client, "primary_email", None) if client else None) or "")
+    phone = (c.customer_phone or gv("customer_phone")
+             or (getattr(client, "primary_phone", None) if client else None) or "")
+    dest = gv("destination") or ""
+    hotel = gv("hotel_name_normalized", "hotel_name_raw") or ""
+    depart = c.flight_depart or gv("departure_date") or ""
+    retour = c.flight_return or gv("return_date") or ""
+    nights = gv("nights")
+    operator = gv("operator") or ""
+    origin = gv("origin_city") or ""
+    prix = ""
+    ps = t.get("price_seen") or {}
+    if isinstance(ps, dict) and ps.get("amount"):
+        prix = f"{ps['amount']} {ps.get('currency') or 'CAD'}"
+
+    vals = {
+        "nom": raw_name, "prenom": prenom,
+        "voyage": dest, "destination": dest,
+        "hotel": hotel,
+        "email": email, "courriel": email,
+        "telephone": phone, "tel": phone,
+        "montant": c.savings or "", "rabais": c.savings or "",
+        "prix": prix,
+        "depart": str(depart), "retour": str(retour),
+        "nuits": str(nights) if nights else "",
+        "ref": c.booking_ref or "", "lien": c.quote_url or "",
+        "operateur": operator, "origine": origin,
+    }
+    return {k: str(v) for k, v in vals.items() if v not in (None, "", "None")}
+
+
+# The placeholders a template can use, grouped for the admin help panel.
+TEMPLATE_VARS_HELP = [
+    ("Client", ["nom", "prenom", "email", "telephone"]),
+    ("Voyage", ["voyage", "hotel", "depart", "retour", "nuits", "origine", "operateur"]),
+    ("Prix", ["prix", "montant", "rabais"]),
+    ("Réservation", ["ref", "lien"]),
+]
+
+
+def _case_vars_attr(c) -> str:
+    """JSON of _case_vars, escaped to live in a data-vars="" attribute."""
+    return escape(json.dumps(_case_vars(c), ensure_ascii=False), quote=True)
 
 
 def _tpl_select_html(all_tpls, channel) -> str:
@@ -2389,7 +2460,7 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
                     f"<form method='post' action='/admin/cases/{c.id}/send'>"
                     f"<input type='hidden' name='next' value=\"{nxt}\">"
                     + _tpl_select_html(svc_tpls, c.channel)
-                    + f"<textarea name='message' rows='3' data-client=\"{name}\" "
+                    + f"<textarea name='message' rows='3' data-vars=\"{_case_vars_attr(c)}\" "
                     "placeholder='Répondre au client…' "
                     "style='width:100%'></textarea>"
                     "<button style='margin-top:10px'>Répondre au client</button></form>"
@@ -2905,7 +2976,7 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
                         f"<form method='post' action='/admin/cases/{r.id}/send'>"
                         f"<input type='hidden' name='next' value=\"{base}?tab=service\">"
                         + _tpl_select_html(list_tpls, r.channel)
-                        + "<textarea name='message' rows='3' data-client=\"" + name + "\" "
+                        + "<textarea name='message' rows='3' data-vars=\"" + _case_vars_attr(r) + "\" "
                         "placeholder='Répondre au client…' "
                         "style='width:100%'></textarea>"
                         "<button style='margin-top:10px'>Répondre au client</button></form>"
@@ -3174,7 +3245,7 @@ def admin_templates():
         f"style='flex:1;min-width:220px;{INP}'>"
         f"<select name='category' style='{INP}'>{cat_opts}</select></div>"
         "<textarea name='body' rows='4' required placeholder='Corps du message…  "
-        "(utilise {nom} pour insérer le prénom du client)' "
+        "(ex. Bonjour {nom}, ton voyage à {destination}…)' "
         f"style='width:100%;{INP}'></textarea>"
         "<button style='margin-top:10px'>Créer le modèle</button></form>"
         "<p class='sub'>Astuce : écris <code>{nom}</code> là où le nom du client doit "
@@ -3217,10 +3288,23 @@ def admin_templates():
     else:
         listing = ("<div class='card'><p class='sub'>Aucun modèle pour l'instant. "
                    "Crée ton premier ci-dessus.</p></div>")
+    vars_rows = "".join(
+        "<div style='margin-bottom:7px'>"
+        f"<b style='color:var(--surf)'>{grp}</b> &nbsp;"
+        + " ".join(f"<code>{{{v}}}</code>" for v in vs) + "</div>"
+        for grp, vs in TEMPLATE_VARS_HELP)
+    vars_card = (
+        "<div class='card'><h3>Variables disponibles</h3>"
+        "<p class='sub'>Insère ces balises dans un modèle — elles sont remplacées "
+        "automatiquement par les infos du dossier au moment où tu choisis le modèle. "
+        "Si une info manque sur le dossier, la balise reste affichée pour que tu la "
+        "complètes à la main.</p>"
+        f"<div style='font-size:13px;line-height:1.5;margin-top:10px'>{vars_rows}</div>"
+        "</div>")
     body = (page_header("Modèles de réponse")
             + "<p class='sub' style='margin:-6px 0 16px'>Ces modèles apparaissent dans "
             "un menu déroulant au-dessus de la boîte de réponse, en modal comme en vue "
-            "normale.</p>" + create + listing)
+            "normale.</p>" + create + vars_card + listing)
     return render_page(body, "")
 
 
@@ -3500,7 +3584,7 @@ def admin_case_detail(request: Request, case_id: int, warn: str = ""):
                 + mailto_btn
                 + f"<form method='post' action='/admin/cases/{c.id}/send'>"
                 + tpl_sel
-                + f"<textarea name='message' rows='4' data-client=\"{name}\" "
+                + f"<textarea name='message' rows='4' data-vars=\"{_case_vars_attr(c)}\" "
                 "placeholder='Écris ta réponse au client…' "
                 "style='width:100%'></textarea>"
                 f"<button style='margin-top:10px'>{btn_label}</button></form>"
@@ -3662,7 +3746,7 @@ def admin_case_detail(request: Request, case_id: int, warn: str = ""):
                 "<div class='card full'><h3>Réponse manuelle (sans le bot)</h3>"
                 f"<form method='post' action='/admin/cases/{c.id}/send'>"
                 + _tpl_select_html(list_templates(db), "messenger")
-                + f"<textarea name='message' rows='3' data-client=\"{name}\" "
+                + f"<textarea name='message' rows='3' data-vars=\"{_case_vars_attr(c)}\" "
                 "placeholder='Écris ton message ou ton offre au client…' "
                 "style='width:100%'></textarea>"
                 "<button style='margin-top:10px'>Envoyer au client sur Messenger</button></form>"
