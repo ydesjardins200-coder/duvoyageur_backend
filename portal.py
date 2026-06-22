@@ -313,12 +313,15 @@ def _resources_html(t: dict) -> str:
     links = [
         ("🛂", "Documents et passeport", f"{_SITE}/guide-documents-passeport"),
         ("🧳", "Quoi apporter — la checklist", f"{_SITE}/guide-quoi-apporter"),
+        ("💱", "Convertisseur de devises", f"{_SITE}/guide-convertisseur-devises"),
+        ("💸", "Pourboires au tout-inclus", f"{_SITE}/guide-pourboires"),
     ]
     hub = _trip_hub(t)
     if hub:
         slug, label = hub
         links.append(("📍", f"Tout savoir sur {label}", f"{_SITE}/{slug}"))
     links.append(("📅", "Météo & meilleure période", f"{_SITE}/guide-meilleure-periode"))
+    links.append(("🛃", "Ce que tu peux rapporter au retour", f"{_SITE}/guide-limites-douane"))
     items = "".join(
         f"<a class='res-i' href='{escape(url)}' target='_blank' rel='noopener'>"
         f"<span class='res-ic'>{ic}</span><span>{escape(lab)}</span>"
