@@ -2215,7 +2215,7 @@ def admin_logout(request: Request):
 @app.get("/admin/cases", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 def admin_cases(request: Request, status: str = "all", view: str = "voyage",
                 fstatus: str = "all", fcanal: str = "all", minconf: str = "0",
-                sort: str = "recu", dir: str = "desc"):
+                sort: str = "recu", dir: str = "desc", awaiting: str = "all"):
     # Top-nav travel sections (status filters, trip only).
     SECTION = {"service": "queue_service", "relance": "relance",
                "mine": "mine", "unclaimed": "unclaimed"}
@@ -2390,8 +2390,8 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
                     f"{chip}<span class='muted' style='font-size:11px'>{when}</span></div></div>")
 
             SVC_MORE = {
-                "Nouvelle demande": "/admin/cases?view=service&fstatus=open",
-                "En attente du client": "/admin/cases?view=service&fstatus=open",
+                "Nouvelle demande": "/admin/cases?view=service&fstatus=open&awaiting=yes",
+                "En attente du client": "/admin/cases?view=service&fstatus=open&awaiting=no",
                 "Résolue": "/admin/cases?view=service&fstatus=resolved"}
             cols_html = []
             for label, items, total in [("Nouvelle demande", col_new, n_new),
@@ -2408,8 +2408,10 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
                             "· voir la liste →</a>")
                 cols_html.append(
                     "<div style='flex:1;min-width:210px'>"
-                    f"<div style='{COLHEAD}'><span>{label}</span>"
-                    f"<span class='n'>{total}</span></div>"
+                    f"<a href='{SVC_MORE[label]}' "
+                    f"style='{COLHEAD};text-decoration:none;color:var(--foam)' "
+                    f"title='Ouvrir la liste · {label} (filtres + tri)'>"
+                    f"<span>{label}</span><span class='n'>{total} ↗</span></a>"
                     f"<div style='max-height:62vh;overflow:auto'>{cards}</div>{more}</div>")
             board = ("<div style='display:flex;gap:14px;overflow-x:auto;padding-bottom:6px;"
                      "align-items:flex-start'>" + "".join(cols_html) + "</div>")
@@ -2579,6 +2581,8 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
         fstatus = "all"
     if fcanal not in ("messenger", "form"):
         fcanal = "all"
+    if awaiting not in ("yes", "no"):
+        awaiting = "all"
     if minconf not in ("0.5", "0.7", "0.9"):
         minconf = "0"
     if sort not in ("status", "channel", "conf", "recu"):
@@ -2596,6 +2600,8 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
             q = q.filter(Case.channel == fcanal)
         if minconf != "0":
             q = q.filter(Case.parse_confidence >= float(minconf))
+        if kind == "support" and awaiting in ("yes", "no"):
+            q = q.filter(Case.awaiting_reply.is_(awaiting == "yes"))
         q = q.order_by(col.asc() if direction == "asc" else col.desc())
         cases = q.limit(300).all()
         n_voyage = db.query(Case).filter(Case.kind == "trip").count()
@@ -2627,6 +2633,7 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
         f"<input type='hidden' name='view' value='{view}'>"
         f"<input type='hidden' name='sort' value='{sort}'>"
         f"<input type='hidden' name='dir' value='{direction}'>"
+        f"<input type='hidden' name='awaiting' value='{escape(awaiting)}'>"
         f"<select name='fstatus' onchange='this.form.submit()'>{status_sel}</select>"
         f"<select name='fcanal' onchange='this.form.submit()'>{canal_sel}</select>"
         f"{conf_filter}"
@@ -2635,7 +2642,7 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
         "</form>"
     )
 
-    base = f"/admin/cases?view={view}&fstatus={fstatus}&fcanal={fcanal}&minconf={minconf}"
+    base = f"/admin/cases?view={view}&fstatus={fstatus}&fcanal={fcanal}&minconf={minconf}&awaiting={awaiting}"
     expand = (view == "voyage")
     table_html = table(cases, support=(view == "service"), expand=expand,
                        sort=(sort, direction, base))

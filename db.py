@@ -268,6 +268,7 @@ def init_db() -> None:
     _ensure_columns()
     _backfill_clients()
     _seed_staff()
+    _seed_templates()
     _backfill_last_activity()
     _backfill_follow_ups()
 
@@ -401,6 +402,70 @@ def _seed_staff() -> None:
             parts = [p for p in name.replace(".", " ").split() if p]
             initials = ("".join(p[0] for p in parts[:2]) or name[:2]).upper()
             s.add(Staff(name=name, initials=initials, role="admin", active=True))
+            s.commit()
+
+
+_SEED_TEMPLATES = [
+    ("Accusé de réception",
+     "Bonjour {prenom}, merci pour ton message ! On a bien reçu ta demande et un "
+     "conseiller te revient très rapidement, souvent la même journée. 🌴\n\n"
+     "— L'équipe Du Voyageur",
+     "general"),
+    ("Réponse de vente — demande d'info",
+     "Bonjour {prenom}, ça va me faire plaisir de t'aider à trouver le meilleur prix "
+     "pour {destination} ! Pour te préparer une proposition juste, peux-tu me "
+     "confirmer :\n• tes dates (ou la durée du séjour)\n• la ville de départ\n"
+     "• le nombre d'adultes et d'enfants\n• ton budget approximatif\n\n"
+     "Je te reviens rapidement. 😊",
+     "general"),
+    ("Soumission prête",
+     "Bonjour {prenom}, bonne nouvelle ! J'ai trouvé une belle option pour "
+     "{destination}. Voici ta soumission avec le rabais 👉 {lien}\n\n"
+     "Les places partent vite à ce prix — dis-moi si tu veux que je réserve pour "
+     "toi. 🌴",
+     "general"),
+    ("Demande de précisions",
+     "Bonjour {prenom}, pour bien te conseiller j'aurais besoin d'un peu plus de "
+     "détails : tes dates (ou la durée), la ville de départ, le nombre de voyageurs "
+     "et ton budget approximatif. Merci ! 😊",
+     "general"),
+    ("Confirmation de réservation",
+     "Bonjour {prenom}, ta réservation pour {destination} ({hotel}) est confirmée ! "
+     "🎉\nRéférence : {ref}\nDépart : {depart} — Retour : {retour}\n\n"
+     "Tu reçois tous les détails par courriel. Bon voyage ! 🌴",
+     "general"),
+    ("Suivi / relance douce",
+     "Bonjour {prenom}, je voulais m'assurer que tu as bien reçu ma proposition pour "
+     "{destination}. As-tu des questions ? Je reste disponible pour ajuster ou "
+     "réserver quand tu es prêt(e). 😊",
+     "general"),
+    ("Remerciement après le voyage",
+     "Bonjour {prenom}, j'espère que ton voyage à {destination} a été merveilleux ! "
+     "🌴 Si tu as 2 minutes, ça nous aiderait beaucoup que tu partages ton "
+     "expérience. Au plaisir de planifier ta prochaine évasion !",
+     "general"),
+    ("Accueil Messenger",
+     "Salut {prenom} ! 👋 Merci pour ton message. Dis-moi vers quelle destination tu "
+     "rêves de partir et tes dates approximatives — je te déniche le meilleur prix "
+     "avec rabais. 🌴",
+     "messenger"),
+    ("Réponse au formulaire de contact",
+     "Bonjour {prenom},\n\nMerci d'avoir rempli notre formulaire. On a bien reçu ta "
+     "demande et on te répond en détail très bientôt. Si c'est urgent, tu peux aussi "
+     "nous écrire sur Messenger.\n\nAu plaisir de t'aider à planifier ton voyage !\n"
+     "— L'équipe Du Voyageur",
+     "formulaire"),
+]
+
+
+def _seed_templates() -> None:
+    """Insert a starter set of ready-to-use reply templates the first time only
+    (empty table). Editable/removable afterwards; never overwrites the team's
+    own templates or edits."""
+    with SessionLocal() as s:
+        if s.query(ReplyTemplate).count() == 0:
+            for title, body, cat in _SEED_TEMPLATES:
+                s.add(ReplyTemplate(title=title, body=body, category=cat))
             s.commit()
 
 
