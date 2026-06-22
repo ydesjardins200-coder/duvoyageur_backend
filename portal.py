@@ -1507,13 +1507,9 @@ async def portal_notifications_read(request: Request):
 
 @router.get("/portail/logout")
 def portal_logout():
-    resp = HTMLResponse(_info_page(
-        "À bientôt 👋",
-        "Tu es déconnecté de ton espace client. "
-        "<a href='/portail/connexion'>Me reconnecter</a>.", logged_in=False))
-    resp.delete_cookie(PORTAL_COOKIE, path=_COOKIE_PATH)
-    resp.delete_cookie(HINT_COOKIE, path=_COOKIE_PATH)
-    return resp
+    # Log out and send the visitor back to the public site home (Netlify), not to
+    # a standalone confirmation page. Both portal cookies are cleared on the way.
+    return _clear_session_cookies(RedirectResponse(_SITE, status_code=303))
 
 
 def _is_logged_in(request: Request) -> bool:
