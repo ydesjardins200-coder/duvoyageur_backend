@@ -31,6 +31,7 @@ import os
 import re
 import time
 import urllib.request
+import urllib.parse
 from contextlib import asynccontextmanager
 from datetime import datetime
 from html import escape
@@ -59,7 +60,8 @@ from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLoca
                 mark_follow_up_for_status, schedule_follow_up, touch_activity,
                 active_staff, default_staff_id, unclaimed_cases, cases_for_owner,
                 count_unclaimed, pipeline_stats, unclaimed_support_cases,
-                count_unclaimed_support)
+                count_unclaimed_support, ReplyTemplate, list_templates,
+                templates_for_channel, TEMPLATE_CATEGORIES, TEMPLATE_CATEGORY_LABELS)
 from facebook import (extract_messages, extract_postbacks, extract_quick_replies,
                       get_user_name, send_quick_replies, send_text, send_text_result,
                       set_ice_breakers,
@@ -1792,6 +1794,19 @@ document.addEventListener('click',function(e){{
 document.addEventListener('keydown',function(e){{
  if(e.key==='Escape'){{var o=document.getElementById('lightbox');if(o)o.classList.remove('open');}}
 }});
+function applyTpl(sel){{
+ var o=sel.options[sel.selectedIndex];
+ var b=o.getAttribute('data-body');
+ if(!b){{return;}}
+ var f=sel.closest('form');
+ var ta=f?f.querySelector('textarea[name=message]'):null;
+ if(ta){{
+  var nm=ta.getAttribute('data-client')||'';
+  ta.value=b.split('{{nom}}').join(nm);
+  ta.focus();
+ }}
+ sel.selectedIndex=0;
+}}
 </script>
 <div id="lightbox" class="lightbox"><button type="button" class="lb-x">\u2715</button><img src="" alt="capture"></div>
 </body></html>"""
@@ -1833,10 +1848,31 @@ def _gear_html() -> str:
         "<button class='bell-btn' id='gearBtn' aria-label='Réglages'>⚙️</button>"
         "<div class='bell-panel' id='gearPanel'>"
         "<div class='bell-head'>Réglages</div>"
+        "<a class='bell-item' href='/admin/templates'>💬 Modèles de réponse</a>"
         "<a class='bell-item' href='/admin/system'>🩺 System Health</a>"
         "<a class='bell-item' href='/admin/config'>🛠️ System Config</a>"
         "</div></div>"
     )
+
+
+def _tpl_select_html(all_tpls, channel) -> str:
+    """A <select> of reply templates relevant to this channel (+ 'general'),
+    rendered inside a reply <form>. Pairs with the applyTpl() JS, which drops the
+    chosen body into the form's textarea (and swaps {nom} for the client name).
+    Returns "" when there is no template to offer, so nothing extra shows up."""
+    cats = {"general"}
+    if channel in ("messenger", "portal", "formulaire"):
+        cats.add(channel)
+    rel = [t for t in all_tpls if t.category in cats]
+    if not rel:
+        return ""
+    opts = ["<option value=''>— Insérer un modèle —</option>"]
+    for t in rel:
+        opts.append(f"<option data-body=\"{escape(t.body, quote=True)}\">"
+                    f"{escape(t.title)}</option>")
+    return ("<select onchange='applyTpl(this)' "
+            "style='width:100%;margin-bottom:8px;font-size:13px;padding:6px 8px'>"
+            + "".join(opts) + "</select>")
 
 
 def current_staff(request: Request, db) -> Optional[Staff]:
@@ -2320,6 +2356,7 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
                     + tiles + "</div>")
 
             modals = []
+            svc_tpls = list_templates(db)
             for c in (col_new + col_wait + col_done):
                 t = c.trip or {}
                 name = escape(str(t.get("customer_name") or "Client"))
@@ -2351,7 +2388,9 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
                     "<div class='modal-ft'>"
                     f"<form method='post' action='/admin/cases/{c.id}/send'>"
                     f"<input type='hidden' name='next' value=\"{nxt}\">"
-                    "<textarea name='message' rows='3' placeholder='Répondre au client…' "
+                    + _tpl_select_html(svc_tpls, c.channel)
+                    + f"<textarea name='message' rows='3' data-client=\"{name}\" "
+                    "placeholder='Répondre au client…' "
                     "style='width:100%'></textarea>"
                     "<button style='margin-top:10px'>Répondre au client</button></form>"
                     "</div></div></div>")
@@ -2838,6 +2877,7 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
         else:
             if supports:
                 rows, modals = [], []
+                list_tpls = list_templates(db)
                 for r in supports:
                     msgs = _conversation(r)
                     last_in = next((m for m in reversed(msgs) if m.get("dir") == "in"), None)
@@ -2864,7 +2904,9 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
                         "<div class='modal-ft'>"
                         f"<form method='post' action='/admin/cases/{r.id}/send'>"
                         f"<input type='hidden' name='next' value=\"{base}?tab=service\">"
-                        "<textarea name='message' rows='3' placeholder='Répondre au client…' "
+                        + _tpl_select_html(list_tpls, r.channel)
+                        + "<textarea name='message' rows='3' data-client=\"" + name + "\" "
+                        "placeholder='Répondre au client…' "
                         "style='width:100%'></textarea>"
                         "<button style='margin-top:10px'>Répondre au client</button></form>"
                         "</div></div></div>"
@@ -3113,6 +3155,113 @@ def admin_config():
     return render_page(body, "config")
 
 
+@app.get("/admin/templates", response_class=HTMLResponse,
+         dependencies=[Depends(require_admin)])
+def admin_templates():
+    with SessionLocal() as db:
+        tpls = list_templates(db)
+    INP = "padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:rgba(3,18,27,.55);color:var(--foam);font-family:inherit"
+    cat_opts = "".join(
+        f"<option value='{c}'>{escape(TEMPLATE_CATEGORY_LABELS[c])}</option>"
+        for c in TEMPLATE_CATEGORIES)
+    create = (
+        "<div class='card'><h3>Nouveau modèle</h3>"
+        "<p class='sub'>Un modèle « Général » s'affiche partout; sinon il n'apparaît "
+        "que pour le canal choisi (Messenger, portail ou formulaire).</p>"
+        "<form method='post' action='/admin/templates' style='margin-top:10px'>"
+        "<div style='display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px'>"
+        f"<input name='title' placeholder='Titre (ex. Salutation)' required "
+        f"style='flex:1;min-width:220px;{INP}'>"
+        f"<select name='category' style='{INP}'>{cat_opts}</select></div>"
+        "<textarea name='body' rows='4' required placeholder='Corps du message…  "
+        "(utilise {nom} pour insérer le prénom du client)' "
+        f"style='width:100%;{INP}'></textarea>"
+        "<button style='margin-top:10px'>Créer le modèle</button></form>"
+        "<p class='sub'>Astuce : écris <code>{nom}</code> là où le nom du client doit "
+        "apparaître — il sera remplacé automatiquement à l'insertion.</p></div>")
+
+    if tpls:
+        items = []
+        for t in tpls:
+            lab = escape(TEMPLATE_CATEGORY_LABELS.get(t.category, t.category))
+            prev = escape(t.body)
+            ecats = "".join(
+                f"<option value='{c}'{' selected' if c == t.category else ''}>"
+                f"{escape(TEMPLATE_CATEGORY_LABELS[c])}</option>"
+                for c in TEMPLATE_CATEGORIES)
+            items.append(
+                "<div class='card'>"
+                "<div style='display:flex;justify-content:space-between;"
+                "align-items:center;gap:8px'>"
+                f"<h3 style='margin:0'>{escape(t.title)}</h3>"
+                "<span style='font-size:11px;color:#94b8c6;border:1px solid "
+                f"rgba(155,246,236,.18);border-radius:6px;padding:2px 8px'>{lab}</span>"
+                "</div>"
+                "<pre style='white-space:pre-wrap;font-family:inherit;color:#94b8c6;"
+                f"margin:8px 0;font-size:13px'>{prev}</pre>"
+                "<details><summary style='cursor:pointer;font-size:13px;color:var(--pacific)'>"
+                "Modifier</summary>"
+                f"<form method='post' action='/admin/templates/{t.id}/edit' "
+                "style='margin-top:8px'>"
+                "<div style='display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px'>"
+                f"<input name='title' value=\"{escape(t.title)}\" required "
+                f"style='flex:1;min-width:220px;{INP}'>"
+                f"<select name='category' style='{INP}'>{ecats}</select></div>"
+                f"<textarea name='body' rows='4' required style='width:100%;{INP}'>{prev}</textarea>"
+                "<button style='margin-top:8px'>Enregistrer</button></form></details>"
+                f"<form method='post' action='/admin/templates/{t.id}/delete' "
+                "onsubmit=\"return confirm('Supprimer ce modèle ?')\" "
+                "style='margin-top:8px'><button class='btn-danger'>Supprimer</button>"
+                "</form></div>")
+        listing = "".join(items)
+    else:
+        listing = ("<div class='card'><p class='sub'>Aucun modèle pour l'instant. "
+                   "Crée ton premier ci-dessus.</p></div>")
+    body = (page_header("Modèles de réponse")
+            + "<p class='sub' style='margin:-6px 0 16px'>Ces modèles apparaissent dans "
+            "un menu déroulant au-dessus de la boîte de réponse, en modal comme en vue "
+            "normale.</p>" + create + listing)
+    return render_page(body, "")
+
+
+@app.post("/admin/templates", dependencies=[Depends(require_admin)])
+def admin_template_create(title: str = Form(...), body: str = Form(...),
+                          category: str = Form("general")):
+    title, body = (title or "").strip(), (body or "").strip()
+    cat = category if category in TEMPLATE_CATEGORIES else "general"
+    if title and body:
+        with SessionLocal() as db:
+            db.add(ReplyTemplate(title=title[:120], body=body, category=cat))
+            db.commit()
+    return RedirectResponse("/admin/templates", status_code=303)
+
+
+@app.post("/admin/templates/{tpl_id}/edit", dependencies=[Depends(require_admin)])
+def admin_template_edit(tpl_id: int, title: str = Form(...), body: str = Form(...),
+                        category: str = Form("general")):
+    with SessionLocal() as db:
+        t = db.get(ReplyTemplate, tpl_id)
+        if t:
+            if (title or "").strip():
+                t.title = title.strip()[:120]
+            if (body or "").strip():
+                t.body = body.strip()
+            if category in TEMPLATE_CATEGORIES:
+                t.category = category
+            db.commit()
+    return RedirectResponse("/admin/templates", status_code=303)
+
+
+@app.post("/admin/templates/{tpl_id}/delete", dependencies=[Depends(require_admin)])
+def admin_template_delete(tpl_id: int):
+    with SessionLocal() as db:
+        t = db.get(ReplyTemplate, tpl_id)
+        if t:
+            db.delete(t)
+            db.commit()
+    return RedirectResponse("/admin/templates", status_code=303)
+
+
 @app.get("/admin/reports", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
 def admin_reports():
     """Pipeline & performance: KPI strip, a status board (kanban), and a
@@ -3314,20 +3463,45 @@ def admin_case_detail(request: Request, case_id: int, warn: str = ""):
                     for i in range(len(shots)))
                 shot_html = f"<div class='card full'><h3>Pièce(s) jointe(s) · {len(shots)}</h3>{imgs}</div>"
 
+            tpl_sel = _tpl_select_html(list_templates(db), c.channel)
+            mailto_btn = ""
+            if c.channel == "formulaire":
+                raw_name = (t.get("customer_name") or "").strip()
+                email = (c.customer_email
+                         or (c.client.primary_email if c.client else "") or "")
+                if email:
+                    greeting = f"Bonjour {raw_name}," if raw_name else "Bonjour,"
+                    subj = urllib.parse.quote("Réponse à votre demande — Du Voyageur")
+                    bodyq = urllib.parse.quote(greeting + "\n\n")
+                    mailto_btn = (
+                        f"<a href=\"mailto:{escape(email)}?subject={subj}&body={bodyq}\" "
+                        "style='display:inline-block;margin:0 0 12px;padding:9px 14px;"
+                        "border-radius:8px;background:#3df0c5;color:#03121b;"
+                        "font-weight:600;text-decoration:none'>✉️ Répondre par courriel</a>")
+
             if c.sender_ref:
                 reply_note = ("Ta réponse est toujours enregistrée sur le fil. "
                               "Livraison Messenger seulement dans la fenêtre de 24 h "
                               "après le dernier message du client; sinon elle reste "
                               "visible dans l'espace client.")
                 btn_label = "Envoyer sur Messenger"
+            elif c.channel == "formulaire":
+                reply_note = ("Ce client a écrit via le formulaire de contact — il n'a "
+                              "pas forcément de compte. Le plus sûr est de lui répondre "
+                              "par courriel (bouton ci-dessus). Ta réponse reste aussi "
+                              "enregistrée sur le fil pour l'historique.")
+                btn_label = "Enregistrer sur le fil"
             else:
                 reply_note = ("Ta réponse s'affiche dans l'espace client du portail et "
                               "le client reçoit une notification.")
                 btn_label = "Envoyer la réponse"
             reply = (
                 "<div class='card full'><h3>Répondre au client</h3>"
-                f"<form method='post' action='/admin/cases/{c.id}/send'>"
-                "<textarea name='message' rows='4' placeholder='Écris ta réponse au client…' "
+                + mailto_btn
+                + f"<form method='post' action='/admin/cases/{c.id}/send'>"
+                + tpl_sel
+                + f"<textarea name='message' rows='4' data-client=\"{name}\" "
+                "placeholder='Écris ta réponse au client…' "
                 "style='width:100%'></textarea>"
                 f"<button style='margin-top:10px'>{btn_label}</button></form>"
                 f"<p class='sub'>{reply_note} Une fois traité, le dossier sort de la "
@@ -3487,7 +3661,9 @@ def admin_case_detail(request: Request, case_id: int, warn: str = ""):
             send_panel = (
                 "<div class='card full'><h3>Réponse manuelle (sans le bot)</h3>"
                 f"<form method='post' action='/admin/cases/{c.id}/send'>"
-                "<textarea name='message' rows='3' placeholder='Écris ton message ou ton offre au client…' "
+                + _tpl_select_html(list_templates(db), "messenger")
+                + f"<textarea name='message' rows='3' data-client=\"{name}\" "
+                "placeholder='Écris ton message ou ton offre au client…' "
                 "style='width:100%'></textarea>"
                 "<button style='margin-top:10px'>Envoyer au client sur Messenger</button></form>"
                 "<p class='sub'>Envoi direct via Messenger, sans déclencher le bot. "

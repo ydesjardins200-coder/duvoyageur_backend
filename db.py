@@ -165,6 +165,47 @@ class Staff(Base):
     owned_cases = relationship("Case", back_populates="owner")
 
 
+# Categories a reply template can belong to. "general" shows up for every channel.
+TEMPLATE_CATEGORIES = ["general", "messenger", "portal", "formulaire"]
+TEMPLATE_CATEGORY_LABELS = {
+    "general": "Général (tous)",
+    "messenger": "Messenger",
+    "portal": "Portail client",
+    "formulaire": "Formulaire de contact",
+}
+
+
+class ReplyTemplate(Base):
+    """A saved canned reply the team can drop into the answer box. Categorised by
+    channel so the reply box only offers the relevant ones (+ 'general')."""
+    __tablename__ = "reply_templates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    title: Mapped[str] = mapped_column(String(120))
+    body: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(20), default="general", index=True)
+
+
+def list_templates(db, category: Optional[str] = None) -> "list[ReplyTemplate]":
+    """All templates, newest categories grouped; optionally filter by category."""
+    q = db.query(ReplyTemplate)
+    if category:
+        q = q.filter(ReplyTemplate.category == category)
+    return q.order_by(ReplyTemplate.category, ReplyTemplate.title).all()
+
+
+def templates_for_channel(db, channel: Optional[str]) -> "list[ReplyTemplate]":
+    """Templates offered when replying on a given channel: its own category plus
+    the always-on 'general' bucket."""
+    cats = ["general"]
+    if channel and channel in ("messenger", "portal", "formulaire"):
+        cats.append(channel)
+    return (db.query(ReplyTemplate)
+            .filter(ReplyTemplate.category.in_(cats))
+            .order_by(ReplyTemplate.title).all())
+
+
 class Case(Base):
     __tablename__ = "cases"
 
