@@ -57,7 +57,8 @@ from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLoca
                 Staff, FOLLOW_UP_STATUSES, due_follow_ups, is_stale_quoted,
                 mark_follow_up_for_status, schedule_follow_up, touch_activity,
                 active_staff, default_staff_id, unclaimed_cases, cases_for_owner,
-                count_unclaimed, pipeline_stats)
+                count_unclaimed, pipeline_stats, unclaimed_support_cases,
+                count_unclaimed_support)
 from facebook import (extract_messages, extract_postbacks, extract_quick_replies,
                       get_user_name, send_quick_replies, send_text, send_text_result,
                       set_ice_breakers,
@@ -1890,18 +1891,47 @@ def _pool_table(db, now, nxt: str = "/admin/cases?status=unclaimed") -> str:
             "<th>Suivi</th><th>Action</th></tr>" + ("".join(rows) or empty) + "</table>")
 
 
+def _pool_support_table(db, now, nxt: str = "/admin/cases?status=unclaimed") -> str:
+    """Unclaimed support requests pool, with a 'Réclamer' action (claims as the
+    acting staff). Mirrors _pool_table but for service-client cases."""
+    rows = []
+    for c in unclaimed_support_cases(db):
+        t = c.trip or {}
+        name = escape(str(t.get("customer_name") or "Client"))
+        first_in = next((m.get("text") for m in _conversation(c)
+                         if m.get("dir") == "in"), c.raw_message or "")
+        subj = escape((first_in or "Demande de service").splitlines()[0][:60])
+        when = c.created_at.strftime("%Y-%m-%d") if c.created_at else "—"
+        state = "Nouvelle demande" if c.awaiting_reply else "En attente du client"
+        btn = (f"<form method='post' action='/admin/cases/{c.id}/claim' "
+               "style='margin:0;display:inline'>"
+               f"<input type='hidden' name='next' value=\"{nxt}\">"
+               "<button title='Réclamer cette demande'>Réclamer</button></form>")
+        rows.append(
+            f"<tr data-href='/admin/cases/{c.id}'>"
+            f"<td><a href='/admin/cases/{c.id}'>#{c.id}</a></td>"
+            f"<td><b>{name}</b></td><td>{escape(state)}</td><td>{subj}</td>"
+            f"<td class='muted'>{when}</td>"
+            f"<td onclick='event.stopPropagation()'>{btn} "
+            f"<a class='btn-ghost' href='/admin/cases/{c.id}'>Ouvrir</a></td></tr>")
+    empty = ("<tr><td colspan='6' class='muted'>Aucune demande de service à "
+             "réclamer. 🎉</td></tr>")
+    return ("<table><tr><th>#</th><th>Client</th><th>État</th><th>Sujet</th>"
+            "<th>Reçu</th><th>Action</th></tr>" + ("".join(rows) or empty) + "</table>")
+
+
 def _nav_html(active: str = "") -> str:
     """Top navigation row, travel-domain sections, with a live count on the
     new-requests queue."""
     with SessionLocal() as db:
         n_svc = db.query(Case).filter(Case.kind == "support", Case.awaiting_reply.is_(True),
                                       Case.status.notin_(("closed", "resolved"))).count()
-        n_unclaimed = count_unclaimed(db)
+        n_unclaimed = count_unclaimed(db) + count_unclaimed_support(db)
     items = [
-        ("reports", "Pipeline", "/admin/reports", None),
-        ("unclaimed", "Dossier à réclamer", "/admin/cases?status=unclaimed", n_unclaimed),
-        ("queue_service", "Service client et relances",
+        ("reports", "Pipeline - voyage", "/admin/reports", None),
+        ("queue_service", "Pipeline - service client",
          "/admin/cases?status=service", n_svc),
+        ("unclaimed", "Dossier à réclamer", "/admin/cases?status=unclaimed", n_unclaimed),
         ("mine", "Mes dossiers", "/admin/cases?status=mine", None),
         ("cases", "Demandes", "/admin/cases", None),
         ("clients", "Clients", "/admin/clients", None),
@@ -2024,7 +2054,7 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
     # Top-nav travel sections (status filters, trip only).
     SECTION = {"service": "queue_service", "relance": "relance",
                "mine": "mine", "unclaimed": "unclaimed"}
-    SEC_TITLE = {"queue_service": "Service client et relances"}
+    SEC_TITLE = {"queue_service": "Pipeline - service client"}
     nav_active = SECTION.get(status, "cases")
 
     def next_step(c) -> str:
@@ -2267,7 +2297,8 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
             body = page_header("À relancer", nxt) + intro + _relance_table(db, now, nxt)
         return render_page(body, "relance")
 
-    # "Dossier à réclamer": the shared pool of unowned in-progress dossiers.
+    # "Dossier à réclamer": the shared pool of unowned in-progress dossiers,
+    # split between Voyage and Service client.
     if nav_active == "unclaimed":
         now = datetime.utcnow()
         with SessionLocal() as db:
@@ -2276,8 +2307,12 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
             intro = ("<p class='muted' style='margin:6px 0 14px'>Dossiers en cours "
                      "sans responsable. « Réclamer » te les attribue "
                      "(staff sélectionné ci-dessus).</p>")
+            voyage = ("<h3 style='margin:18px 0 6px'>Voyage</h3>"
+                      + _pool_table(db, now, base))
+            service = ("<h3 style='margin:28px 0 6px'>Service client</h3>"
+                       + _pool_support_table(db, now, base))
             body = (page_header("Dossier à réclamer", base) + acting + intro
-                    + _pool_table(db, now, base))
+                    + voyage + service)
         return render_page(body, "unclaimed")
 
     # "Mes dossiers": in-progress dossiers owned by the acting staff member,
@@ -3087,7 +3122,7 @@ def admin_reports():
         else:
             leaderboard = ""
 
-    body = (page_header("Pipeline & performance", "/admin/reports")
+    body = (page_header("Pipeline - voyage", "/admin/reports")
             + kpis
             + "<h3 style='margin:4px 0 12px'>Board pipeline</h3>" + board
             + leaderboard)

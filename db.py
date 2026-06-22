@@ -564,6 +564,22 @@ def count_unclaimed(db) -> int:
                     Case.owner_id.is_(None)).count())
 
 
+def unclaimed_support_cases(db):
+    """In-progress support requests with no owner — the service pool to claim."""
+    return (db.query(Case)
+            .filter(Case.kind == "support",
+                    Case.status.notin_(("closed", "resolved")),
+                    Case.owner_id.is_(None))
+            .order_by(Case.created_at.desc()).all())
+
+
+def count_unclaimed_support(db) -> int:
+    return (db.query(Case)
+            .filter(Case.kind == "support",
+                    Case.status.notin_(("closed", "resolved")),
+                    Case.owner_id.is_(None)).count())
+
+
 # --------------------------------------------------------------------------- #
 # Pipeline metrics (Phase 3) — performance d'affaire
 # --------------------------------------------------------------------------- #
