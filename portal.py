@@ -1793,13 +1793,13 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  h1,h2,h3{{font-family:"Bricolage Grotesque",sans-serif;letter-spacing:-.02em}}
  :focus-visible{{outline:2px solid var(--pacific);outline-offset:2px;border-radius:6px}}
  /* Header */
- .top{{display:flex;align-items:center;justify-content:space-between;gap:12px;
+ .top{{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
    padding:14px 18px;padding-top:max(14px,env(safe-area-inset-top));
    border-bottom:1px solid var(--line);
    background:linear-gradient(180deg, rgba(8,33,47,.72), rgba(8,33,47,.35));
    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
    position:sticky;top:0;z-index:5}}
- .brand{{display:flex;align-items:center;gap:11px;min-width:0}}
+ .brand{{display:flex;align-items:center;gap:11px;min-width:0;flex:none}}
  .brand img{{width:40px;height:40px;border-radius:50%;box-shadow:0 0 0 1px var(--line);flex:none}}
  .brand b{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:17px;display:block;line-height:1.1}}
  .brand span{{font-family:"Space Grotesk",monospace;text-transform:uppercase;letter-spacing:.2em;
@@ -1807,7 +1807,9 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .logout{{font-size:13px;color:var(--mist);text-decoration:none;white-space:nowrap;
    padding:8px 10px;border-radius:10px}}
  .logout:hover,.logout:active{{color:var(--foam)}}
- .topact{{display:flex;align-items:center;gap:6px}}
+ .topact{{display:flex;align-items:center;gap:6px;margin-left:auto;flex:none}}
+ @media(max-width:760px){{.top{{row-gap:10px}}
+   .brand{{order:1}} .topact{{order:2}} .pnav{{order:3;flex-basis:100%}}}}
  .bell{{position:relative;text-decoration:none;font-size:20px;line-height:1;
    padding:8px 8px;border-radius:10px;display:inline-flex}}
  .bdot{{position:absolute;top:1px;right:0;min-width:17px;height:17px;padding:0 4px;
@@ -1868,7 +1870,7 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .svc-reply .btn{{align-self:flex-start}}
  .svc-resolve{{padding:0 14px 14px}}
  /* Pill nav */
- .pnav{{display:flex;gap:8px;overflow-x:auto;padding:12px 18px 0;max-width:980px;margin:0 auto;
+ .pnav{{flex:1 1 auto;min-width:0;display:flex;gap:8px;overflow-x:auto;
    -webkit-overflow-scrolling:touch;scrollbar-width:none}}
  .pnav::-webkit-scrollbar{{display:none}}
  .pill{{flex:none;font-size:14px;font-weight:600;text-decoration:none;color:var(--mist);
@@ -2052,9 +2054,9 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  <div class="top">
    <div class="brand"><img src="/static/logo.png" alt="Du Voyageur">
      <div><b>Du Voyageur</b><span>Espace client</span></div></div>
+   {nav}
    {logout}
  </div>
- {nav}
  <div class="wrap">{body}
    <div class="foot">Du Voyageur · Permis d'agence 700495</div>
  </div>
