@@ -3089,22 +3089,25 @@ def admin_case_detail(request: Request, case_id: int, warn: str = ""):
                     for i in range(len(shots)))
                 shot_html = f"<div class='card full'><h3>Pièce(s) jointe(s) · {len(shots)}</h3>{imgs}</div>"
 
-            reply = ""
-            if c.channel == "messenger" and c.sender_ref:
-                reply = (
-                    "<div class='card full'><h3>Répondre au client</h3>"
-                    f"<form method='post' action='/admin/cases/{c.id}/send'>"
-                    "<textarea name='message' rows='4' placeholder='Écris ta réponse au client…' "
-                    "style='width:100%'></textarea>"
-                    "<button style='margin-top:10px'>Envoyer sur Messenger</button></form>"
-                    "<p class='sub'>Ta réponse est toujours enregistrée sur le fil. "
-                    "Livraison Messenger seulement dans la fenêtre de 24 h après le "
-                    "dernier message du client; sinon elle reste visible dans l'espace "
-                    "client. Une fois traité, le dossier sort de la cloche.</p></div>"
-                )
+            if c.sender_ref:
+                reply_note = ("Ta réponse est toujours enregistrée sur le fil. "
+                              "Livraison Messenger seulement dans la fenêtre de 24 h "
+                              "après le dernier message du client; sinon elle reste "
+                              "visible dans l'espace client.")
+                btn_label = "Envoyer sur Messenger"
             else:
-                reply = ("<div class='card full'><h3>Répondre au client</h3>"
-                         "<p class='muted'>Réponse directe indisponible pour ce canal.</p></div>")
+                reply_note = ("Ta réponse s'affiche dans l'espace client du portail et "
+                              "le client reçoit une notification.")
+                btn_label = "Envoyer la réponse"
+            reply = (
+                "<div class='card full'><h3>Répondre au client</h3>"
+                f"<form method='post' action='/admin/cases/{c.id}/send'>"
+                "<textarea name='message' rows='4' placeholder='Écris ta réponse au client…' "
+                "style='width:100%'></textarea>"
+                f"<button style='margin-top:10px'>{btn_label}</button></form>"
+                f"<p class='sub'>{reply_note} Une fois traité, le dossier sort de la "
+                "cloche.</p></div>"
+            )
 
             info = (
                 "<div class='card'><h3>Client</h3>"
