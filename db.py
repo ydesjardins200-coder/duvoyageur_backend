@@ -23,11 +23,15 @@ from sqlalchemy.orm import (DeclarativeBase, Mapped, mapped_column, relationship
 
 from config import settings
 
-# Normalize the URL: some providers hand out "postgres://"; SQLAlchemy wants
-# "postgresql://". This one-liner saves a classic deploy-day headache.
+# Normalize the URL: some providers hand out "postgres://", and a bare
+# "postgresql://" picks SQLAlchemy's DEFAULT driver — psycopg2 up to 2.0, but
+# psycopg (v3) since 2.1, which we don't install. Always pin the driver we ship
+# (psycopg2-binary in requirements.txt) so a library upgrade can't crash boot.
 db_url = settings.DATABASE_URL
-if db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql://", 1)
+for _prefix in ("postgres://", "postgresql://"):
+    if db_url.startswith(_prefix):
+        db_url = "postgresql+psycopg2://" + db_url[len(_prefix):]
+        break
 
 connect_args = {"check_same_thread": False} if db_url.startswith("sqlite") else {}
 engine = create_engine(db_url, connect_args=connect_args, pool_pre_ping=True)
