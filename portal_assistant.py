@@ -131,30 +131,34 @@ ensuite les bonnes questions. Pas de réponse générique.
    moteur : c'est souvent moins cher, avec ton Rabais Récompense déjà
    appliqué. »
 
-6. STRUCTURE DU TEXTE (sections courtes, titre en **gras** sur sa ligne) :
-   - 1 ou 2 phrases : ce que tu as compris + ton premier constat franc ;
-   - **Mes destinations** puis [[DESTINATIONS]] seul sur sa ligne
-     (seulement pour une demande large, sans destination précise) ;
-   - **Les hôtels que je retiendrais** : une phrase, puis [[HOTELS]] seul
-     sur sa ligne. Les fiches (photo, angle, résumé, prix, note) s'y
-     affichent : ne les recopie pas dans le texte ;
-   - **Comparaison des prix trouvés** puis [[PRIX]] (seulement si tu as
-     trouvé des prix) ;
-   - **Mon choix pour toi** : l'hôtel que tu prendrais à sa place et
-     pourquoi, concrètement (formule, quartier, ce qu'il vivra) ; si son
-     budget est donné, [[BUDGET]] seul sur sa ligne (répartition cible) ;
-   - **Ton séjour** : ce que tu ferais à ses dates (restos, excursions,
-     moments forts) ;
-   - **Vols** : vols directs depuis sa ville, honnêtement ;
-   - une phrase de question ouverte si utile (les questions à choix sont
-     affichées à part).
-   Question générale (saison, bagages, documents) : réponse claire et
-   structurée, sans fiches. Suivi (« moins cher », « et Cuba? ») : ajuste
-   seulement ce qui change.
+6. STRUCTURE EN ONGLETS. Ta réponse s'affiche en onglets. Commence chaque
+   onglet par son marqueur, seul sur sa ligne, dans cet ordre :
+   [[TAB:info]] Info générale : ce que tu as compris, ton constat franc
+     (saison, budget, dates) ; pour une demande large, [[DESTINATIONS]]
+     seul sur sa ligne puis 1 puce par destination ;
+   [[TAB:hotels]] Hôtels retenus : 1 puce d'intro, [[HOTELS]] seul sur sa
+     ligne (les fiches s'y affichent : ne les recopie pas), puis
+     **Mon choix pour toi** en 2 ou 3 puces (lequel, pourquoi, quelle formule) ;
+   [[TAB:prix]] Comparaison des prix : [[PRIX]] seul sur sa ligne si tu as
+     trouvé des prix, 2 ou 3 puces de lecture (dates, ville de départ,
+     estimation ou prix vu), [[BUDGET]] seul sur sa ligne si le budget est
+     connu, puis la phrase obligatoire sur les prix publics ;
+   [[TAB:sejour]] Ton séjour : 4 à 6 puces (restos, excursions, moments
+     forts à ses dates) ;
+   [[TAB:vols]] Vols suggérés : 3 ou 4 puces (vols directs depuis sa ville,
+     durée, compagnies, conseil d'horaire).
+   Omet un onglet s'il n'a rien d'utile. Question générale (saison,
+   bagages, documents) ou court suivi : PAS d'onglets, juste des puces.
+   CONCIS : des puces courtes (une idée, 20 mots max), pas de paragraphes,
+   pas de répétition entre onglets. Chaque fait important vient de tes
+   recherches et est cité (la source s'affiche en lien).
 
 7. À LA FIN, appelle l'outil afficher_resultats UNE fois avec les données
-   structurées (destinations, hotels, prix_vus, budget, questions, suivis)
-   qui correspondent à ton texte. N'écris jamais ces données dans le texte.
+   structurées (recherche, destinations, hotels, prix_vus, budget,
+   questions, suivis) qui correspondent à ton texte. « recherche » = les
+   critères du voyage pour notre moteur (aéroport de départ, destination,
+   date, nuits, adultes, enfants et leurs âges). N'écris jamais ces données
+   dans le texte.
 
 Règles strictes :
 - Ne recommande jamais une autre agence, un comparateur ou un site de
@@ -168,11 +172,10 @@ Règles strictes :
   humain : bouton « Conseiller » ou Messenger (onglet « Aide »).
 - Hors voyage : ramène gentiment la conversation au voyage.
 
-Style : français québécois chaleureux, tu tutoies, riche mais lisible :
-phrases courtes, listes avec « - » quand ça aide, **gras** pour les titres
-de section et les noms. Varie tes tournures. Pas de titres avec #, pas de
-tableaux, pas de séparateurs ---, pas de liens écrits dans le texte. Deux ou
-trois emojis au maximum.
+Style : français québécois chaleureux, tu tutoies. Format en PUCES « - »,
+**gras** pour les noms et les mots clés. Pas de titres avec #, pas de
+tableaux, pas de séparateurs ---, pas de liens écrits dans le texte (les
+sources s'affichent automatiquement). Deux ou trois emojis au maximum.
 
 CONTENU DE DU VOYAGEUR (info générale seulement ; ne renvoie pas à nos pages)
 Destinations que nous couvrons :
@@ -194,6 +197,13 @@ RESULTS_TOOL = {
     "input_schema": {
         "type": "object",
         "properties": {
+            "recherche": {"type": "object", "description": "critères pour notre moteur de forfaits",
+                          "properties": {
+                              "depart": {"type": ["string", "null"], "description": "code d'aéroport, ex. YUL"},
+                              "destination": _STR_NULL,
+                              "date_depart": {"type": ["string", "null"], "description": "AAAA-MM-JJ"},
+                              "nuits": _NUM_NULL, "adultes": _NUM_NULL, "enfants": _NUM_NULL,
+                              "ages_enfants": {"type": "array", "items": {"type": "number"}}}},
             "destinations": {"type": "array", "maxItems": 4, "items": {
                 "type": "object", "required": ["nom"], "properties": {
                     "nom": _STR, "accroche": _STR, "ideal_pour": _STR, "bemol": _STR,
@@ -410,6 +420,9 @@ def render_md(text: str, sources=None) -> str:
     out = re.sub(r"\n{3,}", "\n\n", out)
     out = re.sub(r"(?m)^\s*\[\[(DESTINATIONS|HOTELS|PRIX|BUDGET)\]\]\s*$",
                  lambda m: f"<div class='slot' data-slot='{m.group(1).lower()}'></div>", out)
+    out = re.sub(r"(?m)^\s*\[\[TAB:(info|hotels|prix|sejour|vols)\]\]\s*$",
+                 lambda m: f"<div class='tabmark' data-tab='{m.group(1)}'></div>", out)
+    out = re.sub(r"\[\[TAB:\w+\]\]", "", out)
     out = _CITE_RE.sub(lambda m: (" " + cite_html([int(i) for i in m.group(1).split(",") if i],
                                                   sources or [])) if sources else "", out)
     return out
@@ -862,7 +875,7 @@ def hotel_detail_html(c: dict) -> str:
     maps = p.get("maps") or ("https://www.google.com/maps/search/?api=1&query="
                              + quote_plus(f"{c['hotel']} {c.get('destination') or ''}"))
     fiche = c.get("fiche_url") or (c.get("fiches") or [""])[0]
-    btns = (f"<a class='hd-b hd-main' href='{SEARCH_URL}'>"
+    btns = (f"<a class='hd-b hd-main' href=\"{escape(c.get('search_url') or SEARCH_URL)}\">"
             + ("Voir les prix avec mon rabais" if (_money(c.get("prix_personne")) or _money(c.get("total")))
                else "Vérifier les forfaits") + "</a>"
             f"<a class='hd-b' href=\"{escape(maps)}\" target='_blank' rel='noopener'>Itinéraire</a>"
@@ -947,7 +960,7 @@ def cards_html(cards) -> str:
             + pts + _price_line(c) + conf
             + f"<div class='hc-foot'>{pill}<button type='button' class='hc-more hc-open'>Détails</button>"
               f"<label class='hc-sel'><input type='checkbox' class='hc-chk' data-i='{i - 1}'> Comparer</label>"
-              f"<a class='hc-go' href='{SEARCH_URL}'>{go}</a></div>"
+              f"<a class='hc-go' href=\"{escape(c.get('search_url') or SEARCH_URL)}\">{go}</a></div>"
             + f"</div><template class='hc-detail'>{hotel_detail_html(c)}</template></div>")
     cmp_btn = cmp = ""
     if len(cards) >= 2:
@@ -1038,6 +1051,40 @@ def budget_html(rows) -> str:
             "<p class='pt-note'>Budget de planification, pas une offre ni un prix garanti.</p></div>")
 
 
+def parse_recherche(r) -> dict:
+    """Trip criteria for the booking engine, validated."""
+    if not isinstance(r, dict):
+        return {}
+    out = {}
+    dep = str(r.get("depart") or "").strip().upper()
+    if re.fullmatch(r"[A-Z]{3}", dep):
+        out["dep"] = dep
+    if _txt(r.get("destination"), 60):
+        out["dest"] = _txt(r.get("destination"), 60)
+    d = str(r.get("date_depart") or "").strip()
+    if re.fullmatch(r"20\d\d-[01]\d-[0-3]\d", d):
+        out["date"] = d
+    for key, lo, hi in (("nuits", 1, 30), ("adultes", 1, 9), ("enfants", 0, 8)):
+        try:
+            v = int(r.get(key))
+            if lo <= v <= hi:
+                out[key] = v
+        except (TypeError, ValueError):
+            pass
+    ages = [int(a) for a in (r.get("ages_enfants") or []) if isinstance(a, (int, float)) and 0 <= a <= 17]
+    if ages:
+        out["ages"] = ",".join(str(a) for a in ages[:8])
+    return out
+
+
+def search_link(rech: dict, hotel: str = "") -> str:
+    """Our search tab with the trip criteria (the engine page maps them)."""
+    q = dict(rech or {})
+    if hotel:
+        q["hotel"] = hotel
+    return SEARCH_URL + ("?" + urlencode(q) if q else "")
+
+
 def guides_html(links) -> str:
     if not links:
         return ""
@@ -1076,6 +1123,47 @@ def _fill_slots(body: str, dests: str, cards: str, prix: str = "", budget: str =
     return body, tail
 
 
+TABS = (("info", "Info générale"), ("hotels", "Hôtels retenus"), ("prix", "Comparaison des prix"),
+        ("sejour", "Ton séjour"), ("vols", "Vols suggérés"))
+_SLOT_TAB = {"destinations": "info", "hotels": "hotels", "prix": "prix", "budget": "prix"}
+_TABMARK_RE = re.compile(r"<div class='tabmark' data-tab='(\w+)'></div>")
+
+
+def compose_answer(body: str, blocks: dict) -> str:
+    """Rendered answer + its blocks (cards, tables). With [[TAB:…]] markers
+    the answer becomes tabs; each block goes to its slot, else its tab."""
+    if not _TABMARK_RE.search(body):
+        b, tail = _fill_slots(body, blocks.get("destinations", ""), blocks.get("hotels", ""),
+                              blocks.get("prix", ""), blocks.get("budget", ""))
+        return f"<div>{b}</div>{tail}"
+    parts = _TABMARK_RE.split(body)
+    secs: dict = {}
+    if parts[0].strip():
+        secs["info"] = parts[0]
+    for i in range(1, len(parts), 2):
+        secs[parts[i]] = secs.get(parts[i], "") + parts[i + 1]
+    for slot, html in blocks.items():
+        if not html:
+            continue
+        marker = f"<div class='slot' data-slot='{slot}'></div>"
+        for k in secs:
+            if marker in secs[k]:
+                secs[k] = secs[k].replace(marker, f"<div class='slot' data-slot='{slot}'>{html}</div>", 1)
+                break
+        else:
+            k = _SLOT_TAB[slot]
+            secs[k] = secs.get(k, "") + html
+    keep = [(k, label) for k, label in TABS
+            if k in secs and (re.sub(r"<[^>]+>|\s", "", secs[k]) or "<img" in secs[k])]
+    if not keep:
+        return f"<div>{body}</div>"
+    nav = "".join(f"<button type='button' class='rt-btn{' on' if i == 0 else ''}' data-tab='{k}' "
+                  f"role='tab'>{label}</button>" for i, (k, label) in enumerate(keep))
+    panes = "".join(f"<section class='rt-pane' data-tab='{k}'{'' if i == 0 else ' hidden'}>"
+                    f"{secs[k].strip()}</section>" for i, (k, _l) in enumerate(keep))
+    return f"<div class='rtabs'><div class='rt-nav' role='tablist'>{nav}</div>{panes}</div>"
+
+
 def steps_html(steps, live: bool = False) -> str:
     if not steps and not live:
         return ""
@@ -1088,11 +1176,11 @@ def steps_html(steps, live: bool = False) -> str:
 def _bubble(m: dict, last: bool = False) -> str:
     if m.get("role") == "user":
         return f"<div class='msg me'>{escape(m.get('text', ''))}</div>"
-    body, tail = _fill_slots(render_md(m.get("marked") or m.get("text", ""), m.get("sources")),
-                             destinations_html(m.get("destinations")),
-                             cards_html(m.get("cards")), prix_html(m.get("prix")),
-                             budget_html(m.get("budget")))
-    return (f"<div class='msg ai'><div>{body}</div>{tail}"
+    content = compose_answer(
+        render_md(m.get("marked") or m.get("text", ""), m.get("sources")),
+        {"destinations": destinations_html(m.get("destinations")), "hotels": cards_html(m.get("cards")),
+         "prix": prix_html(m.get("prix")), "budget": budget_html(m.get("budget"))})
+    return (f"<div class='msg ai'>{content}"
             f"{_sources_html(m.get('sources'))}{rate_html(m.get('id', ''), m.get('rating', 0))}"
             f"{questions_html(m.get('questions')) if last else ''}</div>")
 
@@ -1161,6 +1249,7 @@ def assistant_panel(client) -> str:
  function md(s){{return esc(s).replace(/\\*\\*(.+?)\\*\\*/g,'<b>$1</b>')
    .replace(/^\\s*(?:-{{3,}}|\\*{{3,}}|_{{3,}})\\s*$/gm,'').replace(/^\\s*[-*]\\s+/gm,'• ')
    .replace(/^#{{1,6}}\\s*/gm,'').replace(/\\n{{3,}}/g,'\\n\\n')
+   .replace(/\\[\\[TAB:\\w+\\]\\]/g,'')
    .replace(/^\\s*\\[\\[(DESTINATIONS|HOTELS|PRIX|BUDGET)\\]\\]\\s*$/gm,function(_,k){{
      return "<div class='slot' data-slot='"+k.toLowerCase()+"'></div>";}});}}
  function bottom(){{window.scrollTo(0,document.documentElement.scrollHeight);}}
@@ -1181,7 +1270,7 @@ def assistant_panel(client) -> str:
    send.disabled=true; inp.disabled=true;
    var out=add('ai typing',''),body=document.createElement('div'),st=document.createElement('div');
    st.className='astatus';out.appendChild(st);out.appendChild(body);
-   var raw='',buf='',nsrch=0,pr=document.createElement('div'),pct=0,cap=12;
+   var raw='',buf='',done=false,nsrch=0,pr=document.createElement('div'),pct=0,cap=12;
    pr.className='aprog';pr.innerHTML='<div class="ap-lbl">Je lis ta demande…</div><div class="ap-bar"><span></span></div>';
    out.insertBefore(pr,st);
    function prog(p,label){{cap=Math.max(cap,p);if(p>pct)pct=p;pr.querySelector('span').style.width=pct+'%';
@@ -1197,17 +1286,21 @@ def assistant_panel(client) -> str:
        if(ev.v.indexOf('🔎')===0){{nsrch++;
          prog(14+Math.min(56,nsrch*56/MAXS),nsrch<3?'Je cherche les meilleures options…':
            (nsrch<6?'Je compare les hôtels, les avis et les prix…':'Je vérifie les derniers détails…'));}}}}
-     else if(ev.t==='text'){{out.classList.remove('typing');raw+=ev.v;body.innerHTML=md(raw);
+     else if(ev.t==='text'){{out.classList.remove('typing');raw+=ev.v;
        if(pct<72)prog(72,'Je rédige ta réponse…');}}
-     else if(ev.t==='marked'&&ev.v){{body.innerHTML=ev.v;}}
-     else if(SLOTS[ev.t]&&ev.v){{
+     else if(ev.t==='final'&&ev.v){{done=true;var w=document.createElement('div');w.innerHTML=ev.v.html;
+       var nm=w.firstElementChild;if(ev.v.refine){{var r2=document.createElement('div');r2.innerHTML=ev.v.refine;
+         if(r2.firstElementChild)nm.appendChild(r2.firstElementChild);}}
+       out.replaceWith(nm);out=nm;}}
+     else if(ev.t==='marked'){{}}
+     else if(SLOTS[ev.t]&&ev.v&&false){{
        st.textContent='';var slot=body.querySelector(".slot[data-slot='"+SLOTS[ev.t]+"']");
        var cd=document.createElement('div');cd.innerHTML=ev.v;
        while(cd.firstChild)(slot||out).appendChild(cd.firstChild);}}
-     else if((ev.t==='guides'||ev.t==='refine'||ev.t==='rate'||ev.t==='questions')&&ev.v){{
+     else if(false){{
        st.textContent='';var cd2=document.createElement('div');cd2.innerHTML=ev.v;
        while(cd2.firstChild)out.appendChild(cd2.firstChild);}}
-     else if(ev.t==='sources'&&ev.v&&ev.v.length&&!out.querySelector('.srcs')){{
+     else if(false){{
        var s=document.createElement('div');s.className='srcs';s.innerHTML='<span>Sources</span>';
        ev.v.forEach(function(x){{if(!/^https:\\/\\//.test(x.url))return;var a=document.createElement('a');
          a.href=x.url;a.target='_blank';a.rel='noopener nofollow';a.textContent=x.title||x.url;s.appendChild(a);}});
@@ -1228,6 +1321,7 @@ def assistant_panel(client) -> str:
      body.textContent=(e&&e.message&&e.message.length<300)?e.message:
        "Oups, je n'ai pas pu répondre. Réessaie dans un instant.";
    }}).finally(function(){{st.textContent='';send.disabled=false;inp.disabled=false;inp.focus();
+     if(!done&&raw&&!body.textContent)body.innerHTML=md(raw);
      clearInterval(creep);prog(100,'Terminé');pr.classList.add('done');
      setTimeout(function(){{pr.remove();}},700);}});
  }}
@@ -1258,6 +1352,11 @@ def assistant_panel(client) -> str:
  hov.addEventListener('click',closeHotel);
  document.addEventListener('keydown',function(e){{if(e.key==='Escape'&&!hp.hidden)closeHotel();}});
  log.addEventListener('click',function(e){{
+   var tb=e.target.closest('.rt-btn');
+   if(tb){{var R=tb.closest('.rtabs'),k=tb.getAttribute('data-tab');
+     R.querySelectorAll('.rt-btn').forEach(function(x){{x.classList.toggle('on',x===tb);}});
+     R.querySelectorAll('.rt-pane').forEach(function(p){{p.hidden=p.getAttribute('data-tab')!==k;}});
+     var top=R.getBoundingClientRect().top;if(top<80)window.scrollBy(0,top-90);return;}}
    var ho=e.target.closest('.hc-open');if(ho){{openHotel(ho.closest('.hcard'));return;}}
    var ca=e.target.closest('.cite-a');
    if(ca&&touch&&!ca.parentNode.classList.contains('open')){{e.preventDefault();place(ca.parentNode);
@@ -1735,7 +1834,10 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
     if dests:
         dests = add_destination_images(dests, {x["url"] for x in known})
         yield _ev("dests", destinations_html(dests))
+    rech = parse_recherche(data.get("recherche"))
     cards = parse_pistes(block("hotels", _PISTES_RE), known)
+    for c in cards:
+        c["search_url"] = search_link(rech, c["hotel"])
     if cards:
         yield _ev("status", "📸 Je prépare les fiches…")
         cards = add_images(cards, {x["url"]: x.get("title", "") for x in known})
@@ -1763,11 +1865,12 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
     if not cards and not data and "[[HOTELS]]" in answer:
         log.warning("assistant[%s]: hotels slot without structured results", provider)
     now = datetime.utcnow().isoformat(timespec="seconds")
-    persist({"role": "user", "text": q, "at": now},
-            {"role": "assistant", "id": mid, "text": answer, "marked": marked, "cards": cards,
+    entry = {"role": "assistant", "id": mid, "text": answer, "marked": marked, "cards": cards,
              "destinations": dests, "questions": questions, "prix": prix, "budget": budget,
-             "suivis": suivis, "sources": sources, "steps": steps[:12],
-             "provider": provider, "model": model_name(provider), "at": now})
+             "suivis": suivis, "sources": sources, "steps": steps[:12], "recherche": rech,
+             "provider": provider, "model": model_name(provider), "at": now}
+    persist({"role": "user", "text": q, "at": now}, entry)
+    yield _ev("final", {"html": _bubble(entry, last=True), "refine": suivis_html(suivis)})
 
 
 def _stream(lines, ndjson: bool = True):
@@ -2038,10 +2141,55 @@ def assistant_reset(request: Request):
 # --------------------------------------------------------------------------- #
 # Search page (Softvoyage DMO engine)
 # --------------------------------------------------------------------------- #
-def _engine_url() -> str:
-    q = urlencode({"code_ag": settings.SIRRVA_CODE_AG, "alias": settings.SIRRVA_ALIAS,
-                   "language": "fr"})
-    return f"{settings.SIRRVA_HOST.rstrip('/')}/cgi-bin/querypackage.cgi?{q}"
+_CRIT_KEYS = ("dep", "dest", "date", "nuits", "adultes", "enfants", "ages", "hotel")
+
+
+def _criteria(request: Request) -> dict:
+    """Trip criteria passed from the assistant (validated, same rules as the model's)."""
+    p = request.query_params
+    raw = {"depart": p.get("dep"), "destination": p.get("dest"), "date_depart": p.get("date"),
+           "nuits": p.get("nuits"), "adultes": p.get("adultes"), "enfants": p.get("enfants"),
+           "ages_enfants": [int(x) for x in (p.get("ages") or "").split(",") if x.strip().isdigit()]}
+    crit = parse_recherche(raw)
+    if _txt(p.get("hotel"), 90):
+        crit["hotel"] = _txt(p.get("hotel"), 90)
+    return crit
+
+
+def _engine_url(crit: dict | None = None) -> str:
+    """DMO engine URL; trip criteria mapped to the engine's parameter names
+    (SIRRVA_PARAM_MAP — to confirm with Softvoyage)."""
+    q = {"code_ag": settings.SIRRVA_CODE_AG, "alias": settings.SIRRVA_ALIAS or "duvoyageur",
+         "language": "fr"}
+    mapping = dict(x.split("=", 1) for x in settings.SIRRVA_PARAM_MAP.split(",") if "=" in x)
+    for k, v in (crit or {}).items():
+        if mapping.get(k):
+            q[mapping[k].strip()] = v
+    return f"{settings.SIRRVA_HOST.rstrip('/')}/cgi-bin/querypackage.cgi?{urlencode(q)}"
+
+
+def _crit_chips(crit: dict) -> str:
+    if not crit:
+        return ""
+    lab = []
+    if crit.get("dep"):
+        lab.append(f"✈️ Départ {crit['dep']}")
+    if crit.get("dest"):
+        lab.append(f"📍 {crit['dest']}")
+    if crit.get("date"):
+        y, m, d = crit["date"].split("-")
+        lab.append(f"🗓️ {int(d)} {_MONTHS[int(m) - 1]} {y}")
+    if crit.get("nuits"):
+        lab.append(f"🌙 {crit['nuits']} nuits")
+    if crit.get("adultes"):
+        lab.append(f"👤 {crit['adultes']} adulte{'s' if crit['adultes'] > 1 else ''}")
+    if crit.get("enfants"):
+        lab.append(f"🧒 {crit['enfants']} enfant{'s' if crit['enfants'] > 1 else ''}"
+                   + (f" ({crit['ages']} ans)" if crit.get("ages") else ""))
+    if crit.get("hotel"):
+        lab.append(f"🏨 {crit['hotel']}")
+    return ("<div class='crit'><span class='crit-h'>Ta recherche</span>"
+            + "".join(f"<span class='crit-c'>{escape(x)}</span>" for x in lab) + "</div>")
 
 
 @router.get("/portail/recherche", response_class=HTMLResponse)
@@ -2054,18 +2202,16 @@ def portal_search(request: Request):
         if not client:
             return _logged_out()
         bell = _bell_panel(client)
-    if settings.SIRRVA_ALIAS:
-        body = ("<div class='hello'><h2>Rechercher un forfait</h2>"
-                "<p class='lede'>Ton Rabais Récompense est déjà appliqué aux prix "
-                "affichés.</p></div>"
-                f"<div class='engine'><iframe src=\"{escape(_engine_url())}\" "
-                "title='Moteur de recherche de forfaits' loading='eager'></iframe></div>")
-    else:
-        body = ("<div class='infobox'><h2>Bientôt disponible 🌴</h2>"
-                "<p>Notre moteur de recherche avec ton Rabais Récompense arrive très "
-                "bientôt. En attendant, pose tes questions à ton assistant voyage!</p>"
-                "<p style='margin-top:16px'><a class='btn' href='/portail'>"
-                "Retour à l'accueil</a></p></div>")
+    crit = _criteria(request)
+    note = "" if settings.SIRRVA_ALIAS else (
+        "<div class='note warn'>Moteur en cours de configuration avec Softvoyage : tes critères "
+        "ci-dessus lui seront transmis automatiquement dès son activation.</div>")
+    body = ("<div class='hello'><h2>Rechercher un forfait</h2>"
+            "<p class='lede'>Ton Rabais Récompense est déjà appliqué aux prix affichés.</p></div>"
+            + _crit_chips(crit) + note
+            + f"<div class='engine'><iframe src=\"{escape(_engine_url(crit))}\" "
+              "title='Moteur de recherche de forfaits' loading='eager'></iframe></div>"
+            + "<p class='muted'><a href='/portail'>← Retour à ton assistant voyage</a></p>")
     resp = HTMLResponse(_shell("Rechercher", body, logged_in=True,
                                nav=_nav("recherche"), bell=bell))
     _set_session_cookie(resp, cid)

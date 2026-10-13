@@ -133,6 +133,12 @@ class Settings:
     SIRRVA_ALIAS: str = os.getenv("SIRRVA_ALIAS", "")
     SIRRVA_HOST: str = os.getenv("SIRRVA_HOST", "https://trs.sax.softvoyage.com")
     SIRRVA_CODE_AG: str = os.getenv("SIRRVA_CODE_AG", "trs")
+    # Our search criteria -> the DMO engine's URL parameter names ("ours=theirs",
+    # comma-separated). PLACEHOLDER names until Softvoyage documents the deep link.
+    SIRRVA_PARAM_MAP: str = os.getenv(
+        "SIRRVA_PARAM_MAP",
+        "dep=gateway,dest=dest,date=date_dep,nuits=duration,adultes=nb_adult,"
+        "enfants=nb_child,ages=child_ages,hotel=hotel")
 
     # --- CORS: the Netlify domain(s) allowed to POST the intake form ---
     # Comma-separated, e.g. "https://duvoyageur.netlify.app,https://duvoyageur.ca"

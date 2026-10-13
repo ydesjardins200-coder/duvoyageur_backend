@@ -2399,6 +2399,26 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .chat.empty .c-dock{{display:flex;flex-direction:column}}
  .chat.empty .c-dock .chips{{order:3}}
  .chat.empty .c-dock .c-note{{order:2}}
+
+ /* Tabbed answer */
+ .rtabs{{white-space:normal;margin-top:2px}}
+ .rt-nav{{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding:2px 0 10px;margin-bottom:6px;
+   border-bottom:1px solid var(--line);position:sticky;top:70px;z-index:3;
+   background:linear-gradient(180deg,rgba(3,18,27,.97),rgba(3,18,27,.9))}}
+ .rt-nav::-webkit-scrollbar{{display:none}}
+ .rt-btn{{flex:none;font:600 13.5px Inter,sans-serif;color:var(--mist);background:none;border:1px solid var(--line);
+   border-radius:999px;padding:8px 14px;cursor:pointer}}
+ .rt-btn:hover{{color:var(--foam);border-color:rgba(25,211,230,.5)}}
+ .rt-btn.on{{color:#03121b;background:linear-gradient(120deg,var(--pacific),var(--lagoon));border-color:transparent}}
+ .rt-pane{{white-space:pre-wrap;padding-top:6px}}
+ .rt-pane[hidden]{{display:none}}
+ .rt-pane .slot,.rt-pane .pcards,.rt-pane .ptab,.rt-pane .btab,.rt-pane .dcards{{white-space:normal}}
+ @media(max-width:760px){{.rt-nav{{top:118px}}}}
+
+ .crit{{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 12px}}
+ .crit-h{{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--mist);font-family:"Space Grotesk",monospace;margin-right:4px}}
+ .crit-c{{font-size:13px;color:var(--foam);background:rgba(155,246,236,.1);border:1px solid var(--line);border-radius:999px;padding:5px 11px}}
+ .note.warn{{background:rgba(255,210,63,.1);border:1px solid rgba(255,210,63,.4);color:var(--gold)}}
 </style></head><body class="pg{page}">
  <div class="top">
    <div class="brand"><img src="/static/logo.png" alt="Du Voyageur">
