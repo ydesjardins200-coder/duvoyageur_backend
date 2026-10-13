@@ -36,6 +36,18 @@ _INTENTS = {
     "qualite-prix": ("pas cher", "budget", "qualite prix", "qualite-prix", "economique",
                      "meilleur prix", "abordable", "moins cher"),
 }
+# Regions a member names that span several destinations (normalized words).
+REGIONS = {
+    "pacifique": ("puerto vallarta", "nuevo vallarta", "riviera nayarit", "los cabos", "huatulco",
+                  "mazatlan", "ixtapa", "punta mita"),
+    "caraibes mexicaines": ("cancun", "riviera maya", "playa del carmen", "cozumel", "costa mujeres",
+                            "tulum", "playa mujeres", "akumal"),
+}
+_REGION_WORDS = {
+    "pacifique": ("pacifique", "cote ouest du mexique", "pacific"),
+    "caraibes mexicaines": ("riviera maya", "cote caraibe du mexique", "caraibes mexicaines",
+                            "yucatan", "quintana roo"),
+}
 _UNRATED = 4.0          # assumed rating for hotels we list but haven't rated yet
 
 
@@ -106,7 +118,12 @@ def rank(text: str, limit: int = 8) -> list:
     t = norm(text)
     wanted = intents(text)
     named = [h for h in hotels() if _has(t, h["_name"])]
-    local = [h for h in hotels() if any(_has(t, p) for p in h["_places"])]
+    regions = [r for r, words in _REGION_WORDS.items() if any(_has(t, w) for w in words)]
+    if regions:                       # "côte Pacifique" beats the bare country "Mexique"
+        frags = [f for r in regions for f in REGIONS[r]]
+        local = [h for h in hotels() if any(f in norm(h.get("destination", "")) for f in frags)]
+    else:
+        local = [h for h in hotels() if any(_has(t, p) for p in h["_places"])]
     pool = local or hotels()
     scored = []
     for h in pool:

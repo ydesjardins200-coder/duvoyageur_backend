@@ -1911,6 +1911,45 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  @media(max-width:560px){{.a-head{{flex-direction:column;align-items:stretch}}.a-acts{{justify-content:flex-start}}}}
  .a-toast{{margin:-4px 0 10px;padding:9px 12px;border-radius:11px;font-size:13.5px;
    background:rgba(61,240,197,.12);border:1px solid rgba(61,240,197,.4);color:var(--lagoon)}}
+ .slot:empty{{display:none}}
+ .slot{{white-space:normal;margin:6px 0 10px}}
+ .dcards{{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin:8px 0;white-space:normal}}
+ .dcard{{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:rgba(3,18,27,.55);display:flex;flex-direction:column}}
+ .dc-pic{{margin:0;position:relative;height:130px;background:rgba(155,246,236,.06)}}
+ .dc-pic img{{width:100%;height:100%;object-fit:cover;display:block}}
+ .dc-pic figcaption{{position:absolute;left:6px;bottom:6px;font-size:10.5px;color:#fff;background:rgba(3,18,27,.7);
+   padding:2px 7px;border-radius:999px}}
+ .dc-nopic{{display:flex;align-items:center;justify-content:center;font-size:34px;
+   background:linear-gradient(135deg,rgba(25,211,230,.18),rgba(61,240,197,.08))}}
+ .dc-body{{padding:10px 12px 12px;position:relative;display:flex;flex-direction:column;gap:4px;flex:1}}
+ .dc-rank{{position:absolute;top:-14px;right:10px;width:26px;height:26px;border-radius:50%;
+   background:var(--pacific);color:#03121b;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center}}
+ .dc-name{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:17px}}
+ .dc-hook{{font-size:13px;color:var(--surf);font-weight:600}}
+ .dc-row{{font-size:12.5px;line-height:1.4}}
+ .dc-row span{{color:var(--mist);margin-right:4px}}
+ .dc-foot{{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:auto;padding-top:6px}}
+ .dc-guide{{font-size:12.5px;color:var(--pacific);text-decoration:none}}
+ .dc-more{{font-size:12px;padding:5px 10px}}
+ .slot .pc-head > span{{display:none}}
+ .slot .pc-head{{justify-content:flex-end}}
+ @media(max-width:560px){{
+   .dcards{{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:82%;overflow-x:auto;
+     scroll-snap-type:x mandatory;padding-bottom:6px;-webkit-overflow-scrolling:touch}}
+   .dcard{{scroll-snap-align:start}}
+   .dc-pic{{height:110px}}}}
+ .qset{{margin-top:12px;padding:12px;border-radius:14px;border:1px solid rgba(25,211,230,.35);
+   background:rgba(25,211,230,.06);white-space:normal}}
+ .qhead{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:14px;margin-bottom:6px}}
+ .qgrp{{margin:8px 0}}
+ .qq{{font-size:13.5px;margin-bottom:6px}}
+ .qopts{{display:flex;flex-wrap:wrap;gap:6px}}
+ .qopt{{background:rgba(3,18,27,.6);border:1px solid var(--line);color:var(--foam);border-radius:999px;
+   padding:7px 12px;font:500 13px Inter,sans-serif;cursor:pointer}}
+ .qopt:hover{{border-color:var(--pacific)}}
+ .qopt.on{{background:var(--pacific);color:#03121b;border-color:var(--pacific)}}
+ .qsend{{margin-top:6px;font-size:13px;padding:8px 14px}}
+ .qsend:disabled{{opacity:.5}}
  .pc-rate{{font-size:12.5px;color:var(--gold);margin-top:2px}}
  a.pc-cmpbtn{{text-decoration:none;display:inline-block;margin-left:6px}}
  .pc-conf{{font-size:12px;color:var(--gold);margin-top:2px}}

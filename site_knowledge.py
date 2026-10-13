@@ -76,6 +76,13 @@ def _has(text: str, kw: str) -> bool:
 def match(text: str, limit: int = 3) -> list:
     """Pages relevant to `text`, best first (destinations/hotels, then intents)."""
     t = norm(text)
+    try:                                   # "côte Pacifique" -> add its destinations
+        import hotel_catalog as _hc
+        for region, words in _hc._REGION_WORDS.items():
+            if any(_has(t, _hc.norm(w)) for w in words):
+                t += " " + " ".join(_hc.REGIONS[region])
+    except ImportError:
+        pass
     scored = []
     for p in pages():
         score = 0
