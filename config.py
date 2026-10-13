@@ -87,6 +87,10 @@ class Settings:
     PORTAL_ASSISTANT_MODEL: str = os.getenv("PORTAL_ASSISTANT_MODEL", "claude-haiku-4-5-20251001")
     PORTAL_ASSISTANT_DAILY_MAX: int = int(os.getenv("PORTAL_ASSISTANT_DAILY_MAX", "40"))
 
+    # --- Support: the portal's "Aide" tab sends clients to the Facebook page's
+    # Messenger (the admin ticket queue is no longer used).
+    MESSENGER_URL: str = os.getenv("MESSENGER_URL", "https://m.me/duvoyageur.ca")
+
     # --- Softvoyage DMO package search engine (iframe in the portal) ---
     # Shown at /portail/recherche once the agency alias is set; until then the
     # page says "bientôt disponible".

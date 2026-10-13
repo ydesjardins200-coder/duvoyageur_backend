@@ -1292,17 +1292,26 @@ def portal_service(request: Request, sent: int = 0):
     with SessionLocal() as db:
         client = db.get(Client, cid)
         cases = list(client.requests)
-        if sent == 2:
-            flash = "<div class='note ok'>Merci pour ton évaluation ✓</div>"
-        elif sent:
-            flash = "<div class='note ok'>Message envoyé ✓ — on te répond bientôt.</div>"
-        else:
-            flash = ""
-        body = (flash
-                + "<div class='hello'><h2>Demande de service</h2>"
-                "<p class='lede'>Une question, un changement, un pépin ? Écris-nous, "
-                "un conseiller te répond.</p></div>"
-                + _service_form(cases) + _service_threads(cases))
+        # Support now happens on Facebook Messenger (the admin ticket queue is
+        # no longer worked). Older portal tickets stay readable below.
+        old = _service_threads(cases) if any(
+            (c.kind or "trip") == "support" for c in cases) else ""
+        body = (
+            "<div class='hello'><h2>Besoin d'aide ?</h2>"
+            "<p class='lede'>Une question sur ta réservation, un changement, un pépin ? "
+            "Écris-nous sur Messenger, un conseiller te répond.</p></div>"
+            f"<a class='msgr' href=\"{escape(settings.MESSENGER_URL)}\" target='_blank' "
+            "rel='noopener'>"
+            "<svg width='26' height='26' viewBox='0 0 24 24' aria-hidden='true'><path fill='#fff' "
+            "d='M12 2C6.36 2 2 6.13 2 11.7c0 2.91 1.19 5.44 3.14 7.17.16.15.26.35.27.57l.05 1.78a.8.8 "
+            "0 0 0 1.12.71l1.98-.87a.8.8 0 0 1 .53-.04c.91.25 1.87.38 2.91.38 5.64 0 10-4.13 10-9.7S17.64 "
+            "2 12 2zm6 7.46-2.94 4.66a1.5 1.5 0 0 1-2.17.4l-2.34-1.75a.6.6 0 0 0-.72 0l-3.16 2.4c-.42.32-.97-.18-.69-.63"
+            "L8.92 9.88a1.5 1.5 0 0 1 2.17-.4l2.34 1.75c.21.16.51.16.72 0l3.16-2.4c.42-.32.97.18.69.63z'/></svg>"
+            "<div><b>Écrire sur Messenger</b><span>Ouvre une conversation avec notre équipe.</span></div>"
+            "<span class='sc-go'>→</span></a>"
+            "<p class='muted' style='margin-top:14px'>Pour une question générale (destination, "
+            "saison, bagages), ton <a href='/portail'>assistant voyage</a> répond tout de suite.</p>"
+            + (("<h3 class='acc-h' style='margin-top:26px'>Tes anciennes demandes</h3>" + old) if old else ""))
         bell = _bell_panel(client)
     resp = HTMLResponse(_shell("Aide", body, logged_in=True, nav=_nav("aide"), bell=bell))
     _set_session_cookie(resp, cid)
@@ -1311,6 +1320,12 @@ def portal_service(request: Request, sent: int = 0):
 
 @router.post("/portail/service")
 async def portal_service_save(request: Request):
+    # The ticket form is gone (support moved to Messenger); a stale tab
+    # posting here just lands on the Aide page.
+    return RedirectResponse("/portail/service", status_code=303)
+
+
+async def _legacy_portal_service_save(request: Request):  # kept for reference
     cid, gate = _gate(request)
     if gate:
         return gate
@@ -1851,6 +1866,13 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .a-send:disabled{{opacity:.6}}
  .engine{{border-radius:18px;overflow:hidden;background:#fff;border:1px solid var(--line)}}
  .engine iframe{{display:block;width:100%;height:max(1100px,85vh);border:0}}
+ .msgr{{display:flex;align-items:center;gap:14px;padding:18px 20px;border-radius:18px;
+   text-decoration:none;color:#fff;background:linear-gradient(120deg,#0a7cff,#a334fa);
+   box-shadow:0 14px 34px -14px rgba(10,124,255,.6);transition:transform .15s}}
+ .msgr:hover{{transform:translateY(-1px)}}
+ .msgr b{{display:block;font-family:"Bricolage Grotesque",sans-serif;font-size:18px}}
+ .msgr span{{font-size:13px;opacity:.9}}
+ .msgr .sc-go{{margin-left:auto;font-size:24px;font-weight:800;opacity:1}}
  .acc-h{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:15px;
    margin:24px 0 12px;color:var(--surf);letter-spacing:-.01em}}
  .acc-h:first-of-type{{margin-top:8px}}
