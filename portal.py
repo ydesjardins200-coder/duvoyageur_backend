@@ -511,15 +511,12 @@ def _identity_card(client) -> str:
 
 
 def _accueil(client, cases, flash: str = "") -> str:
-    """Portal home: greeting, identity card, then the search CTA + AI assistant.
-    Trip/savings cards were removed: bookings now happen self-service in the
-    Softvoyage engine and live in PC Voyages, not in this backend."""
+    """Portal home = the AI travel agent, full screen (chatgpt.com layout).
+    Trip/savings cards and the identity box were removed: bookings happen
+    self-service in the Softvoyage engine and live in PC Voyages."""
     from portal_assistant import assistant_panel     # lazy: avoids import cycle
-    name = escape(client.display_name or "")
-    hello = f"Bonjour {name} 👋" if name else "Bonjour 👋"
     note = f"<div class='note ok'>{flash}</div>" if flash else ""
-    return (f"<div class='hello'><h2>{hello}</h2></div>"
-            + note + _identity_card(client) + assistant_panel(client))
+    return note + assistant_panel(client)
 
 
 _MONTHS_FR = ["", "janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.",
@@ -910,13 +907,14 @@ def _nav(active: str, locked: bool = False) -> str:
 # Shell
 # --------------------------------------------------------------------------- #
 def _shell(title: str, body: str, logged_in: bool = False, nav: str = "",
-           bell: str = "") -> str:
+           bell: str = "", full: bool = False) -> str:
     logout = ("<a class='logout' href='/portail/logout'>Déconnexion</a>"
               if logged_in else "")
     # The notification bell was retired with the admin queue (bookings and
     # support now live in PC Voyages / Messenger); `bell` is accepted and ignored.
     actions = f"<div class='topact'>{logout}</div>" if logged_in else logout
-    return _PORTAL_PAGE.format(title=escape(title), body=body, logout=actions, nav=nav)
+    return _PORTAL_PAGE.format(title=escape(title), body=body, logout=actions, nav=nav,
+                               page=" chatpage" if full else "")
 
 
 def _info_page(title: str, message: str, logged_in: bool = False) -> str:
@@ -1029,7 +1027,7 @@ def portal_home(request: Request, new: int = 0, avis: int = 0):
         body = _kyc_banner(client) + _accueil(client, cases, flash=flash)
         bell = _bell_panel(client)
     resp = HTMLResponse(_shell("Accueil", body, logged_in=True,
-                               nav=_nav("accueil"), bell=bell))
+                               nav=_nav("accueil"), bell=bell, full=True))
     _set_session_cookie(resp, cid)          # sliding expiry on every visit
     return resp
 
@@ -2208,7 +2206,71 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .res-i:hover{{border-color:rgba(25,211,230,.4)}}
  .res-ic{{font-size:18px}}
  .res-go{{margin-left:auto;color:var(--surf)}}
-</style></head><body>
+
+ /* ---- Full-screen agent (chatgpt.com layout) ---- */
+ body.chatpage{{display:flex;flex-direction:column;min-height:100vh;min-height:100dvh}}
+ .chatpage .wrap{{width:100%;max-width:820px;padding-bottom:0;flex:1;display:flex;flex-direction:column}}
+ .chatpage .foot{{display:none}}
+ .chat{{display:flex;flex-direction:column;flex:1;background:none;border:0;padding:0;margin:0}}
+ .c-bar{{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 6px}}
+ .c-bar .c-title{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:15px;color:var(--surf);margin-right:auto}}
+ .c-search{{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:#03121b;text-decoration:none;
+   border-radius:999px;padding:7px 14px;background:linear-gradient(120deg,var(--pacific),var(--lagoon))}}
+ .chat .a-log{{max-height:none;overflow:visible;gap:22px;padding:14px 0 24px;flex:1}}
+ .chat .msg{{font-size:15.5px;line-height:1.62;max-width:100%}}
+ .chat .msg.ai{{background:none;border:0;border-radius:0;padding:0;align-self:stretch}}
+ .chat .msg.me{{max-width:78%;background:rgba(155,246,236,.1);border:0;border-radius:20px;padding:10px 16px}}
+ .chat .msg.ai b{{color:var(--foam)}}
+ .c-empty{{flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;
+   padding:6vh 0 2vh}}
+ .c-empty h2{{font-size:clamp(28px,5vw,38px);font-weight:800;margin:0 0 8px}}
+ .c-empty p{{color:var(--mist);margin:0 0 22px;font-size:15px;max-width:520px}}
+ .chat.empty .a-log{{display:none}}
+ .chat:not(.empty) .c-empty{{display:none}}
+ .chat .chips{{justify-content:center;margin:12px 0 0}}
+ .chat:not(.empty) .chips{{justify-content:flex-start;margin:0 0 10px}}
+ .c-dock{{position:sticky;bottom:0;z-index:4;padding:10px 0 max(12px,env(safe-area-inset-bottom));
+   background:linear-gradient(180deg,rgba(3,18,27,0),rgba(3,18,27,.97) 22px)}}
+ .chat.empty .c-dock{{position:static;background:none;width:100%}}
+ .chat .a-form{{margin:0;align-items:flex-end;background:rgba(10,40,55,.9);border:1px solid var(--line);
+   border-radius:26px;padding:6px 6px 6px 16px;box-shadow:0 10px 40px -16px rgba(0,0,0,.8)}}
+ .chat .a-form:focus-within{{border-color:rgba(25,211,230,.55)}}
+ .chat .a-form textarea{{border:0;background:none;padding:10px 0;min-height:44px}}
+ .chat .a-send{{min-height:40px;width:40px;padding:0;border-radius:50%;font-size:18px}}
+ .c-note{{font-size:11.5px;color:var(--mist);text-align:center;margin-top:7px}}
+ .chat .a-toast{{margin:0 0 8px}}
+ .chat .rate{{margin-top:6px}}
+ .chat .rbtn{{border:0;padding:3px 7px}}
+ .chat .srcs{{border-top:0;padding-top:0}}
+ @media(max-width:560px){{.chatpage .wrap{{padding:10px 14px 0}}.chat .msg{{font-size:15px}}
+   .c-empty{{padding:3vh 0 1vh}}.c-bar .c-title{{display:none}}}}
+ /* Inline source pills + preview card */
+ .cite{{position:relative;display:inline-block;vertical-align:baseline;white-space:nowrap;outline:none}}
+ .cite-a{{display:inline-flex;align-items:center;gap:3px;font-size:11.5px;font-weight:500;line-height:1;
+   color:var(--mist);text-decoration:none;background:rgba(155,246,236,.1);border-radius:999px;padding:4px 8px;
+   position:relative;top:-1px}}
+ .cite-a:hover,.cite:focus-within .cite-a,.cite.open .cite-a{{background:var(--foam);color:#03121b}}
+ .cite-n{{opacity:.75}}
+ .cpop{{display:none;position:absolute;z-index:20;left:0;bottom:calc(100% + 6px);width:300px;max-width:82vw;
+   white-space:normal;background:#0b2a3a;border:1px solid rgba(155,246,236,.25);border-radius:14px;
+   box-shadow:0 18px 50px -12px rgba(0,0,0,.85);padding:6px;max-height:340px;overflow:auto}}
+ .cite:hover .cpop,.cite:focus-within .cpop,.cite.open .cpop{{display:block}}
+ .cite.down .cpop{{bottom:auto;top:calc(100% + 6px)}}
+ .cite.right .cpop{{left:auto;right:0}}
+ @media(max-width:640px),(hover:none){{
+   .cpop,.cite.down .cpop,.cite.right .cpop{{position:fixed;left:12px;right:12px;top:auto;bottom:96px;width:auto;max-width:none;
+     max-height:50vh}}
+   .cite:hover .cpop{{display:none}}
+   .cite.open .cpop{{display:block}}}}
+ .cp-item{{display:flex;flex-direction:column;gap:3px;padding:8px;border-radius:10px;text-decoration:none;color:var(--foam)}}
+ .cp-item:hover{{background:rgba(155,246,236,.08)}}
+ .cp-item+.cp-item{{border-top:1px solid var(--line)}}
+ .cp-img{{width:100%;height:120px;object-fit:cover;border-radius:8px;margin-bottom:4px;background:rgba(155,246,236,.06)}}
+ .cp-host{{font-size:11.5px;color:var(--mist)}}
+ .cp-title{{font-size:13.5px;line-height:1.3;color:var(--foam);font-weight:600}}
+ .cp-snip{{font-size:12.5px;line-height:1.4;color:var(--mist);display:-webkit-box;-webkit-line-clamp:3;
+   -webkit-box-orient:vertical;overflow:hidden}}
+</style></head><body class="pg{page}">
  <div class="top">
    <div class="brand"><img src="/static/logo.png" alt="Du Voyageur">
      <div><b>Du Voyageur</b><span>Espace client</span></div></div>

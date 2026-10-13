@@ -242,9 +242,102 @@ def _today() -> str:
     return f"{d.day} {_MONTHS[d.month - 1]} {d.year}"
 
 
-def render_md(text: str) -> str:
+_CITE_RE = re.compile(r"\s?\[\[c:([\d,]+)\]\]")
+
+
+def _host(url: str) -> str:
+    return (urlparse(url or "").hostname or "").removeprefix("www.")
+
+
+def cite_html(idxs: list, sources: list) -> str:
+    """Inline source pill (chatgpt.com style): host label, hover/tap preview card."""
+    items = [sources[i] for i in idxs if 0 <= i < len(sources)]
+    if not items:
+        return ""
+    first = items[0]
+    more = f"<span class='cite-n'>+{len(items) - 1}</span>" if len(items) > 1 else ""
+    pop = "".join(
+        f"<a class='cp-item' href=\"{escape(x['url'])}\" target='_blank' rel='noopener nofollow'>"
+        + (f"<img class='cp-img' src=\"{escape(x['image'])}\" alt='' loading='lazy' "
+           "referrerpolicy='no-referrer' onerror=\"this.remove()\">" if x.get("image") else "")
+        + f"<span class='cp-host'>{escape(x.get('host') or _host(x['url']))}</span>"
+        + f"<b class='cp-title'>{escape(x.get('title') or x['url'])}</b>"
+        + (f"<span class='cp-snip'>{escape(x['snippet'])}</span>" if x.get("snippet") else "")
+        + "</a>" for x in items)
+    return (f"<span class='cite' tabindex='0'><a class='cite-a' href=\"{escape(first['url'])}\" "
+            f"target='_blank' rel='noopener nofollow'>{escape(first.get('host') or _host(first['url']))}"
+            f"{more}</a><span class='cpop' role='tooltip'>{pop}</span></span>")
+
+
+def _clean_src_url(url: str) -> str:
+    """Drop tracking params the search tool adds (utm_source=openai…)."""
+    u = urlparse(url)
+    q = "&".join(p for p in u.query.split("&") if p and not p.startswith("utm_"))
+    return u._replace(query=q).geturl()
+
+
+def mark_citations(visible: str, cites: list) -> tuple:
+    """Insert [[c:i,j]] markers where the model cited a page (only inside the
+    visible answer) and return (marked_text, sources). Sources carry
+    title, url, host, snippet (quoted text) and a live preview image."""
+    cites = [dict(c, url=_clean_src_url(c["url"])) for c in cites
+             if str(c.get("url", "")).startswith("https://") and 0 < c.get("at", 0) <= len(visible)]
+    urls = list(dict.fromkeys(c["url"] for c in cites))[:8]
+    previews = {}
+    if urls:
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            previews = dict(zip(urls, ex.map(page_preview, urls)))
+    urls = [u for u in urls if not previews.get(u, ("", False))[1]]      # dead pages out
+    sources = []
+    for u in urls:
+        cs = [c for c in cites if c["url"] == u]
+        snip = next((c["snippet"] for c in cs if c.get("snippet")), "")
+        snip = re.sub(r"\s+", " ", snip).strip()
+        sources.append({"url": u, "title": next((c["title"] for c in cs if c.get("title")), ""),
+                        "host": _host(u), "image": previews.get(u, ("", False))[0],
+                        "snippet": (snip[:217] + "…") if len(snip) > 220 else snip})
+    index = {u: i for i, u in enumerate(urls)}
+    # final position of each citation: after trailing punctuation / closing bold
+    edits: dict = {}
+    for c in cites:
+        if c["url"] not in index:
+            continue
+        start, at = c.get("start"), c["at"]
+        if start is None:
+            while at < len(visible):
+                nxt = visible[at:at + 2]
+                if nxt == "**":
+                    at += 2
+                elif visible[at] in ".;:)!?»":
+                    at += 1
+                else:
+                    break
+            start = at
+        key = (start, at)
+        edits.setdefault(key, [])
+        if index[c["url"]] not in edits[key]:
+            edits[key].append(index[c["url"]])
+    out, prev_end, last_in_para = [], 0, None
+    for (start, at), idxs in sorted(edits.items()):
+        if start < prev_end:
+            continue                                   # overlapping spans: keep the first
+        chunk = visible[prev_end:start]
+        if "\n" in chunk:
+            last_in_para = None
+        if idxs != last_in_para:                       # same source again in the paragraph: skip
+            out.append(chunk.rstrip(" ") + f" [[c:{','.join(map(str, idxs))}]]")
+        else:
+            out.append(chunk)
+            last_in_para = idxs
+        prev_end = at
+    out.append(visible[prev_end:])
+    return "".join(out), sources
+
+
+def render_md(text: str, sources=None) -> str:
     """Tiny, safe markdown: escape everything, then **bold** and '- ' bullets.
-    Mirrors the JS renderer in the panel so stored and live replies match."""
+    Mirrors the JS renderer in the panel so stored and live replies match.
+    [[c:i]] citation markers become source pills (or vanish without sources)."""
     out = escape(text or "")
     out = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", out)
     out = re.sub(r"(?m)^\s*[-*]\s+", "• ", out)
@@ -253,6 +346,8 @@ def render_md(text: str) -> str:
     out = re.sub(r"\n{3,}", "\n\n", out)
     out = re.sub(r"(?m)^\s*\[\[(DESTINATIONS|HOTELS)\]\]\s*$",
                  lambda m: f"<div class='slot' data-slot='{m.group(1).lower()}'></div>", out)
+    out = _CITE_RE.sub(lambda m: (" " + cite_html([int(i) for i in m.group(1).split(",") if i],
+                                                  sources or [])) if sources else "", out)
     return out
 
 
@@ -662,7 +757,8 @@ def _fill_slots(body: str, dests: str, cards: str) -> tuple:
 def _bubble(m: dict, last: bool = False) -> str:
     if m.get("role") == "user":
         return f"<div class='msg me'>{escape(m.get('text', ''))}</div>"
-    body, tail = _fill_slots(render_md(m.get("text", "")), destinations_html(m.get("destinations")),
+    body, tail = _fill_slots(render_md(m.get("marked") or m.get("text", ""), m.get("sources")),
+                             destinations_html(m.get("destinations")),
                              cards_html(m.get("cards")))
     return (f"<div class='msg ai'><div>{body}</div>{tail}{guides_html(m.get('guides'))}"
             f"{_sources_html(m.get('sources'))}{rate_html(m.get('id', ''), m.get('rating', 0))}"
@@ -670,50 +766,47 @@ def _bubble(m: dict, last: bool = False) -> str:
 
 
 def assistant_panel(client) -> str:
-    """The home-page block: search CTA + chat thread + composer."""
+    """The portal home: a full-screen chat (chatgpt.com layout) — centered
+    empty state with suggestions, then the thread with a sticky composer."""
     thread = list(client.assistant_chat or [])
     hi = escape(_first_name(client))
-    intro = (f"Salut{(' ' + hi) if hi else ''}! Je suis ton assistant voyage. "
-             "Décris-moi ton voyage (budget, dates, voyageurs, ce qui compte pour toi) "
-             "et je te propose des pistes. Ensuite, trouve le même forfait avec ton "
-             "rabais dans notre moteur de recherche.")
-    msgs = (f"<div class='msg ai'>{intro}</div>"
-            + "".join(_bubble(m, last=(i == len(thread) - 1)) for i, m in enumerate(thread)))
-    chips = "" if thread else (
-        "<div class='chips' id='aChips'>" + "".join(
-            f"<button type='button' class='chip'>{escape(s)}</button>" for s in _SUGGESTIONS)
-        + "</div>")
-    if thread and thread[-1].get("role") == "assistant" and thread[-1].get("suivis"):
-        chips = ("<div class='chips' id='aChips'>" + "".join(
-            f"<button type='button' class='chip'>{escape(s)}</button>"
-            for s in thread[-1]["suivis"]) + "</div>")
+    msgs = "".join(_bubble(m, last=(i == len(thread) - 1)) for i, m in enumerate(thread))
+    chip_list = _SUGGESTIONS if not thread else (
+        thread[-1].get("suivis") or [] if thread[-1].get("role") == "assistant" else [])
+    chips = ("<div class='chips' id='aChips'>" + "".join(
+        f"<button type='button' class='chip'>{escape(s)}</button>" for s in chip_list)
+        + "</div>") if chip_list else ""
     reset = ("<button type='button' class='areset' id='aReset'>Nouvelle conversation</button>"
              if thread else "")
-    human = ("<button type='button' class='areset' id='aHuman'>💬 Parler à un conseiller</button>")
+    human = "<button type='button' class='areset' id='aHuman'>💬 Conseiller</button>"
     if is_tester(client):
         human = "<a class='areset' href='/portail/assistant/comparer'>🧪 Test A/B</a>" + human
     messenger = json.dumps(settings.MESSENGER_URL)
     return f"""
-<a class='searchcta' href='{SEARCH_URL}'>
-  <div><b>🔎 Rechercher un forfait</b>
-  <span>Ton Rabais Récompense est déjà appliqué aux prix affichés.</span></div>
-  <span class='sc-go'>→</span></a>
-<div class='assist'>
-  <div class='a-head'><div><h3>Ton assistant voyage</h3>
-    <span class='a-sub'>Propulsé par l'IA · prix publics à titre indicatif</span></div>
-    <div class='a-acts'>{human}{reset}</div></div>
+<div class='assist chat{'' if thread else ' empty'}' id='aBox'>
+  <div class='c-bar'><span class='c-title'>Ton assistant voyage</span>{human}{reset}
+    <a class='c-search' href='{SEARCH_URL}'>🔎 Rechercher un forfait</a></div>
   <div class='a-toast' id='aToast' hidden></div>
+  <div class='c-empty'>
+    <h2>Où veux-tu partir{(', ' + hi) if hi else ''}?</h2>
+    <p>Décris ton voyage (budget, dates, voyageurs, ce qui compte pour toi) : je te propose
+      des destinations et des hôtels. Ensuite, réserve avec ton rabais dans notre moteur.</p>
+  </div>
   <div class='a-log' id='aLog' aria-live='polite'>{msgs}</div>
-  {chips}
-  <form class='a-form' id='aForm' autocomplete='off'>
-    <textarea id='aIn' rows='1' maxlength='{_MAX_LEN}' placeholder='Décris ton voyage…'
-      aria-label='Ta question'></textarea>
-    <button class='btn a-send' type='submit' id='aSend' aria-label='Envoyer'>Envoyer</button>
-  </form>
+  <div class='c-dock'>
+    {chips}
+    <form class='a-form' id='aForm' autocomplete='off'>
+      <textarea id='aIn' rows='1' maxlength='{_MAX_LEN}' placeholder='Décris ton voyage…'
+        aria-label='Ta question'></textarea>
+      <button class='btn a-send' type='submit' id='aSend' aria-label='Envoyer'>↑</button>
+    </form>
+    <div class='c-note'>Assistant IA : il peut se tromper. Prix publics à titre indicatif ;
+      ton Rabais Récompense s’applique dans notre moteur.</div>
+  </div>
 </div>
 <script>
 (function(){{
- var log=document.getElementById('aLog'),f=document.getElementById('aForm'),
+ var box=document.getElementById('aBox'),log=document.getElementById('aLog'),f=document.getElementById('aForm'),
      inp=document.getElementById('aIn'),send=document.getElementById('aSend'),
      chips=document.getElementById('aChips'),rst=document.getElementById('aReset'),
      hum=document.getElementById('aHuman'),toast=document.getElementById('aToast');
@@ -726,19 +819,21 @@ def assistant_panel(client) -> str:
    .replace(/^#{{1,6}}\\s*/gm,'').replace(/\\n{{3,}}/g,'\\n\\n')
    .replace(/^\\s*\\[\\[(DESTINATIONS|HOTELS)\\]\\]\\s*$/gm,function(_,k){{
      return "<div class='slot' data-slot='"+k.toLowerCase()+"'></div>";}});}}
- function bottom(){{log.scrollTop=log.scrollHeight;}}
+ function bottom(){{window.scrollTo(0,document.documentElement.scrollHeight);}}
  function add(cls,t){{var d=document.createElement('div');d.className='msg '+cls;
-   d.textContent=t;log.appendChild(d);bottom();return d;}}
+   d.textContent=t;log.appendChild(d);return d;}}
  function grow(){{inp.style.height='auto';inp.style.height=Math.min(inp.scrollHeight,140)+'px';}}
  inp.addEventListener('input',grow);
  inp.addEventListener('keydown',function(e){{
    if(e.key==='Enter'&&!e.shiftKey){{e.preventDefault();f.requestSubmit();}}}});
- bottom();
+ if(!box.classList.contains('empty'))bottom();
  function ask(q){{
    q=(q||'').trim(); if(!q||send.disabled)return;
    if(chips){{chips.remove();chips=null;}}
+   box.classList.remove('empty');
    log.querySelectorAll('.refine,.qset').forEach(function(x){{x.remove();}});
-   add('me',q); inp.value=''; grow();
+   var me=add('me',q); inp.value=''; grow();
+   me.style.scrollMarginTop='96px';me.scrollIntoView({{block:'start',behavior:'smooth'}});
    send.disabled=true; inp.disabled=true;
    var out=add('ai typing',''),body=document.createElement('div'),st=document.createElement('div');
    st.className='astatus';out.appendChild(st);out.appendChild(body);
@@ -746,6 +841,7 @@ def assistant_panel(client) -> str:
    function handle(ev){{
      if(ev.t==='status'){{st.textContent=ev.v;out.classList.remove('typing');}}
      else if(ev.t==='text'){{out.classList.remove('typing');st.textContent='';raw+=ev.v;body.innerHTML=md(raw);}}
+     else if(ev.t==='marked'&&ev.v){{body.innerHTML=ev.v;}}
      else if((ev.t==='dests'||ev.t==='cards')&&ev.v){{
        st.textContent='';var slot=body.querySelector(".slot[data-slot='"+(ev.t==='dests'?'destinations':'hotels')+"']");
        var cd=document.createElement('div');cd.innerHTML=ev.v;
@@ -758,7 +854,6 @@ def assistant_panel(client) -> str:
        ev.v.forEach(function(x){{if(!/^https:\\/\\//.test(x.url))return;var a=document.createElement('a');
          a.href=x.url;a.target='_blank';a.rel='noopener nofollow';a.textContent=x.title||x.url;s.appendChild(a);}});
        out.appendChild(s);}}
-     bottom();
    }}
    fetch('/portail/assistant',{{method:'POST',headers:{{'Content-Type':'application/json'}},
      body:JSON.stringify({{message:q,fmt:'ndjson'}})}}).then(function(r){{
@@ -779,7 +874,17 @@ def assistant_panel(client) -> str:
  f.addEventListener('submit',function(e){{e.preventDefault();ask(inp.value);}});
  if(chips)chips.addEventListener('click',function(e){{
    var b=e.target.closest('.chip');if(b)ask(b.textContent);}});
+ var touch=window.matchMedia&&matchMedia('(hover: none)').matches;
+ function place(c){{var r=c.getBoundingClientRect();
+   c.classList.toggle('down',r.top<380);c.classList.toggle('right',r.left+300>window.innerWidth);}}
+ log.addEventListener('mouseover',function(e){{var c=e.target.closest('.cite');if(c)place(c);}});
+ log.addEventListener('focusin',function(e){{var c=e.target.closest('.cite');if(c)place(c);}});
+ document.addEventListener('click',function(e){{
+   document.querySelectorAll('.cite.open').forEach(function(x){{if(!x.contains(e.target))x.classList.remove('open');}});}});
  log.addEventListener('click',function(e){{
+   var ca=e.target.closest('.cite-a');
+   if(ca&&touch&&!ca.parentNode.classList.contains('open')){{e.preventDefault();place(ca.parentNode);
+     ca.parentNode.classList.add('open');return;}}
    var r=e.target.closest('.rchip');if(r){{ask(r.textContent);return;}}
    var o=e.target.closest('.qopt');
    if(o){{var g=o.closest('.qgrp'),set=o.closest('.qset');
@@ -878,7 +983,7 @@ def model_name(provider: str) -> str:
 def _run_anthropic(search: bool, system: list, convo: list):
     """Yields ("status"|"text", str) then ("meta", {"sources", "searches"})."""
     api = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-    sources, searches, wrote = [], 0, False
+    sources, searches, wrote, cites, base = [], 0, False, [], 0
     for _attempt in range(3):                     # pause_turn continuations
         blocks = [{"type": "text", "text": system[0], "cache_control": {"type": "ephemeral"}}]
         if system[1]:
@@ -909,11 +1014,20 @@ def _run_anthropic(search: bool, system: list, convo: list):
                             "web_search_requests", 0) or 0
         sources += [s for s in _collect_sources(final)
                     if s["url"] not in {x["url"] for x in sources}]
+        for block in final.content or []:            # text blocks == streamed text, in order
+            if getattr(block, "type", "") != "text":
+                continue
+            base += len(block.text or "")
+            for c in getattr(block, "citations", None) or []:
+                if getattr(c, "url", None):
+                    cites.append({"start": None, "at": base, "url": c.url,
+                                  "title": getattr(c, "title", None) or "",
+                                  "snippet": getattr(c, "cited_text", None) or ""})
         if final.stop_reason == "pause_turn":
             convo = convo + [{"role": "assistant", "content": final.content}]
             continue
         break
-    yield ("meta", {"sources": sources, "searches": searches})
+    yield ("meta", {"sources": sources, "searches": searches, "cites": cites, "chars": base})
 
 
 def _openai_tool() -> dict:
@@ -955,17 +1069,25 @@ def _run_openai(search: bool, system: list, convo: list):
         if search and not wrote:
             raise SearchRefused(str(exc)) from exc
         raise
-    sources, searches = [], 0
+    sources, searches, cites, base = [], 0, [], 0
     for item in getattr(final, "output", None) or []:
         if getattr(item, "type", "") == "web_search_call":
             searches += 1
         for part in getattr(item, "content", None) or []:
+            if getattr(part, "type", "") != "output_text":
+                continue
             for a in getattr(part, "annotations", None) or []:
                 url = getattr(a, "url", None)
-                if getattr(a, "type", "") == "url_citation" and url \
-                        and url not in {s["url"] for s in sources}:
+                if getattr(a, "type", "") != "url_citation" or not url:
+                    continue
+                if url not in {s["url"] for s in sources}:
                     sources.append({"url": url, "title": getattr(a, "title", None) or ""})
-    yield ("meta", {"sources": sources[:6], "searches": searches})
+                si, ei = getattr(a, "start_index", None), getattr(a, "end_index", None)
+                if isinstance(si, int) and isinstance(ei, int) and ei >= si:
+                    cites.append({"start": base + si, "at": base + ei, "url": url,
+                                  "title": getattr(a, "title", None) or "", "snippet": ""})
+            base += len(part.text or "")
+    yield ("meta", {"sources": sources[:6], "searches": searches, "cites": cites, "chars": base})
 
 
 _RUNNERS = {"anthropic": _run_anthropic, "openai": _run_openai}
@@ -1016,7 +1138,7 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
 
     parts: list[str] = []          # everything the model wrote
     shown = [0]                    # chars of `parts` already sent
-    meta = {"sources": [], "searches": 0}
+    meta = {"sources": [], "searches": 0, "cites": []}
 
     def visible_cut(full: str) -> int:
         cuts = [i for i in (full.find(t) for t in _TAGS) if i != -1]
@@ -1064,6 +1186,19 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
     cut = visible_cut(full)
     if shown[0] < cut:                 # text held back while checking for a tag
         yield _ev("text", full[shown[0]:cut])
+    marked = ""
+    if meta.get("cites") and meta.get("chars") != len(full):
+        log.info("assistant: citation offsets skipped (%s chars vs %s streamed)", meta.get("chars"), len(full))
+    elif meta.get("cites"):
+        marked, cited = mark_citations(full[:cut], meta["cites"])
+        if cited:
+            got = {c["url"] for c in cited}
+            rest = [x for x in sources if _clean_src_url(x["url"]) not in got]
+            sources = cited + rest[:max(0, 8 - len(cited))]
+            marked = marked.strip()
+            yield _ev("marked", render_md(marked, sources))
+        else:
+            marked = ""
     dm = _DEST_RE.search(full)
     dests = parse_destinations(dm.group(1).strip()) if dm else []
     if dests:
@@ -1095,7 +1230,7 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
         yield _ev("refine", suivis_html(suivis))
     now = datetime.utcnow().isoformat(timespec="seconds")
     persist({"role": "user", "text": q, "at": now},
-            {"role": "assistant", "id": mid, "text": answer, "cards": cards,
+            {"role": "assistant", "id": mid, "text": answer, "marked": marked, "cards": cards,
              "destinations": dests, "questions": questions,
              "guides": guides, "suivis": suivis, "sources": sources,
              "provider": provider, "model": model_name(provider), "at": now})
