@@ -99,14 +99,14 @@ class Settings:
     PORTAL_ASSISTANT_STYLE: str = os.getenv("PORTAL_ASSISTANT_STYLE", "complet")
     PORTAL_ASSISTANT_DAILY_MAX: int = int(os.getenv("PORTAL_ASSISTANT_DAILY_MAX", "40"))
     # Web search (Claude server tool, ~$10 / 1000 searches + result tokens).
-    PORTAL_ASSISTANT_SEARCHES_PER_ANSWER: int = int(os.getenv("PORTAL_ASSISTANT_SEARCHES_PER_ANSWER", "3"))
-    PORTAL_ASSISTANT_DAILY_SEARCHES: int = int(os.getenv("PORTAL_ASSISTANT_DAILY_SEARCHES", "10"))
+    PORTAL_ASSISTANT_SEARCHES_PER_ANSWER: int = int(os.getenv("PORTAL_ASSISTANT_SEARCHES_PER_ANSWER", "8"))
+    PORTAL_ASSISTANT_DAILY_SEARCHES: int = int(os.getenv("PORTAL_ASSISTANT_DAILY_SEARCHES", "60"))
     # Only tour operators + information sites: never send members to competing
     # agencies (sources must be displayed). Comma-separated bare domains.
     PORTAL_ASSISTANT_SEARCH_DOMAINS: str = os.getenv(
         "PORTAL_ASSISTANT_SEARCH_DOMAINS",
         "transat.com,vacancesaircanada.com,aircanadavacations.com,sunwing.ca,"
-        "westjet.com,tripadvisor.ca,tripadvisor.com,voyage.gc.ca,travel.gc.ca")
+        "westjet.com,tripadvisor.ca,tripadvisor.com,tripadvisor.fr,voyage.gc.ca,travel.gc.ca")
 
     # --- Support: the portal's "Aide" tab sends clients to the Facebook page's
     # Messenger (the admin ticket queue is no longer used).

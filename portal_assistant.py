@@ -118,12 +118,16 @@ et les hôtels, et l'aide à choisir. Pas un moteur de prix.
    d) Suivi (« moins cher », « et Cuba? », réponse à tes questions) : ne
       répète pas tout ; ajuste ce qui change.
 
-4. HÔTELS : recommande selon la QUALITÉ. La section « HÔTELS RECOMMANDÉS PAR
-   DU VOYAGEUR » (plus bas, quand elle est présente) les classe du meilleur
-   au moins bon pour cette demande. Prends-les d'abord, dans cet ordre, s'ils
-   collent aux critères, et écris leur nom EXACT. Un hôtel hors de cette liste
-   seulement s'il manque d'options, et dis-le. Mentionne la note TripAdvisor
-   quand elle aide à choisir.
+4. HÔTELS : recommande selon leur RÉPUTATION RÉELLE, vérifiée en ligne.
+   - Choisis des hôtels reconnus qui collent aux critères (destination,
+     voyageurs, envies, budget). Appuie ton choix sur TripAdvisor (note et
+     nombre d'avis) trouvé par ta recherche ; n'invente jamais une note.
+   - Pour CHAQUE hôtel recommandé, trouve sa fiche chez un grossiste
+     canadien (Transat, Vacances Air Canada, Vacances Sunwing, Vacances
+     WestJet) et mets son adresse exacte dans fiche_url : c'est elle qui
+     affiche les vraies photos de l'hôtel. Pas de fiche trouvée : null.
+   - Pour chaque destination proposée, page_url = une page de cette
+     destination chez un de ces grossistes, si tu l'as trouvée.
 
 5. PRIX : {search_rule}
    Ne cherche les prix que lorsque la destination est assez précise ET que tu
@@ -133,17 +137,17 @@ et les hôtels, et l'aide à choisir. Pas un moteur de prix.
    forfait dans notre moteur : c'est souvent moins cher, avec ton Rabais
    Récompense déjà appliqué. »
 
-6. Utilise le CONTENU VÉRIFIÉ DE DU VOYAGEUR (destinations, extraits de nos
-   pages « Quoi faire », guides) en priorité. Ne le contredis jamais. Les
-   liens vers nos pages s'affichent automatiquement : ne les écris pas.
+6. Le CONTENU DE DU VOYAGEUR ci-dessous (guides, saisons, quoi faire) est
+   une aide pour l'information générale. Pour les hôtels, fie-toi à tes
+   recherches et aux fiches des grossistes. Les liens vers nos guides
+   s'affichent automatiquement : ne les écris pas.
 
 Règles strictes :
 - Ne promets jamais que notre prix sera plus bas ni un montant de rabais
   précis : « souvent moins cher », « jusqu'à 5 % avant taxes ».
 - Tu ne peux pas réserver ni confirmer une disponibilité.
-- N'invente jamais un hôtel, un prix, un horaire ou un détail. Un prix vient
-  de tes résultats de recherche ; un détail d'hôtel, de tes sources ou de
-  notre contenu.
+- N'invente jamais un hôtel, un prix, une note, un horaire ou un détail :
+  ils viennent de tes résultats de recherche.
 - Ne recommande pas d'autres agences de voyages.
 - Passeports, visas, santé, avis aux voyageurs (Cuba surtout) : idée
   générale et renvoi à voyage.gc.ca.
@@ -155,15 +159,19 @@ BLOCS DE DONNÉES — à la TOUTE FIN de ta réponse, dans cet ordre, sans rien
 après, jamais mentionnés dans ton texte :
 <destinations>[{{"nom": "Puerto Vallarta", "accroche": "Gastronomie, excursions et vie nocturne",
 "ideal_pour": "un couple qui veut bouger et bien manger",
-"bemol": "plus animé que reposant", "moment": "baleines et Nouvel An festif"}}]</destinations>
+"bemol": "plus animé que reposant", "moment": "baleines et Nouvel An festif",
+"page_url": "https://…"}}]</destinations>
    (seulement avec [[DESTINATIONS]] ; 3 ou 4 destinations ; textes courts)
 <pistes>[{{"hotel": "Nom exact", "destination": "Puerto Vallarta",
 "depart": "31 décembre 2026", "nuits": 7, "prix_personne": null,
 "total": null, "voyageurs": "2 adultes", "taxes": null,
-"source_url": null, "a_confirmer": "vol direct"}}]</pistes>
+"fiche_url": "https://…", "source_url": null, "note": 4.5, "avis": 12000,
+"a_confirmer": "vol direct"}}]</pistes>
    (seulement avec [[HOTELS]] ou des prix ; 3 ou 4 hôtels ; prix,
    source_url et taxes à null tant que tu n'as pas cherché le prix ;
    source_url = l'adresse exacte de la page où tu as vu le prix ;
+   fiche_url = la fiche de l'hôtel chez un grossiste canadien ;
+   note et avis = note TripAdvisor et nombre d'avis trouvés, sinon null ;
    taxes "incluses" ou "en sus" ; montants en dollars sans symbole)
 <questions>[{{"q": "Budget total pour 2, vols compris ?",
 "options": ["3 500 – 5 000 $", "5 000 – 7 000 $", "7 000 – 10 000 $", "10 000 $ et plus"]}},
@@ -192,11 +200,11 @@ LONGUEUR : CONCISE (remplace les consignes de longueur ci-dessus) : sections
 très courtes, 2 ou 3 destinations, 2 ou 3 hôtels, une phrase chacune.
 """
 
-_SEARCH_ON = ("tu peux chercher sur le web (limité aux sites des voyagistes et "
-              "d'information) : le prix public actuel des hôtels que tu recommandes, "
-              "les vols directs, les événements à ses dates.")
-_SEARCH_OFF = ("pas de recherche web pour cette réponse : conseille avec nos hôtels et "
-               "notre contenu, SANS prix, et envoie-le vers notre moteur pour les prix.")
+_SEARCH_ON = ("cherche sur le web (sites des grossistes canadiens et d'information) : "
+              "la fiche et la note des hôtels que tu recommandes, leur prix public actuel "
+              "quand c'est le moment, les vols directs, les événements à ses dates.")
+_SEARCH_OFF = ("pas de recherche web pour cette réponse : conseille sans prix ni note "
+               "précise, et envoie-le vers notre moteur pour les prix et les photos.")
 
 _SUGGESTIONS = [
     "2 adultes, 4 000 $ max, priorité plage, départ de Montréal en novembre",
@@ -281,9 +289,6 @@ def parse_destinations(raw: str) -> list:
             continue
         nom = str(d["nom"]).strip()[:60]
         guide = next(iter(kb.match(nom, 1)), None)
-        photo = next(((h["photos"][0], h["name"]) for h in hc.rank(nom, 12) if h.get("photos")
-                      and kb.norm(nom.split(",")[0]) in kb.norm(h.get("destination", "") + " " + h.get("country", ""))),
-                     ("", ""))
         out.append({
             "nom": nom,
             "accroche": str(d.get("accroche") or "")[:90],
@@ -291,11 +296,30 @@ def parse_destinations(raw: str) -> list:
             "bemol": str(d.get("bemol") or "")[:120],
             "moment": str(d.get("moment") or "")[:120],
             "guide": guide["url"] if guide and guide.get("kind") in ("destination", "pays") else "",
-            "photo": photo[0], "photo_hotel": photo[1],
+            "page_url": str(d.get("page_url") or "").strip(),
         })
         if len(out) == 4:
             break
     return out
+
+
+def add_destination_images(dests: list, known: set) -> list:
+    """Destination photo = share image of the destination's page at a
+    Canadian wholesaler, shown live (never copied)."""
+    for d in dests:
+        d["page_url"] = _clean_url(d.get("page_url"), known, WHOLESALERS)
+    urls = list({d["page_url"] for d in dests if d.get("page_url")})
+    previews = {}
+    if urls:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            previews = dict(zip(urls, ex.map(page_preview, urls)))
+    for d in dests:
+        img, dead = previews.get(d.get("page_url"), ("", False))
+        if dead:
+            d["page_url"] = ""
+        d["photo"] = img
+        d["photo_from"] = (urlparse(d["page_url"]).hostname or "").removeprefix("www.") if img else ""
+    return dests
 
 
 def parse_questions(raw: str) -> list:
@@ -318,13 +342,17 @@ def destinations_html(dests) -> str:
     cards = []
     for i, d in enumerate(dests, 1):
         pic = (f"<figure class='dc-pic'><img src=\"{escape(d['photo'])}\" alt='' loading='lazy' "
-               f"onerror=\"this.parentNode.remove()\"><figcaption>Photo : {escape(d['photo_hotel'])}"
-               "</figcaption></figure>") if d.get("photo") else "<div class='dc-pic dc-nopic'>🌴</div>"
+               f"referrerpolicy='no-referrer' onerror=\"this.parentNode.remove()\">"
+               f"<figcaption>{escape(d.get('photo_from') or '')}</figcaption></figure>"
+               ) if d.get("photo") else "<div class='dc-pic dc-nopic'>🌴</div>"
         rows = "".join(f"<div class='dc-row'><span>{k}</span>{escape(v)}</div>" for k, v in (
             ("Idéal pour", d.get("ideal_pour")), ("À tes dates", d.get("moment")),
             ("Bémol", d.get("bemol"))) if v)
         guide = (f"<a class='dc-guide' href=\"{escape(d['guide'])}\" target='_blank' rel='noopener'>"
                  "Notre guide →</a>") if d.get("guide") else ""
+        if d.get("page_url"):
+            guide += (f"<a class='dc-guide' href=\"{escape(d['page_url'])}\" target='_blank' "
+                      f"rel='noopener nofollow'>Voir sur {escape(d.get('photo_from') or 'le site')} ↗</a>")
         more = (f"<button type='button' class='chip rchip dc-more'>Les meilleurs hôtels à "
                 f"{escape(d['nom'])}</button>")
         cards.append(f"<div class='dcard'>{pic}<div class='dc-body'><div class='dc-rank'>{i}</div>"
@@ -383,6 +411,31 @@ def _allowed_domain(url: str) -> bool:
     return any(host == d or host.endswith("." + d) for d in domains)
 
 
+WHOLESALERS = ("transat.com", "vacancesaircanada.com", "aircanadavacations.com",
+               "sunwing.ca", "westjet.com")
+
+
+def _on(url: str, domains) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return any(host == d or host.endswith("." + d) for d in domains)
+
+
+def _clean_url(url, known, domains=None) -> str:
+    """Keep a model-given URL only if the search cited it or it sits on an
+    allowed site; prefer the cited page on the same site when unambiguous."""
+    url = str(url or "").strip()
+    if not url.startswith("https://"):
+        return ""
+    if url not in known and not _allowed_domain(url):
+        same = [k for k in known if urlparse(k).hostname == urlparse(url).hostname]
+        if len(same) == 1:
+            url = same[0]
+    ok = url in known or _allowed_domain(url)
+    if domains is not None:
+        ok = ok and _on(url, domains)
+    return url if ok else ""
+
+
 def page_preview(url: str):
     """(share image, page_is_dead) for a source page — like a link preview.
     og:image / twitter:image; 3 s timeout, 600 KB read cap, cached.
@@ -433,16 +486,17 @@ def parse_pistes(raw: str, sources: list) -> list:
     for d in data if isinstance(data, list) else []:
         if not isinstance(d, dict) or not str(d.get("hotel") or "").strip():
             continue
-        url = str(d.get("source_url") or "").strip()
-        if url not in known and url.startswith("https://"):
-            # Prefer a page the search actually cited on the same site over a
-            # URL the model may have rebuilt from memory.
-            host = urlparse(url).hostname
-            same = [k for k in known if urlparse(k).hostname == host]
-            if len(same) == 1:
-                url = same[0]
-        if not (url.startswith("https://") and (url in known or _allowed_domain(url))):
-            url = ""
+        url = _clean_url(d.get("source_url"), known)
+        fiche = _clean_url(d.get("fiche_url"), known, WHOLESALERS)
+        try:                       # a rating counts only if TripAdvisor was actually consulted
+            note = float(d.get("note")) if d.get("note") not in (None, "") else None
+            note = note if note and 0 < note <= 5 and any("tripadvisor" in k for k in known) else None
+        except (TypeError, ValueError):
+            note = None
+        try:
+            avis = int(d.get("avis")) if note and d.get("avis") not in (None, "") else None
+        except (TypeError, ValueError):
+            avis = None
         try:
             nuits = int(d.get("nuits")) if d.get("nuits") not in (None, "") else None
         except (TypeError, ValueError):
@@ -457,6 +511,8 @@ def parse_pistes(raw: str, sources: list) -> list:
             "voyageurs": str(d.get("voyageurs") or "")[:40],
             "taxes": d.get("taxes") if d.get("taxes") in ("incluses", "en sus") else None,
             "source_url": url,
+            "fiche_url": fiche,
+            "note": note, "avis": avis,
             "a_confirmer": str(d.get("a_confirmer") or "")[:120],
         })
         if len(cards) == 4:
@@ -465,27 +521,28 @@ def parse_pistes(raw: str, sources: list) -> list:
 
 
 def add_images(cards: list) -> list:
-    """Photos, in order of trust: our own photo of the hotel (catalogue) →
-    the source page's share image (if PORTAL_ASSISTANT_WEB_IMAGES) → none.
-    Also drops source links that are dead (404) so a member never clicks
-    through to an error page, and adds catalogue facts (rating, reviews…)."""
-    for c in cards:
-        extra = hc.card_extras(c["hotel"])
-        if extra:
-            c.update({"cat_" + k: v for k, v in extra.items()})
-    urls = list({c["source_url"] for c in cards if c.get("source_url")})
+    """Real hotel photos, never copied: the share image of the hotel's page at
+    a Canadian wholesaler, displayed live from their site (like a link
+    preview). Falls back to the price page's image, else no photo. Dead
+    links (404/410) are dropped so a member never lands on an error page."""
+    urls = list({u for c in cards for u in (c.get("fiche_url"), c.get("source_url")) if u})
+    previews = {}
     if urls:
-        with ThreadPoolExecutor(max_workers=4) as ex:
+        with ThreadPoolExecutor(max_workers=6) as ex:
             previews = dict(zip(urls, ex.map(page_preview, urls)))
-        for c in cards:
-            img, dead = previews.get(c.get("source_url"), ("", False))
-            if dead:
-                log.info("assistant: dead source link removed from card: %s", c["source_url"])
-                c["source_url"] = ""
-            c["image"] = c.get("cat_photo") or (img if settings.PORTAL_ASSISTANT_WEB_IMAGES else "")
     for c in cards:
-        if "image" not in c:
-            c["image"] = c.get("cat_photo") or ""
+        for key in ("fiche_url", "source_url"):
+            if c.get(key) and previews.get(c[key], ("", False))[1]:
+                log.info("assistant: dead link removed from card: %s", c[key])
+                c[key] = ""
+        img = ""
+        for key in ("fiche_url", "source_url"):
+            if c.get(key) and _on(c[key], WHOLESALERS):
+                img = previews.get(c[key], ("", False))[0]
+                if img:
+                    c["image_from"] = (urlparse(c[key]).hostname or "").removeprefix("www.")
+                    break
+        c["image"] = img
     return cards
 
 
@@ -495,10 +552,11 @@ def cards_html(cards) -> str:
     out = []
     for c in cards:
         url = c.get("source_url") or ""
+        fiche = c.get("fiche_url") or url
         host = (urlparse(url).hostname or "").removeprefix("www.") if url else ""
         name = escape(c["hotel"])
-        title = (f"<a class='pc-name' href=\"{escape(url)}\" target='_blank' "
-                 f"rel='noopener nofollow'>{name}</a>") if url else f"<span class='pc-name'>{name}</span>"
+        title = (f"<a class='pc-name' href=\"{escape(fiche)}\" target='_blank' "
+                 f"rel='noopener nofollow'>{name}</a>") if fiche else f"<span class='pc-name'>{name}</span>"
         sub = " — ".join(x for x in (
             escape(c.get("destination") or ""),
             escape(", ".join(x for x in (
@@ -511,23 +569,26 @@ def cards_html(cards) -> str:
             "prix affiché") if x)
         total = (f"<div class='pc-total'><b>{tot}{(' pour ' + escape(c['voyageurs'])) if c.get('voyageurs') else ''}</b>"
                  f", {tail}.</div>") if tot else ""
-        chip = (f"<a class='pc-src' href=\"{escape(url)}\" target='_blank' rel='noopener nofollow'>"
-                f"{escape(host)}</a>") if host else ""
-        ours = c.get("cat_page") or kb.hotel_page(c["hotel"])
-        if ours:
-            label = "⭐ Notre coup de cœur" if c.get("cat_coup_de_coeur") else "Notre fiche"
-            chip += (f"<a class='pc-ours' href=\"{escape(ours)}\" target='_blank' rel='noopener'>"
-                     f"{label}</a>")
+        chips = []
+        if c.get("fiche_url"):
+            fh = (urlparse(c["fiche_url"]).hostname or "").removeprefix("www.")
+            chips.append(f"<a class='pc-src' href=\"{escape(c['fiche_url'])}\" target='_blank' "
+                         f"rel='noopener nofollow'>Fiche {escape(fh)}</a>")
+        if host and url != c.get("fiche_url"):
+            chips.append(f"<a class='pc-src' href=\"{escape(url)}\" target='_blank' "
+                         f"rel='noopener nofollow'>Prix vu sur {escape(host)}</a>")
+        chip = "".join(chips)
         rate = ""
-        if c.get("cat_rating"):
-            rv = c.get("cat_reviews")
-            rate = (f"<div class='pc-rate'>★ {str(c['cat_rating']).replace('.', ',')}/5 TripAdvisor"
+        if c.get("note"):
+            rv = c.get("avis")
+            rate = (f"<div class='pc-rate'>★ {str(c['note']).replace('.', ',')}/5 TripAdvisor"
                     + (f" · {rv:,} avis".replace(",", "\u202f") if rv else "") + "</div>")
         conf = (f"<div class='pc-conf'>À confirmer : {escape(c['a_confirmer'])}</div>"
                 if c.get("a_confirmer") else "")
         img = c.get("image") or ""
-        pic = (f"<img class='pc-img' src=\"{escape(img)}\" alt='' loading='lazy' "
-               "referrerpolicy='no-referrer' onerror=\"this.remove()\">") if img else ""
+        pic = (f"<figure class='pc-fig'><img class='pc-img' src=\"{escape(img)}\" alt='' loading='lazy' "
+               "referrerpolicy='no-referrer' onerror=\"this.parentNode.remove()\">"
+               f"<figcaption>{escape(c.get('image_from') or '')}</figcaption></figure>") if img else ""
         out.append(f"<div class='pcard{'' if pic else ' noimg'}'>{pic}<div class='pc-body'>"
                    f"{title}<div class='pc-sub'>{sub}</div>{rate}{price}{total}"
                    f"<div class='pc-foot'>{chip}<a class='pc-go' href='{SEARCH_URL}'>"
@@ -541,7 +602,7 @@ def cards_html(cards) -> str:
             return f"<td>{v or '—'}</td>"
         rows = [
             ("Destination", [escape(c.get("destination") or "") for c in cards]),
-            ("TripAdvisor", [f"{str(c['cat_rating']).replace('.', ',')}/5" if c.get("cat_rating") else ""
+            ("TripAdvisor", [f"{str(c['note']).replace('.', ',')}/5" if c.get("note") else ""
                              for c in cards]),
             ("Départ", [escape(c.get("depart") or "") for c in cards]),
             ("Nuits", [str(c["nuits"]) if c.get("nuits") else "" for c in cards]),
@@ -554,10 +615,6 @@ def cards_html(cards) -> str:
         tbody = "".join(f"<tr><th>{k}</th>{''.join(cell(v) for v in vals)}</tr>"
                         for k, vals in rows if any(vals))
         cmp_btn = "<button type='button' class='pc-cmpbtn'>Comparer</button>"
-        ids = [c["cat_id"] for c in cards if c.get("cat_id")]
-        if len(ids) >= 2:
-            cmp_btn += (f"<a class='pc-cmpbtn' href='/portail/comparer?h={','.join(ids)}'>"
-                        "Fiches côte à côte →</a>")
         cmp = (f"<div class='pc-cmp' hidden><table><thead><tr><th></th>{thead}</tr></thead>"
                f"<tbody>{tbody}</tbody></table></div>")
     return (f"<div class='pcards'><div class='pc-head'><span>{head}</span>{cmp_btn}</div>"
@@ -941,7 +998,6 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
     excerpts = kb.context_for(convo_text)
     catalogue = kb.catalogue()
 
-    ranked = hc.prompt_lines(convo_text)
 
     def system_for(search: bool) -> list:
         """[static, dynamic]: the static block (rules + catalogue) is identical
@@ -952,9 +1008,6 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
         if not _full():
             static += STYLE_CONCIS
         dynamic = ""
-        if ranked:
-            dynamic += ("HÔTELS RECOMMANDÉS PAR DU VOYAGEUR pour cette demande "
-                        "(du meilleur au moins bon) :\n" + ranked + "\n\n")
         if excerpts:
             dynamic += "Extraits de nos pages liés à la conversation :\n" + excerpts + "\n\n"
         if name:
@@ -1014,6 +1067,7 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
     dm = _DEST_RE.search(full)
     dests = parse_destinations(dm.group(1).strip()) if dm else []
     if dests:
+        dests = add_destination_images(dests, {x["url"] for x in sources})
         yield _ev("dests", destinations_html(dests))
     m = _PISTES_RE.search(full)
     cards = parse_pistes(m.group(1).strip(), sources) if m else []

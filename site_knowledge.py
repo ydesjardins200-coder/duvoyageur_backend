@@ -106,16 +106,52 @@ def catalogue() -> str:
         if p["kind"] == "destination":
             name = re.sub(r"(?i)^voyage tout-inclus (à|a|au|aux|en)\s+", "", p["title"])
             name = re.sub(r"\s*\(.*?\)", "", re.split(r"[—|·:]", name)[0]).strip()
-            hotels = ", ".join(p.get("hotels", [])[:4])
-            rows.append(f"- {name}" + (f" (nos coups de cœur : {hotels})" if hotels else ""))
+            rows.append(f"- {name}")
     return "\n".join(rows)
+
+
+def _strip_picks(p: dict) -> str:
+    """Page text without our hotel picks (« Nos coups de cœur » + hotel sections)."""
+    t = p["text"]
+    i = re.search(r"(?i)nos coups de c.ur\n", t)
+    if not i:
+        return t
+    hotels = {norm(h) for h in p.get("hotels", [])}
+    heads = list(re.finditer(r"\n## ([^\n]*)", t))
+    end = len(t)
+    for m in heads:
+        if m.start() <= i.start():
+            continue
+        h = norm(m.group(1))
+        if h.startswith("meilleurs") or h in hotels or any(x and (x in h or h in x) for x in hotels):
+            continue
+        end = m.start()
+        break
+    return t[:i.start()] + t[end:]
+
+
+def _strip_all_picks(p: dict) -> str:
+    """No hotel picks at all: picks block, any hotel section, FAQ « coups de cœur » lines."""
+    t = _strip_picks(p)
+    hotels = {norm(h) for h in p.get("hotels", [])}
+    out, skip = [], False
+    for line in t.split("\n"):
+        if line.startswith("## "):
+            skip = norm(line[3:]) in hotels
+        if skip or re.search(r"(?i)coups? de c.ur", line):
+            continue
+        out.append(line)
+    return "\n".join(out)
 
 
 def context_for(text: str, max_chars: int = 3200) -> str:
     """Verified excerpts for the pages that match the conversation."""
     parts = []
     for p in match(text):
-        parts.append(f"### {p['title']} ({p['url']})\n{p['text'][:max_chars]}")
+        if p["kind"] == "top-hotels":
+            continue                       # our hotel picks are not a source anymore
+        body = _strip_all_picks(p)
+        parts.append(f"### {p['title']} ({p['url']})\n{body[:max_chars]}")
     return "\n\n".join(parts)
 
 

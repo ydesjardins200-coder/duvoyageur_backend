@@ -898,7 +898,6 @@ def _nav(active: str, locked: bool = False) -> str:
         return f"<nav class='pnav'>{home}</nav>"
     items = [("accueil", "/portail", "Accueil"),
              ("recherche", "/portail/recherche", "Rechercher"),
-             ("comparer", "/portail/comparer", "Comparer"),
              ("aide", "/portail/service", "Aide"),
              ("profil", "/portail/profil", "Mon profil")]
     links = "".join(
