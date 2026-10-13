@@ -46,6 +46,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from config import settings
 from db import AssistantFeedback, Client, SessionLocal
 import site_knowledge as kb
+import hotel_catalog as hc
 from portal import (_bell_panel, _logged_out, _nav, _set_session_cookie, _shell,
                     current_portal_client_id)
 
@@ -99,10 +100,20 @@ TON RÔLE : un conseiller d'expérience qui aide à CHOISIR, pas un moteur de pr
    - Durée du transfert aéroport-hôtel, vol direct ou avec escale, taille du
      complexe, adultes seulement vs famille (mini-club, glissades).
    - Cuba : rappelle de vérifier l'avis aux voyageurs actuel sur voyage.gc.ca.
-4. Utilise d'abord le CONTENU VÉRIFIÉ DE DU VOYAGEUR ci-dessous : nos
-   destinations et nos coups de cœur. Quand un de nos coups de cœur colle aux
-   critères, privilégie-le. Ne contredis jamais ce contenu. Les liens vers nos
-   pages s'affichent automatiquement : ne les écris pas.
+4. Recommande selon la QUALITÉ, pas au hasard : la section « HÔTELS
+   RECOMMANDÉS PAR DU VOYAGEUR » (plus bas, quand elle est présente) classe
+   nos hôtels du meilleur au moins bon pour CETTE demande (note TripAdvisor
+   pondérée par le nombre d'avis, nos coups de cœur, catégorie qui colle).
+   - Propose d'abord ces hôtels, dans cet ordre, s'ils respectent les
+     critères (destination, voyageurs, budget). Écris leur nom EXACT.
+   - Utilise ta recherche pour trouver le prix public ACTUEL de ces hôtels
+     précis (nom de l'hôtel + mois + départ de Montréal), pas pour chercher
+     des hôtels au hasard.
+   - Un hôtel hors de cette liste seulement si aucun ne colle, et dis-le.
+   - Mentionne la note TripAdvisor quand elle aide à choisir.
+   Utilise aussi le CONTENU VÉRIFIÉ DE DU VOYAGEUR (destinations, extraits).
+   Ne contredis jamais ce contenu. Les liens vers nos pages s'affichent
+   automatiquement : ne les écris pas.
 5. Sois honnête : dis clairement ce que tu n'as pas pu confirmer (vol direct,
    date exacte, prix total). Les prix publics changent vite : présente-les
    comme « vu en ligne », jamais comme garantis.
@@ -366,8 +377,14 @@ def parse_pistes(raw: str, sources: list) -> list:
 
 
 def add_images(cards: list) -> list:
-    """Attach each source page's photo; drop source links that are dead (404)
-    so a member never clicks through to an error page."""
+    """Photos, in order of trust: our own photo of the hotel (catalogue) →
+    the source page's share image (if PORTAL_ASSISTANT_WEB_IMAGES) → none.
+    Also drops source links that are dead (404) so a member never clicks
+    through to an error page, and adds catalogue facts (rating, reviews…)."""
+    for c in cards:
+        extra = hc.card_extras(c["hotel"])
+        if extra:
+            c.update({"cat_" + k: v for k, v in extra.items()})
     urls = list({c["source_url"] for c in cards if c.get("source_url")})
     if urls:
         with ThreadPoolExecutor(max_workers=4) as ex:
@@ -377,7 +394,10 @@ def add_images(cards: list) -> list:
             if dead:
                 log.info("assistant: dead source link removed from card: %s", c["source_url"])
                 c["source_url"] = ""
-            c["image"] = img
+            c["image"] = c.get("cat_photo") or (img if settings.PORTAL_ASSISTANT_WEB_IMAGES else "")
+    for c in cards:
+        if "image" not in c:
+            c["image"] = c.get("cat_photo") or ""
     return cards
 
 
@@ -405,17 +425,23 @@ def cards_html(cards) -> str:
                  f", {tail}.</div>") if tot else ""
         chip = (f"<a class='pc-src' href=\"{escape(url)}\" target='_blank' rel='noopener nofollow'>"
                 f"{escape(host)}</a>") if host else ""
-        ours = kb.hotel_page(c["hotel"])
+        ours = c.get("cat_page") or kb.hotel_page(c["hotel"])
         if ours:
+            label = "⭐ Notre coup de cœur" if c.get("cat_coup_de_coeur") else "Notre fiche"
             chip += (f"<a class='pc-ours' href=\"{escape(ours)}\" target='_blank' rel='noopener'>"
-                     "⭐ Notre coup de cœur</a>")
+                     f"{label}</a>")
+        rate = ""
+        if c.get("cat_rating"):
+            rv = c.get("cat_reviews")
+            rate = (f"<div class='pc-rate'>★ {str(c['cat_rating']).replace('.', ',')}/5 TripAdvisor"
+                    + (f" · {rv:,} avis".replace(",", "\u202f") if rv else "") + "</div>")
         conf = (f"<div class='pc-conf'>À confirmer : {escape(c['a_confirmer'])}</div>"
                 if c.get("a_confirmer") else "")
         img = c.get("image") or ""
         pic = (f"<img class='pc-img' src=\"{escape(img)}\" alt='' loading='lazy' "
                "referrerpolicy='no-referrer' onerror=\"this.remove()\">") if img else ""
         out.append(f"<div class='pcard{'' if pic else ' noimg'}'>{pic}<div class='pc-body'>"
-                   f"{title}<div class='pc-sub'>{sub}</div>{price}{total}"
+                   f"{title}<div class='pc-sub'>{sub}</div>{rate}{price}{total}"
                    f"<div class='pc-foot'>{chip}<a class='pc-go' href='{SEARCH_URL}'>"
                    f"Voir dans notre moteur →</a></div>{conf}</div></div>")
     head = "Meilleure piste trouvée" if len(cards) == 1 else "Pistes trouvées"
@@ -425,6 +451,8 @@ def cards_html(cards) -> str:
             return f"<td>{v or '—'}</td>"
         rows = [
             ("Destination", [escape(c.get("destination") or "") for c in cards]),
+            ("TripAdvisor", [f"{str(c['cat_rating']).replace('.', ',')}/5" if c.get("cat_rating") else ""
+                             for c in cards]),
             ("Départ", [escape(c.get("depart") or "") for c in cards]),
             ("Nuits", [str(c["nuits"]) if c.get("nuits") else "" for c in cards]),
             ("Prix / pers.", [_money(c.get("prix_personne")) for c in cards]),
@@ -436,6 +464,10 @@ def cards_html(cards) -> str:
         tbody = "".join(f"<tr><th>{k}</th>{''.join(cell(v) for v in vals)}</tr>"
                         for k, vals in rows if any(vals))
         cmp_btn = "<button type='button' class='pc-cmpbtn'>Comparer</button>"
+        ids = [c["cat_id"] for c in cards if c.get("cat_id")]
+        if len(ids) >= 2:
+            cmp_btn += (f"<a class='pc-cmpbtn' href='/portail/comparer?h={','.join(ids)}'>"
+                        "Fiches côte à côte →</a>")
         cmp = (f"<div class='pc-cmp' hidden><table><thead><tr><th></th>{thead}</tr></thead>"
                f"<tbody>{tbody}</tbody></table></div>")
     return (f"<div class='pcards'><div class='pc-head'><span>{head}</span>{cmp_btn}</div>"
@@ -664,13 +696,16 @@ def model_name(provider: str) -> str:
     return settings.PORTAL_ASSISTANT_MODEL if provider == "anthropic" else settings.OPENAI_ASSISTANT_MODEL
 
 
-def _run_anthropic(search: bool, system: str, convo: list):
+def _run_anthropic(search: bool, system: list, convo: list):
     """Yields ("status"|"text", str) then ("meta", {"sources", "searches"})."""
     api = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
     sources, searches, wrote = [], 0, False
     for _attempt in range(3):                     # pause_turn continuations
+        blocks = [{"type": "text", "text": system[0], "cache_control": {"type": "ephemeral"}}]
+        if system[1]:
+            blocks.append({"type": "text", "text": system[1]})
         kw = dict(model=settings.PORTAL_ASSISTANT_MODEL, max_tokens=_max_tokens(),
-                  system=system, messages=convo)
+                  system=blocks, messages=convo)
         if search:
             kw["tools"] = [_search_tool()]
         try:
@@ -712,11 +747,11 @@ def _openai_tool() -> dict:
     return tool
 
 
-def _run_openai(search: bool, system: str, convo: list):
+def _run_openai(search: bool, system: list, convo: list):
     """Same contract as _run_anthropic, on OpenAI's Responses API."""
     import openai                                  # optional dependency
     api = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
-    kw = dict(model=settings.OPENAI_ASSISTANT_MODEL, instructions=system,
+    kw = dict(model=settings.OPENAI_ASSISTANT_MODEL, instructions="\n\n".join(x for x in system if x),
               input=[{"role": m["role"], "content": m["content"]} for m in convo],
               max_output_tokens=_max_tokens() + 6000, stream=True)   # + reasoning
     if settings.OPENAI_REASONING_EFFORT:
@@ -777,15 +812,25 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
     excerpts = kb.context_for(convo_text)
     catalogue = kb.catalogue()
 
-    def system_for(search: bool) -> str:
-        s = SYSTEM_PROMPT.format(
+    ranked = hc.prompt_lines(convo_text)
+
+    def system_for(search: bool) -> list:
+        """[static, dynamic]: the static block (rules + catalogue) is identical
+        across members and questions, so it is prompt-cached."""
+        static = SYSTEM_PROMPT.format(
             today=_today(), search_rule=_SEARCH_ON if search else _SEARCH_OFF,
-            catalogue=catalogue,
-            excerpts=("\nExtraits de nos pages liés à la conversation :\n" + excerpts)
-            if excerpts else "")
+            catalogue=catalogue, excerpts="")
         if _full():
-            s += STYLE_FULL
-        return s + (f"\nLe membre s'appelle {name}." if name else "")
+            static += STYLE_FULL
+        dynamic = ""
+        if ranked:
+            dynamic += ("HÔTELS RECOMMANDÉS PAR DU VOYAGEUR pour cette demande "
+                        "(du meilleur au moins bon) :\n" + ranked + "\n\n")
+        if excerpts:
+            dynamic += "Extraits de nos pages liés à la conversation :\n" + excerpts + "\n\n"
+        if name:
+            dynamic += f"Le membre s'appelle {name}."
+        return [static, dynamic.strip()]
 
     parts: list[str] = []          # everything the model wrote
     shown = [0]                    # chars of `parts` already sent

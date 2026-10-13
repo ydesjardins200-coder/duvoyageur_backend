@@ -898,6 +898,7 @@ def _nav(active: str, locked: bool = False) -> str:
         return f"<nav class='pnav'>{home}</nav>"
     items = [("accueil", "/portail", "Accueil"),
              ("recherche", "/portail/recherche", "Rechercher"),
+             ("comparer", "/portail/comparer", "Comparer"),
              ("aide", "/portail/service", "Aide"),
              ("profil", "/portail/profil", "Mon profil")]
     links = "".join(
@@ -1910,6 +1911,8 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  @media(max-width:560px){{.a-head{{flex-direction:column;align-items:stretch}}.a-acts{{justify-content:flex-start}}}}
  .a-toast{{margin:-4px 0 10px;padding:9px 12px;border-radius:11px;font-size:13.5px;
    background:rgba(61,240,197,.12);border:1px solid rgba(61,240,197,.4);color:var(--lagoon)}}
+ .pc-rate{{font-size:12.5px;color:var(--gold);margin-top:2px}}
+ a.pc-cmpbtn{{text-decoration:none;display:inline-block;margin-left:6px}}
  .pc-conf{{font-size:12px;color:var(--gold);margin-top:2px}}
  @media(max-width:520px){{.pcard{{flex-direction:column}}.pc-img{{width:100%;height:170px}}}}
  .astatus{{font-size:13px;color:var(--mist);font-style:italic}}

@@ -92,6 +92,9 @@ class Settings:
     OPENAI_REASONING_EFFORT: str = os.getenv("OPENAI_REASONING_EFFORT", "low")
     # Emails allowed on the blind Claude vs ChatGPT test page (comma-separated).
     ASSISTANT_TESTERS: str = os.getenv("ASSISTANT_TESTERS", "")
+    # Card photos for hotels NOT in our catalogue: the source page's share
+    # image (1) or none (0). Catalogue hotels always use our own photos.
+    PORTAL_ASSISTANT_WEB_IMAGES: bool = os.getenv("PORTAL_ASSISTANT_WEB_IMAGES", "1") not in ("0", "false", "False", "")
     # Answer length: "complet" (detailed agent-style advice) or "concis".
     PORTAL_ASSISTANT_STYLE: str = os.getenv("PORTAL_ASSISTANT_STYLE", "complet")
     PORTAL_ASSISTANT_DAILY_MAX: int = int(os.getenv("PORTAL_ASSISTANT_DAILY_MAX", "40"))
