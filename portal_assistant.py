@@ -723,7 +723,8 @@ def _history_msgs(history: list, q: str) -> list:
 
 
 def answer_events(provider: str, cid: int, q: str, history: list, name: str,
-                  can_search: bool, persist, count_searches: bool = True):
+                  can_search: bool, persist, count_searches: bool = True,
+                  debug: bool = False):
     """The whole answer pipeline as NDJSON lines, for either provider.
     `persist(user_entry, assistant_entry)` stores the exchange at the end."""
     convo_text = " ".join([m["text"] for m in history[-6:] if m.get("role") == "user"] + [q])
@@ -776,6 +777,9 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
         log.warning("assistant[%s] stream failed: %s", provider, exc)
         if not parts:
             yield _ev("text", "Oups, je n'ai pas pu répondre. Réessaie dans un instant.")
+        if debug:                      # test page only: show the real cause
+            yield _ev("text", f"\n\n[{_LABELS[provider]} · {model_name(provider)}] "
+                              f"{type(exc).__name__}: {str(exc)[:600]}")
         return
     if count_searches and meta["searches"]:
         _SEARCHES.setdefault(cid, []).extend([time.monotonic()] * meta["searches"])
@@ -1013,7 +1017,7 @@ async def compare_ask(request: Request):
             _PENDING.pop(next(iter(_PENDING)))
 
     return _stream(answer_events(provider, cid, q, list(hist), name, True, persist,
-                                 count_searches=False))
+                                 count_searches=False, debug=True))
 
 
 @router.get("/portail/assistant/comparer/reveal")
