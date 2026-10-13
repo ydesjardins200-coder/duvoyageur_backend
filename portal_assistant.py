@@ -27,6 +27,10 @@ import json
 import logging
 import re
 import time
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from html.parser import HTMLParser
+from urllib.parse import urljoin
 from datetime import datetime
 from html import escape
 from urllib.parse import urlencode, urlparse
@@ -93,6 +97,22 @@ Règles strictes :
 - Problème avec une réservation, changement, annulation, ou envie de parler à
   un humain : écrire à l'équipe sur Messenger (onglet « Aide »).
 - Hors voyage : ramène gentiment la conversation au voyage.
+
+Fiches de pistes : quand tu proposes des forfaits trouvés en ligne avec un
+prix, ajoute à la TOUTE FIN de ta réponse un bloc de données, sans rien après :
+<pistes>[{{"hotel": "Ocean El Faro", "destination": "Punta Cana",
+"depart": "15 novembre 2026", "nuits": 7, "prix_personne": 1887,
+"total": 3774, "voyageurs": "2 adultes", "taxes": "incluses",
+"source_url": "https://…", "a_confirmer": "vol direct"}}]</pistes>
+- Un objet par piste (3 maximum), uniquement avec des données vues dans tes
+  résultats de recherche ; mets null pour ce que tu ne sais pas.
+- source_url = l'adresse exacte de la page où tu as vu le prix.
+- taxes : "incluses", "en sus" ou null. Montants en dollars, sans symbole.
+- Ces fiches s'affichent en cartes avec photo : dans ton texte, ne répète pas
+  tous les chiffres. Garde le texte court : une phrase d'intro, une ligne de
+  nuance par piste (ce qui colle aux critères, ce qui reste à confirmer), puis
+  la phrase sur notre moteur et ta question de précision.
+- Pas de bloc <pistes> pour une réponse sans prix trouvés.
 
 Style : français québécois chaleureux, tu tutoies, concis. Tu peux mettre
 quelques mots en **gras** et faire des listes avec des tirets « - ». Pas de
@@ -166,11 +186,153 @@ def _sources_html(sources) -> str:
     return f"<div class='srcs'><span>Sources</span>{links}</div>" if links else ""
 
 
+_PISTES_RE = re.compile(r"<pistes>(.*?)(?:</pistes>|$)", re.S)
+_OG_CACHE: dict = {}            # page url -> image url or "" (process-wide)
+_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+
+
+class _OgParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.image = ""
+
+    def handle_starttag(self, tag, attrs):
+        if tag != "meta" or self.image:
+            return
+        a = dict(attrs)
+        key = (a.get("property") or a.get("name") or "").lower()
+        if key in ("og:image", "og:image:secure_url", "twitter:image") and a.get("content"):
+            self.image = a["content"].strip()
+
+
+def _allowed_domain(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    domains = [d.strip().lower() for d in settings.PORTAL_ASSISTANT_SEARCH_DOMAINS.split(",") if d.strip()]
+    return any(host == d or host.endswith("." + d) for d in domains)
+
+
+def og_image(url: str) -> str:
+    """The page's share image (og:image / twitter:image), like a link preview.
+    Best effort: 3 s timeout, 600 KB read cap, cached; "" when unavailable."""
+    if url in _OG_CACHE:
+        return _OG_CACHE[url]
+    img = ""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": _UA,
+                                                   "Accept-Language": "fr-CA,fr;q=0.9"})
+        with urllib.request.urlopen(req, timeout=3) as r:
+            if "html" in (r.headers.get("Content-Type") or ""):
+                p = _OgParser()
+                p.feed(r.read(600_000).decode("utf-8", "ignore"))
+                cand = urljoin(url, p.image) if p.image else ""
+                if cand.startswith("https://"):
+                    img = cand
+    except Exception as exc:  # noqa: BLE001 — a missing photo is fine
+        log.info("og:image unavailable for %s: %s", url, exc)
+    if len(_OG_CACHE) > 500:
+        _OG_CACHE.clear()
+    _OG_CACHE[url] = img
+    return img
+
+
+def _money(v) -> str:
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return ""
+    if n <= 0:
+        return ""
+    return f"{n:,.0f}".replace(",", "\u202f") + "\u00a0$"
+
+
+def parse_pistes(raw: str, sources: list) -> list:
+    """Validate the model's <pistes> JSON into clean card dicts (max 3)."""
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    known = {s["url"] for s in sources}
+    cards = []
+    for d in data if isinstance(data, list) else []:
+        if not isinstance(d, dict) or not str(d.get("hotel") or "").strip():
+            continue
+        url = str(d.get("source_url") or "").strip()
+        if not (url.startswith("https://") and (url in known or _allowed_domain(url))):
+            url = ""
+        try:
+            nuits = int(d.get("nuits")) if d.get("nuits") not in (None, "") else None
+        except (TypeError, ValueError):
+            nuits = None
+        cards.append({
+            "hotel": str(d.get("hotel"))[:90],
+            "destination": str(d.get("destination") or "")[:80],
+            "depart": str(d.get("depart") or "")[:40],
+            "nuits": nuits,
+            "prix_personne": d.get("prix_personne"),
+            "total": d.get("total"),
+            "voyageurs": str(d.get("voyageurs") or "")[:40],
+            "taxes": d.get("taxes") if d.get("taxes") in ("incluses", "en sus") else None,
+            "source_url": url,
+            "a_confirmer": str(d.get("a_confirmer") or "")[:120],
+        })
+        if len(cards) == 3:
+            break
+    return cards
+
+
+def add_images(cards: list) -> list:
+    urls = list({c["source_url"] for c in cards if c.get("source_url")})
+    if urls:
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            imgs = dict(zip(urls, ex.map(og_image, urls)))
+        for c in cards:
+            c["image"] = imgs.get(c.get("source_url"), "")
+    return cards
+
+
+def cards_html(cards) -> str:
+    if not cards:
+        return ""
+    out = []
+    for c in cards:
+        url = c.get("source_url") or ""
+        host = (urlparse(url).hostname or "").removeprefix("www.") if url else ""
+        name = escape(c["hotel"])
+        title = (f"<a class='pc-name' href=\"{escape(url)}\" target='_blank' "
+                 f"rel='noopener nofollow'>{name}</a>") if url else f"<span class='pc-name'>{name}</span>"
+        sub = " — ".join(x for x in (
+            escape(c.get("destination") or ""),
+            escape(", ".join(x for x in (
+                f"départ {c['depart']}" if c.get("depart") else "",
+                f"{c['nuits']} nuits" if c.get("nuits") else "") if x))) if x)
+        pp, tot = _money(c.get("prix_personne")), _money(c.get("total"))
+        price = f"<div class='pc-price'>{pp}<span>/personne</span></div>" if pp else ""
+        tail = ", ".join(x for x in (
+            f"taxes {'comprises' if c['taxes'] == 'incluses' else 'en sus'}" if c.get("taxes") else "",
+            "prix affiché") if x)
+        total = (f"<div class='pc-total'><b>{tot}{(' pour ' + escape(c['voyageurs'])) if c.get('voyageurs') else ''}</b>"
+                 f", {tail}.</div>") if tot else ""
+        chip = (f"<a class='pc-src' href=\"{escape(url)}\" target='_blank' rel='noopener nofollow'>"
+                f"{escape(host)}</a>") if host else ""
+        conf = (f"<div class='pc-conf'>À confirmer : {escape(c['a_confirmer'])}</div>"
+                if c.get("a_confirmer") else "")
+        img = c.get("image") or ""
+        pic = (f"<img class='pc-img' src=\"{escape(img)}\" alt='' loading='lazy' "
+               "referrerpolicy='no-referrer' onerror=\"this.remove()\">") if img else ""
+        out.append(f"<div class='pcard{'' if pic else ' noimg'}'>{pic}<div class='pc-body'>"
+                   f"{title}<div class='pc-sub'>{sub}</div>{price}{total}"
+                   f"<div class='pc-foot'>{chip}<a class='pc-go' href='{SEARCH_URL}'>"
+                   f"Voir dans notre moteur →</a></div>{conf}</div></div>")
+    head = "Meilleure piste trouvée" if len(cards) == 1 else "Pistes trouvées"
+    return f"<div class='pcards'><div class='pc-head'>{head}</div>{''.join(out)}</div>"
+
+
 def _bubble(m: dict) -> str:
     if m.get("role") == "user":
         return f"<div class='msg me'>{escape(m.get('text', ''))}</div>"
     return (f"<div class='msg ai'>{render_md(m.get('text', ''))}"
-            f"{_sources_html(m.get('sources'))}</div>")
+            f"{cards_html(m.get('cards'))}{_sources_html(m.get('sources'))}</div>")
 
 
 def assistant_panel(client) -> str:
@@ -233,6 +395,8 @@ def assistant_panel(client) -> str:
    function handle(ev){{
      if(ev.t==='status'){{st.textContent=ev.v;out.classList.remove('typing');}}
      else if(ev.t==='text'){{out.classList.remove('typing');st.textContent='';raw+=ev.v;body.innerHTML=md(raw);}}
+     else if(ev.t==='cards'&&ev.v){{st.textContent='';var cd=document.createElement('div');
+       cd.innerHTML=ev.v;out.appendChild(cd);}}
      else if(ev.t==='sources'&&ev.v&&ev.v.length){{
        var s=document.createElement('div');s.className='srcs';s.innerHTML='<span>Sources</span>';
        ev.v.forEach(function(x){{if(!/^https:\\/\\//.test(x.url))return;var a=document.createElement('a');
@@ -325,7 +489,9 @@ async def assistant_chat(request: Request):
         name = _first_name(client)
     _HITS.setdefault(cid, []).append(time.monotonic())
 
-    msgs = [{"role": m["role"], "content": m["text"]}
+    msgs = [{"role": m["role"], "content": m["text"] + (
+                ("\n<pistes>" + json.dumps(m["cards"], ensure_ascii=False) + "</pistes>")
+                if m.get("cards") else "")}
             for m in history[-_CONTEXT:] if m.get("text")]
     while msgs and msgs[0]["role"] != "user":   # API: start with user, alternate
         msgs.pop(0)
@@ -357,8 +523,26 @@ async def assistant_chat(request: Request):
             yield ("final", stream.get_final_message())
 
     def gen():
-        parts: list[str] = []
+        parts: list[str] = []          # everything the model wrote
+        shown = [0]                    # chars of `parts` already sent
         sources: list = []
+        tag = "<pistes>"
+
+        def visible_delta() -> str:
+            # Send text up to the <pistes> block; hold back a possible partial tag.
+            full = "".join(parts)
+            cut = full.find(tag)
+            if cut == -1:
+                cut = len(full)
+                for k in range(len(tag) - 1, 0, -1):
+                    if full.endswith(tag[:k]):
+                        cut = len(full) - k
+                        break
+            if cut > shown[0]:
+                d = full[shown[0]:cut]
+                shown[0] = cut
+                return d
+            return ""
         api = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
         search = can_search
         convo = list(msgs)
@@ -372,7 +556,11 @@ async def assistant_chat(request: Request):
                         else:
                             if kind == "text":
                                 parts.append(val)
-                            yield _ev(kind, val)
+                                d = visible_delta()
+                                if d:
+                                    yield _ev("text", d)
+                            else:
+                                yield _ev(kind, val)
                 except anthropic.BadRequestError as exc:
                     if search and not parts:     # model/tool not supported -> no search
                         log.warning("assistant: web search refused, retrying without: %s", exc)
@@ -396,9 +584,20 @@ async def assistant_chat(request: Request):
             if not parts:
                 yield _ev("text", "Oups, je n'ai pas pu répondre. Réessaie dans un instant.")
             return
+        full = "".join(parts)
+        m = _PISTES_RE.search(full)
+        cards = []
+        if m:
+            cards = parse_pistes(m.group(1).strip(), sources)
+            if cards:
+                yield _ev("status", "📸 Je prépare les fiches…")
+                cards = add_images(cards)
+                yield _ev("cards", cards_html(cards))
+        elif shown[0] < len(full):      # flush text held back for a partial tag
+            yield _ev("text", full[shown[0]:])
         if sources:
             yield _ev("sources", sources)
-        answer = "".join(parts).strip()
+        answer = _PISTES_RE.sub("", full).strip()
         if not answer:
             return
         now = datetime.utcnow().isoformat(timespec="seconds")
@@ -407,7 +606,8 @@ async def assistant_chat(request: Request):
             if c:
                 c.assistant_chat = (list(c.assistant_chat or []) + [
                     {"role": "user", "text": q, "at": now},
-                    {"role": "assistant", "text": answer, "sources": sources, "at": now},
+                    {"role": "assistant", "text": answer, "cards": cards,
+                     "sources": sources, "at": now},
                 ])[-_KEEP:]
                 db2.commit()
 

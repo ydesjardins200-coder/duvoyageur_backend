@@ -1865,6 +1865,26 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
    animation:blink 1.2s infinite}}
  @keyframes blink{{50%{{opacity:.3}}}}
  .msg.ai b{{color:var(--surf)}}
+ .pcards{{margin:12px 0 2px;white-space:normal}}
+ .pc-head{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:15px;margin-bottom:8px}}
+ .pcard{{display:flex;gap:14px;padding:12px;border-radius:14px;background:rgba(3,18,27,.55);
+   border:1px solid var(--line);margin-bottom:10px}}
+ .pc-img{{width:132px;height:132px;flex:none;object-fit:cover;border-radius:11px;background:rgba(155,246,236,.06)}}
+ .pc-body{{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px}}
+ .pc-name{{font-weight:700;font-size:16px;color:var(--foam);text-decoration:underline;
+   text-decoration-color:rgba(155,246,236,.35);text-underline-offset:3px}}
+ .pc-sub{{font-size:12.5px;color:var(--mist)}}
+ .pc-price{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:21px;margin-top:4px}}
+ .pc-price span{{font-size:14px;font-weight:600;color:var(--mist);margin-left:2px}}
+ .pc-total{{font-size:14px}}
+ .pc-total b{{color:var(--foam)}}
+ .pc-foot{{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px}}
+ .pc-src{{font-size:11.5px;color:var(--mist);text-decoration:none;border:1px solid var(--line);
+   border-radius:999px;padding:2px 9px}}
+ .pc-go{{font-size:13px;font-weight:600;color:#03121b;text-decoration:none;border-radius:999px;
+   padding:5px 12px;background:linear-gradient(120deg,var(--pacific),var(--lagoon))}}
+ .pc-conf{{font-size:12px;color:var(--gold);margin-top:2px}}
+ @media(max-width:520px){{.pcard{{flex-direction:column}}.pc-img{{width:100%;height:170px}}}}
  .astatus{{font-size:13px;color:var(--mist);font-style:italic}}
  .astatus:empty{{display:none}}
  .srcs{{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px;padding-top:9px;
