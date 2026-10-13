@@ -2338,6 +2338,36 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .hd-note{{font-size:11.5px;color:var(--mist);margin:0}}
  @media(max-width:640px){{.hpanel{{top:auto;height:92vh;width:100vw;border-left:0;border-radius:20px 20px 0 0}}
    .hd-gal{{height:240px}}.hd-arr{{top:102px}}}}
+
+ /* Price comparison + budget + map */
+ .ptab,.btab{{margin:8px 0 4px;white-space:normal}}
+ .ptab table,.btab table{{width:100%;border-collapse:collapse;font-size:14px}}
+ .ptab th,.ptab td,.btab th,.btab td{{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:top}}
+ .ptab thead th{{font-size:11.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--mist);font-weight:500}}
+ .ptab tbody th{{font-weight:600}}
+ .pt-tot{{font-weight:700;white-space:nowrap}}
+ .pt-tot small{{display:block;font-weight:400;font-size:12px;color:var(--mist);white-space:normal}}
+ .pt-est{{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:600;color:var(--gold);
+   border:1px solid rgba(255,210,63,.45);border-radius:999px;padding:1px 6px;vertical-align:middle}}
+ .pt-src{{font-size:12px;color:var(--mist);text-decoration:none;background:rgba(155,246,236,.1);border-radius:999px;padding:3px 8px}}
+ .pt-note{{font-size:12px;color:var(--mist);margin:8px 0 0}}
+ .btab{{max-width:460px;border:1px solid var(--line);border-radius:14px;padding:12px 14px;background:rgba(3,18,27,.45)}}
+ .bt-h{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:14px;margin-bottom:4px}}
+ .btab td{{text-align:right;font-variant-numeric:tabular-nums}}
+ .bt-tot th,.bt-tot td{{font-weight:800;border-bottom:0;color:var(--lagoon)}}
+ .hmap{{margin-top:14px}}
+ .hm-h{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:15px;margin-bottom:8px}}
+ .hmap img{{width:100%;border-radius:14px;display:block;border:1px solid var(--line)}}
+ .hm-k{{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--mist);margin-top:6px}}
+ .hd-map{{width:100%;height:220px;border:0;border-radius:14px}}
+ @media(max-width:560px){{.ptab{{overflow-x:auto}}.ptab table{{min-width:480px}}}}
+
+ .hc-badges{{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0}}
+ .hc-badge{{font-size:11.5px;font-weight:600;color:var(--surf);background:rgba(155,246,236,.1);border-radius:999px;padding:3px 9px}}
+ .hc-pts{{margin:2px 0 0;padding-left:18px;font-size:13.5px;color:var(--foam);line-height:1.5}}
+ .hc-more{{all:unset;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--foam);border:1px solid var(--line);border-radius:999px;padding:3px 10px}}
+ .hc-more:hover{{border-color:var(--pacific)}}
+ .hd-desc h4{{margin:12px 0 4px;font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--mist);font-family:"Space Grotesk",monospace}}
 </style></head><body class="pg{page}">
  <div class="top">
    <div class="brand"><img src="/static/logo.png" alt="Du Voyageur">

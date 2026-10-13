@@ -54,6 +54,7 @@ from portal import router as portal_router, build_portal_login_url
 from portal_oauth import router as portal_oauth_router
 from portal_assistant import router as portal_assistant_router
 from portal_compare import router as portal_compare_router
+from places import router as places_router
 import storage
 from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLocal, engine,
                 add_identity, find_client_by_identity, find_duplicate_groups,
@@ -109,6 +110,7 @@ app.include_router(portal_router)
 app.include_router(portal_oauth_router)
 app.include_router(portal_assistant_router)
 app.include_router(portal_compare_router)
+app.include_router(places_router)
 
 
 @app.exception_handler(NotAuthenticated)

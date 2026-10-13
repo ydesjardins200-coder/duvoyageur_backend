@@ -101,12 +101,23 @@ class Settings:
     # Web search (Claude server tool, ~$10 / 1000 searches + result tokens).
     PORTAL_ASSISTANT_SEARCHES_PER_ANSWER: int = int(os.getenv("PORTAL_ASSISTANT_SEARCHES_PER_ANSWER", "8"))
     PORTAL_ASSISTANT_DAILY_SEARCHES: int = int(os.getenv("PORTAL_ASSISTANT_DAILY_SEARCHES", "60"))
-    # Only tour operators + information sites: never send members to competing
-    # agencies (sources must be displayed). Comma-separated bare domains.
-    PORTAL_ASSISTANT_SEARCH_DOMAINS: str = os.getenv(
-        "PORTAL_ASSISTANT_SEARCH_DOMAINS",
-        "transat.com,vacancesaircanada.com,aircanadavacations.com,sunwing.ca,"
-        "westjet.com,tripadvisor.ca,tripadvisor.com,tripadvisor.fr,voyage.gc.ca,travel.gc.ca")
+    # Web search scope. Empty = the whole web for INFORMATION (reviews, guides,
+    # hotel sites), minus competing agencies (blocked list). Set an allow-list
+    # (comma-separated bare domains) to restrict search to those sites only.
+    PORTAL_ASSISTANT_SEARCH_DOMAINS: str = os.getenv("PORTAL_ASSISTANT_SEARCH_DOMAINS", "")
+    PORTAL_ASSISTANT_BLOCKED_DOMAINS: str = os.getenv(
+        "PORTAL_ASSISTANT_BLOCKED_DOMAINS",
+        "expedia.ca,expedia.com,redtag.ca,itravel2000.com,flightcentre.ca,selloffvacations.com,"
+        "travelzoo.com,kayak.com,kayak.ca,hotels.com,booking.com,priceline.com,trivago.ca,"
+        "trivago.com,agoda.com,cheapflights.ca,voyagesarabais.com,clubvoyages.com,"
+        "vacancesinterac.com,tripcentral.ca,travelocity.ca,travelocity.com,orbitz.com")
+    # Claude extended thinking budget (tokens) before answering; 0 = off.
+    PORTAL_ASSISTANT_THINKING: int = int(os.getenv("PORTAL_ASSISTANT_THINKING", "0"))
+    # Google Places API (New): licensed hotel photos, rating, address, phone,
+    # website, map link — displayed live with Google attribution. Off if empty.
+    GOOGLE_PLACES_API_KEY: str = os.getenv("GOOGLE_PLACES_API_KEY", "")
+    # Browser key (HTTP-referrer restricted; Maps Embed + Maps Static APIs) for maps.
+    GOOGLE_MAPS_EMBED_KEY: str = os.getenv("GOOGLE_MAPS_EMBED_KEY", "")
 
     # --- Support: the portal's "Aide" tab sends clients to the Facebook page's
     # Messenger (the admin ticket queue is no longer used).

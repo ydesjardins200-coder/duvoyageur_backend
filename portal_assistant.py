@@ -45,6 +45,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 
 from config import settings
 from db import AssistantFeedback, Client, SessionLocal
+import places
 import site_knowledge as kb
 import hotel_catalog as hc
 from portal import (_bell_panel, _logged_out, _nav, _set_session_cookie, _shell,
@@ -74,141 +75,179 @@ forfait dans notre moteur de réservation (bouton « Rechercher un forfait »).
 Son Rabais Récompense (jusqu'à 5 % sur le prix avant taxes) est déjà appliqué
 aux prix affichés dans ce moteur.
 
-TA MISSION : conseiller comme le meilleur agent de voyage que le membre ait
-connu — quelqu'un qui comprend ce qu'il veut vivre, connaît les destinations
-et les hôtels, et l'aide à choisir. Pas un moteur de prix.
+TA MISSION : être le meilleur conseiller voyage que le membre ait connu. Tu
+fais une VRAIE recherche, tu RECOMMANDES des hôtels précis avec des infos
+concrètes et vérifiées, tu tranches (« Mon choix pour toi ») et tu poses
+ensuite les bonnes questions. Pas de réponse générique.
 
-1. DONNE DE LA VALEUR D'ABORD, POSE TES QUESTIONS À LA FIN.
-   Même si la demande est incomplète, réponds tout de suite avec de vraies
-   recommandations, puis termine par 1 à 3 questions à choix (bloc
-   <questions>) pour affiner. Ne te contente JAMAIS de poser des questions.
-   Seule exception : une demande vraiment vide (« je veux partir ») — alors
-   propose 3 grandes idées variées ET pose tes questions.
+1. DONNE DE LA VALEUR D'ABORD, QUESTIONS À LA FIN. Même si la demande est
+   incomplète, réponds tout de suite avec de vraies recommandations, puis
+   1 à 3 questions à choix. Ne te contente JAMAIS de poser des questions.
+   Seule exception : une demande vide (« je veux partir ») : 3 grandes idées
+   variées + tes questions. S'il manque la durée du séjour ou le budget,
+   demande-les dans tes questions à choix (la durée est nécessaire aux
+   prix des forfaits). Si l'année d'une date est ambiguë, prends la
+   prochaine occurrence et dis-le.
 
-2. LIS ENTRE LES LIGNES. Traduis les envies en critères : « bonne bouffe » =
-   restos à la carte réputés, gastronomie locale ; « plein d'activités » =
-   excursions, nature, sports nautiques, animation ; « tranquille » = petit
-   complexe, adultes seulement ; « avec les enfants » = mini-club, plage en
-   pente douce, glissades. Regarde les DATES : fête (Noël, Nouvel An, relâche)
-   → ambiance et réservations ; saison (baleines dans le Pacifique mexicain de
-   décembre à mars, ouragans de juin à novembre, sargasses côté Caraïbes
-   mexicaines au printemps et à l'été, variables d'une année à l'autre). Dis
-   ce que ses dates lui apportent de spécial. Ne présente comme certain que ce
-   qui est bien établi ou confirmé par tes sources ou notre contenu.
+2. LIS ENTRE LES LIGNES. « bonne bouffe » = restos à la carte réputés,
+   gastronomie locale (et souvent : sortir manger en ville plutôt qu'un tout
+   inclus) ; « plein d'activités » = excursions, nature, sports nautiques ;
+   « tranquille » = petit complexe, adultes seulement ; « avec les enfants »
+   = mini-club, plage en pente douce, glissades. Regarde les DATES : Fêtes
+   (prix au sommet, réservations, ambiance du 31), saisons (baleines dans le
+   Pacifique mexicain de décembre à mars, ouragans de juin à novembre,
+   sargasses côté Caraïbes au printemps et à l'été). Dis franchement si le
+   budget est serré pour ses dates, et ce qui l'aiderait (partir le 29 ou le
+   30, chambre seulement, autre destination).
 
-3. STRUCTURE TA RÉPONSE selon la demande, avec des sections courtes
-   (une ligne en **gras** comme titre de section) :
-   a) Demande large (une région, « le Sud », « le Pacifique mexicain »,
-      aucune destination précise) :
-      - une phrase qui montre que tu as compris ce qu'il veut vivre ;
-      - **Mes destinations** : écris [[DESTINATIONS]] seul sur sa ligne
-        (les cartes s'affichent là) puis, pour chacune, 1-2 phrases de
-        conseil (pourquoi elle colle, son bémol honnête) ;
-      - **Les hôtels que je regarderais** : UNE phrase d'intro, puis
-        [[HOTELS]] seul sur sa ligne. Les fiches d'hôtels (photo, angle,
-        résumé, prix, note) s'affichent là depuis le bloc <pistes> : ne
-        décris PAS les hôtels un par un dans le texte. Tu peux ajouter une
-        phrase après pour dire lequel tu choisirais et pourquoi ;
-      - **Ton séjour** : ce que tu ferais pendant ses dates, selon ses envies
-        (activités, sorties, moments forts comme le 31 décembre) ;
-      - **Vols** : ce que tu sais du vol direct depuis sa ville, honnêtement ;
-      - puis le bloc <questions>.
-   b) Destination choisie : saute « Mes destinations » ; va aux hôtels
-      (avec prix si tu as ses dates et le nombre de voyageurs), au séjour,
-      aux vols et aux questions qui restent.
-   c) Question générale (saison, bagages, pourboires, documents) : réponse
-      claire et structurée, sans cartes, sans recherche de prix.
-   d) Suivi (« moins cher », « et Cuba? », réponse à tes questions) : ne
-      répète pas tout ; ajuste ce qui change.
+3. RECHERCHE (outil web_search) comme un vrai conseiller, en plusieurs
+   étapes : {search_rule}
+   a) les meilleurs hôtels pour SES critères (guides, magazines voyage,
+      TripAdvisor, sites des hôtels) : réputation, restos, plage, ambiance,
+      adultes ou familles, rénovations ;
+   b) la fiche de chaque hôtel chez les grossistes canadiens (Transat,
+      Vacances Air Canada, Vacances Sunwing, Vacances WestJet) ;
+   c) quand tu as dates + voyageurs : les prix publics de ces grossistes
+      au départ de sa ville ;
+   d) les vols directs et ce qui se passe à ses dates.
+   N'invente jamais un hôtel, un prix, une note ou un détail : ils viennent
+   de tes recherches. Cite tes sources dans le texte.
 
-4. HÔTELS : recommande selon leur RÉPUTATION RÉELLE, vérifiée en ligne.
-   - Choisis 3 à 5 hôtels reconnus qui collent aux critères (destination,
-     voyageurs, envies, budget) et qui sont DIFFÉRENTS les uns des autres :
-     chacun a son angle (« Meilleur pour la gastronomie », « Meilleur choix
-     luxe », « Meilleur rapport qualité-prix », « Plus calme »…). Pas deux
-     fois le même profil. Appuie ton choix sur TripAdvisor (note et nombre
-     d'avis) trouvé par ta recherche ; n'invente jamais une note.
-   - Pour CHAQUE hôtel recommandé, trouve sa fiche chez un ou plusieurs
-     grossistes canadiens (Transat, Vacances Air Canada, Vacances Sunwing,
-     Vacances WestJet) : fiche_url = la meilleure, fiches = les autres. Ce
-     sont elles qui affichent les vraies photos de l'hôtel. Aucune : null.
-   - Pour chaque destination proposée, page_url = une page de cette
-     destination chez un de ces grossistes, si tu l'as trouvée.
+4. HÔTELS : dès qu'une destination ou une région est connue, recommande
+   TOUJOURS 3 à 5 hôtels précis, même sans dates ni budget. Chacun a son
+   angle (« Mon préféré pour ton style », « Meilleur choix luxe », « Meilleur
+   pour calme et gastronomie », « Meilleur rapport qualité-prix »…), jamais
+   deux fois le même profil. Ils respectent ses contraintes (adultes,
+   enfants, budget) ou tu dis clairement l'exception. Ne suppose pas
+   « adultes seulement » sans qu'il le demande (au plus une option). Pour
+   chaque hôtel : clientèle, formule si vérifiée, restos et activités
+   marquants, 3 forces, 1 ou 2 faiblesses réelles.
 
-5. PRIX : {search_rule}
-   Ne cherche les prix que lorsque la destination est assez précise ET que tu
-   as les dates et les voyageurs ; sinon, conseille sans prix. Les prix
-   publics changent vite : « vu en ligne », jamais garantis. Quand tu donnes
-   des prix, termine par : « Ces prix sont des prix publics. Cherche le même
-   forfait dans notre moteur : c'est souvent moins cher, avec ton Rabais
-   Récompense déjà appliqué. »
+5. PRIX : seulement ceux vus chez les grossistes canadiens ci-dessus, avec
+   leurs vraies dates et leur ville de départ, même s'ils ne correspondent
+   pas exactement à ses dates (dis-le). Distingue toujours prix vu et
+   estimation. Jamais garantis. Quand tu donnes des prix, termine par :
+   « Ces prix sont des prix publics. Cherche le même forfait dans notre
+   moteur : c'est souvent moins cher, avec ton Rabais Récompense déjà
+   appliqué. »
 
-6. Le CONTENU DE DU VOYAGEUR ci-dessous (saisons, quoi faire) est une aide
-   pour l'information générale seulement. Pour les hôtels, fie-toi à tes
-   recherches et aux fiches des grossistes. Ne renvoie pas à nos pages.
+6. STRUCTURE DU TEXTE (sections courtes, titre en **gras** sur sa ligne) :
+   - 1 ou 2 phrases : ce que tu as compris + ton premier constat franc ;
+   - **Mes destinations** puis [[DESTINATIONS]] seul sur sa ligne
+     (seulement pour une demande large, sans destination précise) ;
+   - **Les hôtels que je retiendrais** : une phrase, puis [[HOTELS]] seul
+     sur sa ligne. Les fiches (photo, angle, résumé, prix, note) s'y
+     affichent : ne les recopie pas dans le texte ;
+   - **Comparaison des prix trouvés** puis [[PRIX]] (seulement si tu as
+     trouvé des prix) ;
+   - **Mon choix pour toi** : l'hôtel que tu prendrais à sa place et
+     pourquoi, concrètement (formule, quartier, ce qu'il vivra) ; si son
+     budget est donné, [[BUDGET]] seul sur sa ligne (répartition cible) ;
+   - **Ton séjour** : ce que tu ferais à ses dates (restos, excursions,
+     moments forts) ;
+   - **Vols** : vols directs depuis sa ville, honnêtement ;
+   - une phrase de question ouverte si utile (les questions à choix sont
+     affichées à part).
+   Question générale (saison, bagages, documents) : réponse claire et
+   structurée, sans fiches. Suivi (« moins cher », « et Cuba? ») : ajuste
+   seulement ce qui change.
+
+7. À LA FIN, appelle l'outil afficher_resultats UNE fois avec les données
+   structurées (destinations, hotels, prix_vus, budget, questions, suivis)
+   qui correspondent à ton texte. N'écris jamais ces données dans le texte.
 
 Règles strictes :
+- Ne recommande jamais une autre agence, un comparateur ou un site de
+  réservation (Expedia, RedTag, Booking…). Pour réserver : notre moteur.
 - Ne promets jamais que notre prix sera plus bas ni un montant de rabais
   précis : « souvent moins cher », « jusqu'à 5 % avant taxes ».
 - Tu ne peux pas réserver ni confirmer une disponibilité.
-- N'invente jamais un hôtel, un prix, une note, un horaire ou un détail :
-  ils viennent de tes résultats de recherche.
-- Ne recommande pas d'autres agences de voyages.
 - Passeports, visas, santé, avis aux voyageurs (Cuba surtout) : idée
   générale et renvoi à voyage.gc.ca.
 - Réservation existante, changement, annulation, envie de parler à un
-  humain : bouton « Parler à un conseiller » ou Messenger (onglet « Aide »).
+  humain : bouton « Conseiller » ou Messenger (onglet « Aide »).
 - Hors voyage : ramène gentiment la conversation au voyage.
 
-BLOCS DE DONNÉES — à la TOUTE FIN de ta réponse, dans cet ordre, sans rien
-après, jamais mentionnés dans ton texte :
-<destinations>[{{"nom": "Puerto Vallarta", "accroche": "Gastronomie, excursions et vie nocturne",
-"ideal_pour": "un couple qui veut bouger et bien manger",
-"bemol": "plus animé que reposant", "moment": "baleines et Nouvel An festif",
-"page_url": "https://…"}}]</destinations>
-   (seulement avec [[DESTINATIONS]] ; 3 ou 4 destinations ; textes courts)
-<pistes>[{{"hotel": "Nom exact", "destination": "Marina Vallarta, Puerto Vallarta",
-"titre": "Meilleur pour le calme et la gastronomie",
-"type": "Tout-inclus boutique · adultes seulement",
-"resume": "Petit hôtel de 80 suites avec jardin tropical et club de plage. Cuisine réputée, service très attentionné.",
-"points_forts": ["Restaurants à la carte réputés", "Très calme"],
-"bemol": "Plage de l'hôtel petite ; navette vers le club de plage",
-"depart": "31 décembre 2026", "nuits": 7, "prix_personne": null,
-"total": null, "voyageurs": "2 adultes", "taxes": null, "prix_note": null,
-"fiche_url": "https://…", "fiches": ["https://…"], "source_url": null,
-"note": 4.8, "avis": 3100, "avis_url": "https://www.tripadvisor.ca/…",
-"adresse": null, "a_confirmer": "vol direct"}}]</pistes>
-   (seulement avec [[HOTELS]] ou des prix ; 3 à 5 hôtels ; titre = l'angle
-   qui le distingue des autres, moins de 50 caractères ; resume = 2 phrases
-   concrètes et utiles, pas de formules creuses ; points_forts = 2 ou 3
-   courts ; bemol = honnête ; prix, source_url et taxes à null tant que tu
-   n'as pas cherché le prix ; source_url = l'adresse exacte de la page où
-   tu as vu le prix ; prix_note = une courte précision sur ce prix (« à
-   partir de », date différente…) ou null ; note, avis et avis_url = note
-   TripAdvisor, nombre d'avis et page où tu les as vus, sinon null ;
-   adresse seulement si tu l'as vue dans tes sources ; taxes "incluses" ou
-   "en sus" ; montants en dollars sans symbole)
-<questions>[{{"q": "Budget total pour 2, vols compris ?",
-"options": ["3 500 – 5 000 $", "5 000 – 7 000 $", "7 000 – 10 000 $", "10 000 $ et plus"]}},
-{{"q": "Quel type de séjour ?", "options": ["Tout inclus avec excellente bouffe",
-"Hôtel de luxe et restos à découvrir", "Ouvert aux deux"]}}]</questions>
-   (1 à 3 questions qui changent vraiment ta recommandation ; 2 à 4
-   options courtes chacune ; jamais une question déjà répondue)
-<suivis>["Moins cher", "Seulement avec vol direct"]</suivis>
-   (2 ou 3 raffinements rédigés comme SA demande, moins de 40 caractères)
-
 Style : français québécois chaleureux, tu tutoies, riche mais lisible :
-phrases courtes, sections, listes avec « - » quand ça aide. Varie ton
-écriture : pas la même structure de phrase d'une section à l'autre. **Gras** pour
-les titres de section et les noms. Pas de titres avec #, pas de tableaux,
-pas de séparateurs ---, pas de liens dans le texte. Deux ou trois emojis
-au maximum.
+phrases courtes, listes avec « - » quand ça aide, **gras** pour les titres
+de section et les noms. Varie tes tournures. Pas de titres avec #, pas de
+tableaux, pas de séparateurs ---, pas de liens écrits dans le texte. Deux ou
+trois emojis au maximum.
 
-CONTENU VÉRIFIÉ DE DU VOYAGEUR
+CONTENU DE DU VOYAGEUR (info générale seulement ; ne renvoie pas à nos pages)
 Destinations que nous couvrons :
 {catalogue}
 {excerpts}
 """
+
+# Structured results: the model calls this tool once at the end of its
+# answer; the cards/tables are rendered from its validated input (never by
+# parsing free text).
+_STR = {"type": "string"}
+_STR_NULL = {"type": ["string", "null"]}
+_NUM_NULL = {"type": ["number", "null"]}
+RESULTS_TOOL = {
+    "name": "afficher_resultats",
+    "description": ("Affiche les fiches et tableaux de ta réponse (destinations, hôtels, "
+                    "prix vus, budget, questions à choix, suivis). Appelle-le une seule fois, "
+                    "à la fin, après ton texte."),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "destinations": {"type": "array", "maxItems": 4, "items": {
+                "type": "object", "required": ["nom"], "properties": {
+                    "nom": _STR, "accroche": _STR, "ideal_pour": _STR, "bemol": _STR,
+                    "moment": _STR, "page_url": _STR_NULL}}},
+            "hotels": {"type": "array", "maxItems": 5, "items": {
+                "type": "object", "required": ["hotel", "titre", "resume"], "properties": {
+                    "hotel": {"type": "string", "description": "Nom exact de l'hôtel"},
+                    "destination": _STR,
+                    "titre": {"type": "string", "description": "Angle qui le distingue, < 50 caractères"},
+                    "type": {"type": "string", "description": "ex. Tout-inclus boutique · adultes seulement"},
+                    "resume": {"type": "string", "description": "2 phrases concrètes et utiles"},
+                    "clientele": {"type": "string", "enum": ["adultes", "familles", "tous"],
+                                  "description": "adultes seulement, axé familles, ou tous"},
+                    "formule": {"type": ["string", "null"],
+                                "description": "tout inclus, petit-déjeuner, chambre seule… si vérifié"},
+                    "restos": {"type": "array", "items": _STR, "maxItems": 4,
+                               "description": "faits marquants sur les restaurants (vérifiés)"},
+                    "activites": {"type": "array", "items": _STR, "maxItems": 4,
+                                  "description": "activités et ambiance (vérifiées)"},
+                    "points_forts": {"type": "array", "items": _STR, "maxItems": 3},
+                    "bemol": {"type": "string", "description": "1 ou 2 faiblesses réelles, honnêtes"},
+                    "depart": _STR_NULL, "nuits": _NUM_NULL,
+                    "prix_personne": _NUM_NULL, "total": _NUM_NULL, "voyageurs": _STR_NULL,
+                    "taxes": {"type": ["string", "null"], "enum": ["incluses", "en sus", None]},
+                    "prix_note": {"type": ["string", "null"],
+                                  "description": "précision sur le prix : dates/ville réelles du tarif, « à partir de »"},
+                    "source_url": {"type": ["string", "null"], "description": "page du grossiste où tu as vu le prix"},
+                    "fiche_url": {"type": ["string", "null"], "description": "fiche de l'hôtel chez un grossiste canadien"},
+                    "fiches": {"type": "array", "items": _STR, "maxItems": 3,
+                               "description": "autres fiches de l'hôtel chez d'autres grossistes"},
+                    "note": {"type": ["number", "null"], "description": "note TripAdvisor vue"},
+                    "avis": _NUM_NULL,
+                    "avis_url": _STR_NULL,
+                    "adresse": {"type": ["string", "null"], "description": "seulement si vue dans tes sources"},
+                    "a_confirmer": _STR_NULL}}},
+            "prix_vus": {"type": "array", "maxItems": 6, "items": {
+                "type": "object", "required": ["hotel", "total", "statut"], "properties": {
+                    "hotel": _STR, "dates": _STR, "depart": _STR, "voyageurs": _STR,
+                    "total": {"type": "number"},
+                    "taxes": {"type": ["string", "null"], "enum": ["incluses", "en sus", None]},
+                    "statut": {"type": "string", "enum": ["vu", "estimation"]},
+                    "url": _STR_NULL}}},
+            "budget": {"type": "array", "maxItems": 6, "items": {
+                "type": "object", "required": ["poste", "montant"], "properties": {
+                    "poste": _STR, "montant": {"type": "number"}}}},
+            "questions": {"type": "array", "maxItems": 3, "items": {
+                "type": "object", "required": ["q", "options"], "properties": {
+                    "q": _STR, "options": {"type": "array", "items": _STR, "minItems": 2, "maxItems": 5}}}},
+            "suivis": {"type": "array", "items": _STR, "maxItems": 3,
+                       "description": "2 ou 3 raffinements rédigés comme SA demande, < 40 caractères"},
+        },
+        "required": ["hotels", "questions", "suivis"],
+    },
+}
 
 # Appended when PORTAL_ASSISTANT_STYLE=concis.
 STYLE_CONCIS = """
@@ -216,11 +255,10 @@ LONGUEUR : CONCISE (remplace les consignes de longueur ci-dessus) : sections
 très courtes, 2 ou 3 destinations, 2 ou 3 hôtels, une phrase chacune.
 """
 
-_SEARCH_ON = ("cherche sur le web (sites des grossistes canadiens et d'information) : "
-              "la fiche et la note des hôtels que tu recommandes, leur prix public actuel "
-              "quand c'est le moment, les vols directs, les événements à ses dates.")
-_SEARCH_OFF = ("pas de recherche web pour cette réponse : conseille sans prix ni note "
-               "précise, et envoie-le vers notre moteur pour les prix et les photos.")
+_SEARCH_ON = ("tu as plusieurs recherches : utilise-les toutes si la demande le mérite.")
+_SEARCH_OFF = ("PAS de recherche web pour cette réponse (limite atteinte) : recommande des "
+               "hôtels que tu connais bien, sans prix ni note précise, et envoie-le vers "
+               "notre moteur pour les prix.")
 
 _SUGGESTIONS = [
     "2 adultes, 4 000 $ max, priorité plage, départ de Montréal en novembre",
@@ -360,7 +398,7 @@ def render_md(text: str, sources=None) -> str:
     out = re.sub(r"(?m)^#{1,6}\s*", "", out)
     out = re.sub(r"(?m)^\s*(?:-{3,}|\*{3,}|_{3,})\s*$", "", out)
     out = re.sub(r"\n{3,}", "\n\n", out)
-    out = re.sub(r"(?m)^\s*\[\[(DESTINATIONS|HOTELS)\]\]\s*$",
+    out = re.sub(r"(?m)^\s*\[\[(DESTINATIONS|HOTELS|PRIX|BUDGET)\]\]\s*$",
                  lambda m: f"<div class='slot' data-slot='{m.group(1).lower()}'></div>", out)
     out = _CITE_RE.sub(lambda m: (" " + cite_html([int(i) for i in m.group(1).split(",") if i],
                                                   sources or [])) if sources else "", out)
@@ -560,8 +598,11 @@ _GALLERY: dict = {}             # page url -> [image urls] (process-wide)
 
 
 def _allowed_domain(url: str) -> bool:
+    """Sites a model-given link may point to without having been cited:
+    the Canadian wholesalers, TripAdvisor, plus any configured allow-list."""
     host = (urlparse(url).hostname or "").lower()
-    domains = [d.strip().lower() for d in settings.PORTAL_ASSISTANT_SEARCH_DOMAINS.split(",") if d.strip()]
+    domains = list(WHOLESALERS) + ["tripadvisor.ca", "tripadvisor.com", "tripadvisor.fr"] + \
+        [d.strip().lower() for d in settings.PORTAL_ASSISTANT_SEARCH_DOMAINS.split(",") if d.strip()]
     return any(host == d or host.endswith("." + d) for d in domains)
 
 
@@ -661,7 +702,8 @@ def parse_pistes(raw: str, sources: list) -> list:
     for d in data if isinstance(data, list) else []:
         if not isinstance(d, dict) or not str(d.get("hotel") or "").strip():
             continue
-        url = _clean_url(d.get("source_url"), known)
+        url = _clean_url(d.get("source_url"), known, WHOLESALERS)
+        priced = bool(url)               # a price counts only if seen at a Canadian wholesaler
         fiche = _clean_url(d.get("fiche_url"), known, WHOLESALERS)
         fiches = []
         for f in (d.get("fiches") or []) if isinstance(d.get("fiches"), list) else []:
@@ -691,14 +733,18 @@ def parse_pistes(raw: str, sources: list) -> list:
             "type": _txt(d.get("type"), 70),
             "resume": _txt(d.get("resume"), 360),
             "points_forts": [_txt(p, 70) for p in pts if _txt(p, 70)][:3],
-            "bemol": _txt(d.get("bemol"), 140),
+            "clientele": d.get("clientele") if d.get("clientele") in ("adultes", "familles", "tous") else "",
+            "formule": _txt(d.get("formule"), 50),
+            "restos": [_txt(x, 90) for x in (d.get("restos") if isinstance(d.get("restos"), list) else []) if _txt(x, 90)][:4],
+            "activites": [_txt(x, 90) for x in (d.get("activites") if isinstance(d.get("activites"), list) else []) if _txt(x, 90)][:4],
+            "bemol": _txt(d.get("bemol"), 200),
             "depart": _txt(d.get("depart"), 40),
             "nuits": nuits,
-            "prix_personne": d.get("prix_personne"),
-            "total": d.get("total"),
+            "prix_personne": d.get("prix_personne") if priced else None,
+            "total": d.get("total") if priced else None,
             "voyageurs": _txt(d.get("voyageurs"), 40),
-            "taxes": d.get("taxes") if d.get("taxes") in ("incluses", "en sus") else None,
-            "prix_note": _txt(d.get("prix_note"), 140),
+            "taxes": d.get("taxes") if priced and d.get("taxes") in ("incluses", "en sus") else None,
+            "prix_note": _txt(d.get("prix_note"), 140) if priced else "",
             "source_url": url,
             "fiche_url": fiche,
             "fiches": fiches[:3],
@@ -770,12 +816,26 @@ def _price_line(c: dict) -> str:
             f"{(' (' + tail + ')') if tail else ''}.{note}</div>")
 
 
+_CLIENTELE = {"adultes": "Adultes seulement", "familles": "Idéal en famille", "tous": "Couples et familles"}
+
+
+def _badges(c: dict) -> str:
+    b = [x for x in (_CLIENTELE.get(c.get("clientele") or ""), c.get("formule")) if x]
+    return "".join(f"<span class='hc-badge'>{escape(x)}</span>" for x in b)
+
+
 def _rating(c: dict) -> str:
-    if not c.get("note"):
-        return ""
-    rv = c.get("avis")
-    return (f"★ {str(c['note']).replace('.', ',')}"
-            + (f" · {rv:,} avis".replace(",", " ") if rv else "") + " TripAdvisor")
+    """TripAdvisor rating seen by the agent; else the Google rating (Places)."""
+    if c.get("note"):
+        rv = c.get("avis")
+        return (f"★ {str(c['note']).replace('.', ',')}"
+                + (f" · {rv:,} avis".replace(",", "\u202f") if rv else "") + " TripAdvisor")
+    p = c.get("place") or {}
+    if p.get("rating"):
+        n = p.get("count")
+        return (f"★ {str(p['rating']).replace('.', ',')}"
+                + (f" · {n:,} avis".replace(",", "\u202f") if n else "") + " Google")
+    return ""
 
 
 def hotel_detail_html(c: dict) -> str:
@@ -788,24 +848,37 @@ def hotel_detail_html(c: dict) -> str:
     gal = (f"<div class='hd-gal'>{pics}</div>" if pics
            else "<div class='hd-gal hd-nogal'>Photos sur la fiche du grossiste</div>")
     meta = " · ".join(escape(x) for x in (_rating(c), c.get("type")) if x)
-    maps = ("https://www.google.com/maps/search/?api=1&query="
-            + quote_plus(f"{c['hotel']} {c.get('destination') or ''}"))
+    p = c.get("place") or {}
+    maps = p.get("maps") or ("https://www.google.com/maps/search/?api=1&query="
+                             + quote_plus(f"{c['hotel']} {c.get('destination') or ''}"))
     fiche = c.get("fiche_url") or (c.get("fiches") or [""])[0]
-    btns = (f"<a class='hd-b hd-main' href='{SEARCH_URL}'>Voir les prix avec mon rabais</a>"
+    btns = (f"<a class='hd-b hd-main' href='{SEARCH_URL}'>"
+            + ("Voir les prix avec mon rabais" if (_money(c.get("prix_personne")) or _money(c.get("total")))
+               else "Vérifier les forfaits") + "</a>"
             f"<a class='hd-b' href=\"{escape(maps)}\" target='_blank' rel='noopener'>Itinéraire</a>"
+            + (f"<a class='hd-b' href=\"{escape(p['website'])}\" target='_blank' rel='noopener nofollow'>"
+               "Site web ↗</a>" if p.get("website") else "")
             + (f"<a class='hd-b' href=\"{escape(fiche)}\" target='_blank' rel='noopener nofollow'>"
                f"Fiche {escape(_host(fiche))} ↗</a>" if fiche else ""))
     rows = ""
-    if c.get("adresse"):
-        rows += f"<div class='hd-row'><span>📍</span>{escape(c['adresse'])}</div>"
-    elif c.get("destination"):
-        rows += f"<div class='hd-row'><span>📍</span>{escape(c['destination'])}</div>"
+    addr = p.get("address") or c.get("adresse") or c.get("destination")
+    if addr:
+        rows += f"<div class='hd-row'><span>📍</span>{escape(addr)}</div>"
+    if p.get("phone"):
+        tel = re.sub(r"[^\d+]", "", p["phone"])
+        rows += f"<div class='hd-row'><span>📞</span><a href='tel:{escape(tel)}'>{escape(p['phone'])}</a></div>"
     if c.get("depart") or c.get("nuits"):
         rows += ("<div class='hd-row'><span>🗓️</span>" + escape(", ".join(x for x in (
             c.get("depart") or "", f"{c['nuits']} nuits" if c.get("nuits") else "") if x)) + "</div>")
     desc = f"<p>{escape(c['resume'])}</p>" if c.get("resume") else ""
+    if _badges(c):
+        desc = f"<div class='hc-badges'>{_badges(c)}</div>" + desc
     if c.get("points_forts"):
-        desc += "<ul>" + "".join(f"<li>{escape(p)}</li>" for p in c["points_forts"]) + "</ul>"
+        desc += "<h4>Forces</h4><ul>" + "".join(f"<li>{escape(p)}</li>" for p in c["points_forts"]) + "</ul>"
+    if c.get("restos"):
+        desc += "<h4>Restos</h4><ul>" + "".join(f"<li>{escape(p)}</li>" for p in c["restos"]) + "</ul>"
+    if c.get("activites"):
+        desc += "<h4>Activités</h4><ul>" + "".join(f"<li>{escape(p)}</li>" for p in c["activites"]) + "</ul>"
     if c.get("bemol"):
         desc += f"<p class='hd-bemol'><b>Bémol :</b> {escape(c['bemol'])}</p>"
     price = _price_line(c)
@@ -813,12 +886,18 @@ def hotel_detail_html(c: dict) -> str:
             if c.get("a_confirmer") else "")
     srcs = "".join(f"<a href=\"{escape(x['url'])}\" target='_blank' rel='noopener nofollow'>"
                    f"{escape(x['host'])}</a>" for x in c.get("sources") or [])
+    if p.get("maps"):
+        srcs += f"<a href=\"{escape(p['maps'])}\" target='_blank' rel='noopener'>Google Maps</a>"
+    emb = places.embed_url(c)
+    mapbox = (f"<iframe class='hd-map' loading='lazy' referrerpolicy='no-referrer-when-downgrade' "
+              f"src=\"{escape(emb)}\" title='Carte'></iframe>") if emb else ""
     return (f"<div class='hd'>{gal}<div class='hd-body'>"
             f"<h3 class='hd-name'>{escape(c['hotel'])}</h3>"
             + (f"<div class='hd-meta'>{meta}</div>" if meta else "")
             + f"<div class='hd-btns'>{btns}</div>{rows}"
-            + f"<div class='hd-desc'>{desc}{price}{conf}</div>"
+            + f"<div class='hd-desc'>{desc}{price}{conf}</div>{mapbox}"
             + (f"<div class='hd-srcs'><span>Sources</span>{srcs}</div>" if srcs else "")
+            + ("<p class='hd-note'>Photos, note Google, adresse et téléphone : Google.</p>" if p else "")
             + "<p class='hd-note'>Photos et infos affichées en direct depuis les sites cités. "
               "Prix publics à titre indicatif : ton Rabais Récompense s’applique dans notre moteur.</p>"
             + "</div></div>")
@@ -840,6 +919,10 @@ def cards_html(cards) -> str:
                + "</button>") if img else \
               "<button type='button' class='hc-pic hc-nopic hc-open' aria-label='Voir'>🏝️</button>"
         sub = escape(c.get("titre") or c.get("type") or c.get("destination") or "")
+        priced = bool(_money(c.get("prix_personne")) or _money(c.get("total")))
+        go = ("Voir les prix →" if priced else "Vérifier les forfaits →")
+        pts = ("<ul class='hc-pts'>" + "".join(f"<li>{escape(p)}</li>" for p in c["points_forts"]) + "</ul>"
+               ) if c.get("points_forts") else ""
         loc = " · ".join(escape(x) for x in (c.get("destination"), _rating(c)) if x)
         pill = cite_html(list(range(len(c.get("sources") or []))), c.get("sources") or [])
         conf = (f"<div class='hc-conf'>À confirmer : {escape(c['a_confirmer'])}</div>"
@@ -849,9 +932,11 @@ def cards_html(cards) -> str:
             f"<button type='button' class='hc-name hc-open'>{i}. {escape(c['hotel'])}</button>"
             + (f"<div class='hc-sub'>{sub}</div>" if sub else "")
             + (f"<div class='hc-loc'>{loc}</div>" if loc else "")
+            + (f"<div class='hc-badges'>{_badges(c)}</div>" if _badges(c) else "")
             + (f"<div class='hc-desc'>{escape(c['resume'])}</div>" if c.get("resume") else "")
-            + _price_line(c) + conf
-            + f"<div class='hc-foot'>{pill}<a class='hc-go' href='{SEARCH_URL}'>Voir les prix →</a></div>"
+            + pts + _price_line(c) + conf
+            + f"<div class='hc-foot'>{pill}<button type='button' class='hc-more hc-open'>Détails</button>"
+              f"<a class='hc-go' href='{SEARCH_URL}'>{go}</a></div>"
             + f"</div><template class='hc-detail'>{hotel_detail_html(c)}</template></div>")
     cmp_btn = cmp = ""
     if len(cards) >= 2:
@@ -859,9 +944,12 @@ def cards_html(cards) -> str:
             return f"<td>{v or '—'}</td>"
         rows = [
             ("Pour qui", [escape(c.get("titre") or "") for c in cards]),
+            ("Clientèle", [_CLIENTELE.get(c.get("clientele") or "", "") for c in cards]),
+            ("Formule", [escape(c.get("formule") or "") for c in cards]),
             ("Type", [escape(c.get("type") or "") for c in cards]),
-            ("TripAdvisor", [f"{str(c['note']).replace('.', ',')}/5" if c.get("note") else ""
-                             for c in cards]),
+            ("Restos", [escape(" · ".join(c.get("restos") or [])) for c in cards]),
+            ("Activités", [escape(" · ".join(c.get("activites") or [])) for c in cards]),
+            ("Note", [escape(_rating(c)) for c in cards]),
             ("Prix / pers.", [_money(c.get("prix_personne")) for c in cards]),
             ("Total", [_money(c.get("total")) for c in cards]),
             ("Bémol", [escape(c.get("bemol") or "") for c in cards]),
@@ -872,8 +960,71 @@ def cards_html(cards) -> str:
         cmp_btn = "<button type='button' class='pc-cmpbtn'>Comparer</button>"
         cmp = (f"<div class='pc-cmp' hidden><table><thead><tr><th></th>{thead}</tr></thead>"
                f"<tbody>{tbody}</tbody></table></div>")
+    smap = places.static_map(cards)
+    mapblk = (f"<div class='hmap'><div class='hm-h'>Où sont les hôtels ?</div>"
+              f"<img src=\"{escape(smap)}\" alt='Carte des hôtels recommandés' loading='lazy'>"
+              "<div class='hm-k'>" + "".join(f"<span>{i}. {escape(c['hotel'])}</span>"
+                                             for i, c in enumerate(cards, 1) if c.get("place"))
+              + "</div></div>") if smap else ""
     return (f"<div class='pcards hlist'><div class='pc-head'><span>Hôtels à regarder</span>{cmp_btn}</div>"
-            f"{cmp}{''.join(out)}</div>")
+            f"{cmp}{''.join(out)}{mapblk}</div>")
+
+
+def parse_prix(rows, sources: list) -> list:
+    """Price comparison rows: real dates/departure city; a row is « vu » only
+    with a Canadian wholesaler source page, otherwise it is an estimate."""
+    known = {s["url"] for s in sources}
+    out = []
+    for r in rows if isinstance(rows, list) else []:
+        if not isinstance(r, dict) or not _txt(r.get("hotel"), 90) or not _money(r.get("total")):
+            continue
+        url = _clean_url(r.get("url"), known, WHOLESALERS)
+        out.append({"hotel": _txt(r.get("hotel"), 90), "dates": _txt(r.get("dates"), 60),
+                    "depart": _txt(r.get("depart"), 40), "voyageurs": _txt(r.get("voyageurs"), 40),
+                    "total": r.get("total"),
+                    "taxes": r.get("taxes") if r.get("taxes") in ("incluses", "en sus") else None,
+                    "statut": "vu" if r.get("statut") == "vu" and url else "estimation",
+                    "url": url})
+    return out[:6]
+
+
+def prix_html(rows) -> str:
+    if not rows:
+        return ""
+    body = ""
+    for r in rows:
+        src = (f"<a class='pt-src' href=\"{escape(r['url'])}\" target='_blank' rel='noopener nofollow'>"
+               f"{escape(_host(r['url']))}</a>") if r.get("url") else ""
+        tag = "" if r["statut"] == "vu" else "<span class='pt-est'>estimation</span>"
+        when = " · ".join(escape(x) for x in (r.get("dates"), r.get("depart") and f"départ {r['depart']}") if x)
+        tax = {"incluses": "taxes comprises", "en sus": "taxes en sus"}.get(r.get("taxes"), "")
+        body += (f"<tr><th>{escape(r['hotel'])}</th><td>{when or '—'}</td>"
+                 f"<td class='pt-tot'>{_money(r['total'])}{tag}"
+                 + (f"<small>{escape(r['voyageurs'])}{', ' + tax if tax else ''}</small>" if r.get("voyageurs") or tax else "")
+                 + f"</td><td>{src}</td></tr>")
+    return ("<div class='ptab'><table><thead><tr><th>Hôtel</th><th>Dates du tarif repéré</th>"
+            "<th>Total</th><th>Source</th></tr></thead>"
+            f"<tbody>{body}</tbody></table>"
+            "<p class='pt-note'>Prix publics repérés pour les dates indiquées : des repères, pas des "
+            "soumissions. Cherche le même forfait dans notre moteur, avec ton Rabais Récompense.</p></div>")
+
+
+def parse_budget(rows) -> list:
+    out = []
+    for r in rows if isinstance(rows, list) else []:
+        if isinstance(r, dict) and _txt(r.get("poste"), 50) and _money(r.get("montant")):
+            out.append({"poste": _txt(r.get("poste"), 50), "montant": float(r["montant"])})
+    return out[:6]
+
+
+def budget_html(rows) -> str:
+    if len(rows or []) < 2:
+        return ""
+    body = "".join(f"<tr><th>{escape(r['poste'])}</th><td>{_money(r['montant'])}</td></tr>" for r in rows)
+    total = _money(sum(r["montant"] for r in rows))
+    return ("<div class='btab'><div class='bt-h'>Budget cible pour ton voyage</div><table>"
+            f"<tbody>{body}<tr class='bt-tot'><th>Total cible</th><td>{total}</td></tr></tbody></table>"
+            "<p class='pt-note'>Budget de planification, pas une offre ni un prix garanti.</p></div>")
 
 
 def guides_html(links) -> str:
@@ -901,11 +1052,11 @@ def rate_html(mid: str, rating: int = 0) -> str:
             f"<button type='button' class='rbtn{down}' data-r='-1' aria-label='Réponse pas utile'>👎</button></div>")
 
 
-def _fill_slots(body: str, dests: str, cards: str) -> tuple:
-    """Put card blocks where the agent placed [[DESTINATIONS]] / [[HOTELS]];
-    returns (body, leftover blocks to append after the text)."""
+def _fill_slots(body: str, dests: str, cards: str, prix: str = "", budget: str = "") -> tuple:
+    """Put blocks where the agent placed [[DESTINATIONS]] / [[HOTELS]] /
+    [[PRIX]] / [[BUDGET]]; returns (body, leftover blocks to append)."""
     tail = ""
-    for slot, html in (("destinations", dests), ("hotels", cards)):
+    for slot, html in (("destinations", dests), ("hotels", cards), ("prix", prix), ("budget", budget)):
         marker = f"<div class='slot' data-slot='{slot}'></div>"
         if marker in body:
             body = body.replace(marker, f"<div class='slot' data-slot='{slot}'>{html}</div>", 1)
@@ -919,7 +1070,8 @@ def _bubble(m: dict, last: bool = False) -> str:
         return f"<div class='msg me'>{escape(m.get('text', ''))}</div>"
     body, tail = _fill_slots(render_md(m.get("marked") or m.get("text", ""), m.get("sources")),
                              destinations_html(m.get("destinations")),
-                             cards_html(m.get("cards")))
+                             cards_html(m.get("cards")), prix_html(m.get("prix")),
+                             budget_html(m.get("budget")))
     return (f"<div class='msg ai'><div>{body}</div>{tail}"
             f"{_sources_html(m.get('sources'))}{rate_html(m.get('id', ''), m.get('rating', 0))}"
             f"{questions_html(m.get('questions')) if last else ''}</div>")
@@ -976,13 +1128,14 @@ def assistant_panel(client) -> str:
      chips=document.getElementById('aChips'),rst=document.getElementById('aReset'),
      hum=document.getElementById('aHuman'),toast=document.getElementById('aToast');
  var MSGR={messenger};
+ var SLOTS={{dests:'destinations',cards:'hotels',prix:'prix',budget:'budget'}};
  function say(t){{toast.textContent=t;toast.hidden=false;clearTimeout(say.t);
    say.t=setTimeout(function(){{toast.hidden=true;}},5000);}}
  function esc(s){{return s.replace(/[&<>"']/g,function(c){{return {{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#x27;'}}[c];}});}}
  function md(s){{return esc(s).replace(/\\*\\*(.+?)\\*\\*/g,'<b>$1</b>')
    .replace(/^\\s*(?:-{{3,}}|\\*{{3,}}|_{{3,}})\\s*$/gm,'').replace(/^\\s*[-*]\\s+/gm,'• ')
    .replace(/^#{{1,6}}\\s*/gm,'').replace(/\\n{{3,}}/g,'\\n\\n')
-   .replace(/^\\s*\\[\\[(DESTINATIONS|HOTELS)\\]\\]\\s*$/gm,function(_,k){{
+   .replace(/^\\s*\\[\\[(DESTINATIONS|HOTELS|PRIX|BUDGET)\\]\\]\\s*$/gm,function(_,k){{
      return "<div class='slot' data-slot='"+k.toLowerCase()+"'></div>";}});}}
  function bottom(){{window.scrollTo(0,document.documentElement.scrollHeight);}}
  function add(cls,t){{var d=document.createElement('div');d.className='msg '+cls;
@@ -1007,8 +1160,8 @@ def assistant_panel(client) -> str:
      if(ev.t==='status'){{st.textContent=ev.v;out.classList.remove('typing');}}
      else if(ev.t==='text'){{out.classList.remove('typing');st.textContent='';raw+=ev.v;body.innerHTML=md(raw);}}
      else if(ev.t==='marked'&&ev.v){{body.innerHTML=ev.v;}}
-     else if((ev.t==='dests'||ev.t==='cards')&&ev.v){{
-       st.textContent='';var slot=body.querySelector(".slot[data-slot='"+(ev.t==='dests'?'destinations':'hotels')+"']");
+     else if(SLOTS[ev.t]&&ev.v){{
+       st.textContent='';var slot=body.querySelector(".slot[data-slot='"+SLOTS[ev.t]+"']");
        var cd=document.createElement('div');cd.innerHTML=ev.v;
        while(cd.firstChild)(slot||out).appendChild(cd.firstChild);}}
      else if((ev.t==='guides'||ev.t==='refine'||ev.t==='rate'||ev.t==='questions')&&ev.v){{
@@ -1112,15 +1265,25 @@ def _ev(t: str, v) -> str:
     return json.dumps({"t": t, "v": v}, ensure_ascii=False) + "\n"
 
 
+def _domains(raw: str) -> list:
+    return [d.strip().lower() for d in (raw or "").split(",") if d.strip()]
+
+
+def _blocked(url: str) -> bool:
+    return _on(url, _domains(settings.PORTAL_ASSISTANT_BLOCKED_DOMAINS))
+
+
 def _search_tool() -> dict:
-    domains = [d.strip() for d in settings.PORTAL_ASSISTANT_SEARCH_DOMAINS.split(",") if d.strip()]
     tool = {"type": "web_search_20250305", "name": "web_search",
             "max_uses": settings.PORTAL_ASSISTANT_SEARCHES_PER_ANSWER,
             "user_location": {"type": "approximate", "city": "Montreal",
                               "region": "Quebec", "country": "CA",
                               "timezone": "America/Toronto"}}
-    if domains:
-        tool["allowed_domains"] = domains
+    allowed = _domains(settings.PORTAL_ASSISTANT_SEARCH_DOMAINS)
+    if allowed:                      # the API takes one list or the other, not both
+        tool["allowed_domains"] = allowed
+    elif _domains(settings.PORTAL_ASSISTANT_BLOCKED_DOMAINS):
+        tool["blocked_domains"] = _domains(settings.PORTAL_ASSISTANT_BLOCKED_DOMAINS)
     return tool
 
 
@@ -1129,10 +1292,10 @@ def _collect_sources(message) -> list:
     for block in getattr(message, "content", None) or []:
         for c in getattr(block, "citations", None) or []:
             url = getattr(c, "url", None)
-            if url and url not in seen:
+            if url and url not in seen and not _blocked(url):
                 seen.add(url)
                 out.append({"url": url, "title": getattr(c, "title", None) or ""})
-    return out[:6]
+    return out[:12]
 
 
 # --------------------------------------------------------------------------- #
@@ -1146,7 +1309,7 @@ def _full() -> bool:
 
 
 def _max_tokens() -> int:
-    return 5000 if _full() else 2000
+    return 12000 if _full() else 6000          # text + the structured results
 _LABELS = {"anthropic": "Claude", "openai": "ChatGPT"}
 
 
@@ -1163,17 +1326,20 @@ def model_name(provider: str) -> str:
 
 
 def _run_anthropic(search: bool, system: list, convo: list):
-    """Yields ("status"|"text", str) then ("meta", {"sources", "searches"})."""
+    """Yields ("status"|"text", str) then ("meta", {"sources", "searches",
+    "cites", "chars", "data"}); data = the afficher_resultats tool input."""
     api = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-    sources, searches, wrote, cites, base = [], 0, False, [], 0
+    sources, searches, wrote, cites, base, data, seen = [], 0, False, [], 0, None, []
     for _attempt in range(3):                     # pause_turn continuations
         blocks = [{"type": "text", "text": system[0], "cache_control": {"type": "ephemeral"}}]
         if system[1]:
             blocks.append({"type": "text", "text": system[1]})
         kw = dict(model=settings.PORTAL_ASSISTANT_MODEL, max_tokens=_max_tokens(),
-                  system=blocks, messages=convo)
-        if search:
-            kw["tools"] = [_search_tool()]
+                  system=blocks, messages=convo,
+                  tools=([_search_tool()] if search else []) + [RESULTS_TOOL])
+        if settings.PORTAL_ASSISTANT_THINKING > 0:
+            kw["thinking"] = {"type": "enabled", "budget_tokens": settings.PORTAL_ASSISTANT_THINKING}
+            kw["max_tokens"] += settings.PORTAL_ASSISTANT_THINKING
         try:
             with api.messages.stream(**kw) as stream:
                 for event in stream:
@@ -1182,6 +1348,8 @@ def _run_anthropic(search: bool, system: list, convo: list):
                         cb = getattr(event, "content_block", None)
                         if getattr(cb, "type", "") == "server_tool_use":
                             yield ("status", "🔎 Je cherche des options en ligne…")
+                        elif getattr(cb, "type", "") == "tool_use":
+                            yield ("status", "📸 Je prépare les fiches…")
                     elif et == "content_block_delta":
                         d = getattr(event, "delta", None)
                         if getattr(d, "type", "") == "text_delta" and d.text:
@@ -1197,11 +1365,20 @@ def _run_anthropic(search: bool, system: list, convo: list):
         sources += [s for s in _collect_sources(final)
                     if s["url"] not in {x["url"] for x in sources}]
         for block in final.content or []:            # text blocks == streamed text, in order
+            if getattr(block, "type", "") == "web_search_tool_result":
+                for r in getattr(block, "content", None) or [] if isinstance(getattr(block, "content", None), list) else []:
+                    u = getattr(r, "url", None)
+                    if u and not _blocked(u):
+                        seen.append({"url": u, "title": getattr(r, "title", None) or ""})
+                continue
+            if getattr(block, "type", "") == "tool_use" and getattr(block, "name", "") == RESULTS_TOOL["name"]:
+                data = block.input if isinstance(block.input, dict) else data
+                continue
             if getattr(block, "type", "") != "text":
                 continue
             base += len(block.text or "")
             for c in getattr(block, "citations", None) or []:
-                if getattr(c, "url", None):
+                if getattr(c, "url", None) and not _blocked(c.url):
                     cites.append({"start": None, "at": base, "url": c.url,
                                   "title": getattr(c, "title", None) or "",
                                   "snippet": getattr(c, "cited_text", None) or ""})
@@ -1209,17 +1386,26 @@ def _run_anthropic(search: bool, system: list, convo: list):
             convo = convo + [{"role": "assistant", "content": final.content}]
             continue
         break
-    yield ("meta", {"sources": sources, "searches": searches, "cites": cites, "chars": base})
+    if final.stop_reason == "max_tokens":
+        log.warning("assistant[anthropic]: answer cut at max_tokens (data=%s)", bool(data))
+    yield ("meta", {"sources": sources, "searches": searches, "cites": cites, "chars": base,
+                    "data": data, "seen": seen})
 
 
 def _openai_tool() -> dict:
-    domains = [d.strip() for d in settings.PORTAL_ASSISTANT_SEARCH_DOMAINS.split(",") if d.strip()]
+    domains = _domains(settings.PORTAL_ASSISTANT_SEARCH_DOMAINS)
     tool = {"type": "web_search",
             "user_location": {"type": "approximate", "country": "CA", "city": "Montreal",
                               "region": "Quebec", "timezone": "America/Toronto"}}
     if domains:
         tool["filters"] = {"allowed_domains": domains}
     return tool
+
+
+def _openai_results_tool() -> dict:
+    return {"type": "function", "name": RESULTS_TOOL["name"],
+            "description": RESULTS_TOOL["description"],
+            "parameters": RESULTS_TOOL["input_schema"], "strict": False}
 
 
 def _run_openai(search: bool, system: list, convo: list):
@@ -1231,8 +1417,7 @@ def _run_openai(search: bool, system: list, convo: list):
               max_output_tokens=_max_tokens() + 6000, stream=True)   # + reasoning
     if settings.OPENAI_REASONING_EFFORT:
         kw["reasoning"] = {"effort": settings.OPENAI_REASONING_EFFORT}
-    if search:
-        kw["tools"] = [_openai_tool()]
+    kw["tools"] = ([_openai_tool()] if search else []) + [_openai_results_tool()]
     wrote, said, final = False, False, None
     try:
         for event in api.responses.create(**kw):
@@ -1243,6 +1428,9 @@ def _run_openai(search: bool, system: list, convo: list):
             elif et.startswith("response.web_search_call") and not said:
                 said = True
                 yield ("status", "🔎 Je cherche des options en ligne…")
+            elif et == "response.output_item.added" and \
+                    getattr(getattr(event, "item", None), "type", "") == "function_call":
+                yield ("status", "📸 Je prépare les fiches…")
             elif et == "response.completed":
                 final = event.response
             elif et in ("error", "response.failed"):
@@ -1251,10 +1439,15 @@ def _run_openai(search: bool, system: list, convo: list):
         if search and not wrote:
             raise SearchRefused(str(exc)) from exc
         raise
-    sources, searches, cites, base = [], 0, [], 0
+    sources, searches, cites, base, data = [], 0, [], 0, None
     for item in getattr(final, "output", None) or []:
         if getattr(item, "type", "") == "web_search_call":
             searches += 1
+        if getattr(item, "type", "") == "function_call" and getattr(item, "name", "") == RESULTS_TOOL["name"]:
+            try:
+                data = json.loads(getattr(item, "arguments", "") or "{}")
+            except ValueError:
+                log.warning("assistant[openai]: bad results arguments")
         for part in getattr(item, "content", None) or []:
             if getattr(part, "type", "") != "output_text":
                 continue
@@ -1269,22 +1462,34 @@ def _run_openai(search: bool, system: list, convo: list):
                     cites.append({"start": base + si, "at": base + ei, "url": url,
                                   "title": getattr(a, "title", None) or "", "snippet": ""})
             base += len(part.text or "")
-    yield ("meta", {"sources": sources[:6], "searches": searches, "cites": cites, "chars": base})
+    sources = [x for x in sources if not _blocked(x["url"])]
+    cites = [c for c in cites if not _blocked(c["url"])]
+    yield ("meta", {"sources": sources[:12], "searches": searches, "cites": cites, "chars": base,
+                    "data": data if isinstance(data, dict) else None})
 
 
 _RUNNERS = {"anthropic": _run_anthropic, "openai": _run_openai}
 
+place_details = places.enrich            # Google Places (no-op without a key)
+
 
 def _history_msgs(history: list, q: str) -> list:
+    """Past turns for the model. What the cards showed is summarized in plain
+    words (never as data tags, so the model keeps using the results tool)."""
     def ctx(m):
-        extra = ""
-        for key, tag in (("destinations", "destinations"), ("cards", "pistes"), ("questions", "questions")):
-            if m.get(key):
-                data = [{k: v for k, v in x.items() if k in ("nom", "hotel", "destination", "prix_personne", "titre",
-                                                                "total", "q", "options", "depart", "nuits")}
-                        for x in m[key]]
-                extra += f"\n<{tag}>" + json.dumps(data, ensure_ascii=False) + f"</{tag}>"
-        return m["text"] + extra
+        notes = []
+        if m.get("destinations"):
+            notes.append("destinations : " + ", ".join(d.get("nom", "") for d in m["destinations"]))
+        if m.get("cards"):
+            notes.append("hôtels : " + "; ".join(
+                c.get("hotel", "") + (f" ({c['titre']})" if c.get("titre") else "")
+                + (f", {_money(c.get('total')) or _money(c.get('prix_personne'))}"
+                   if (c.get("total") or c.get("prix_personne")) else "")
+                for c in m["cards"]))
+        if m.get("questions"):
+            notes.append("questions posées : " + " / ".join(
+                f"{x['q']} [{', '.join(x.get('options', []))}]" for x in m["questions"]))
+        return m["text"] + (("\n\n[Affiché au membre — " + " | ".join(notes) + "]") if notes else "")
     msgs = [{"role": m["role"], "content": ctx(m)}
             for m in history[-_CONTEXT:] if m.get("text")]
     while msgs and msgs[0]["role"] != "user":    # start with user, alternate
@@ -1381,37 +1586,51 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
             yield _ev("marked", render_md(marked, sources))
         else:
             marked = ""
-    dm = _DEST_RE.search(full)
-    dests = parse_destinations(dm.group(1).strip()) if dm else []
+    data = meta.get("data") or {}
+    known = sources + [x for x in meta.get("seen") or [] if x["url"] not in {y["url"] for y in sources}]
+
+    def block(key, regex):
+        """Structured tool input first; old tagged blocks as a fallback."""
+        if key in data:
+            return json.dumps(data.get(key) or [], ensure_ascii=False)
+        mm = regex.search(full)
+        return mm.group(1).strip() if mm else ""
+    dests = parse_destinations(block("destinations", _DEST_RE))
     if dests:
-        dests = add_destination_images(dests, {x["url"] for x in sources})
+        dests = add_destination_images(dests, {x["url"] for x in known})
         yield _ev("dests", destinations_html(dests))
-    m = _PISTES_RE.search(full)
-    cards = parse_pistes(m.group(1).strip(), sources) if m else []
+    cards = parse_pistes(block("hotels", _PISTES_RE), known)
     if cards:
         yield _ev("status", "📸 Je prépare les fiches…")
-        cards = add_images(cards, {x["url"]: x.get("title", "") for x in sources})
+        cards = add_images(cards, {x["url"]: x.get("title", "") for x in known})
+        if place_details is not None:
+            cards = place_details(cards)
         yield _ev("cards", cards_html(cards))
-    guides = []                       # our own pages are not shown in answers anymore
+    prix = parse_prix(data.get("prix_vus"), known)
+    if prix:
+        yield _ev("prix", prix_html(prix))
+    budget = parse_budget(data.get("budget"))
+    if budget_html(budget):
+        yield _ev("budget", budget_html(budget))
     if sources:
         yield _ev("sources", sources)
-    sm = _SUIVIS_RE.search(full)
-    suivis = parse_suivis(sm.group(1).strip()) if sm else []
+    suivis = parse_suivis(block("suivis", _SUIVIS_RE))
     if not answer:
         return
     mid = secrets.token_hex(8)
     yield _ev("rate", rate_html(mid))
-    qm = _QUEST_RE.search(full)
-    questions = parse_questions(qm.group(1).strip()) if qm else []
+    questions = parse_questions(block("questions", _QUEST_RE))
     if questions:
         yield _ev("questions", questions_html(questions))
     if suivis:
         yield _ev("refine", suivis_html(suivis))
+    if not cards and not data and "[[HOTELS]]" in answer:
+        log.warning("assistant[%s]: hotels slot without structured results", provider)
     now = datetime.utcnow().isoformat(timespec="seconds")
     persist({"role": "user", "text": q, "at": now},
             {"role": "assistant", "id": mid, "text": answer, "marked": marked, "cards": cards,
-             "destinations": dests, "questions": questions,
-             "guides": guides, "suivis": suivis, "sources": sources,
+             "destinations": dests, "questions": questions, "prix": prix, "budget": budget,
+             "suivis": suivis, "sources": sources,
              "provider": provider, "model": model_name(provider), "at": now})
 
 
