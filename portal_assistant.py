@@ -96,8 +96,10 @@ Règles strictes :
 
 Style : français québécois chaleureux, tu tutoies, concis. Tu peux mettre
 quelques mots en **gras** et faire des listes avec des tirets « - ». Pas de
-titres (#), pas de tableaux, pas de liens dans le texte : les sources sont
-affichées automatiquement sous ta réponse.
+titres (#), pas de séparateurs (---), pas de tableaux, pas de liens dans le
+texte : les sources sont affichées automatiquement sous ta réponse. Emojis :
+deux ou trois au maximum. Reste concis : 2 ou 3 pistes, pas de résumé qui
+répète ce que tu viens de dire.
 """
 
 _SEARCH_ON = ("cherche sur le web pour lui proposer des options réelles (ta "
@@ -149,6 +151,8 @@ def render_md(text: str) -> str:
     out = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", out)
     out = re.sub(r"(?m)^\s*[-*]\s+", "• ", out)
     out = re.sub(r"(?m)^#{1,6}\s*", "", out)
+    out = re.sub(r"(?m)^\s*(?:-{3,}|\*{3,}|_{3,})\s*$", "", out)
+    out = re.sub(r"\n{3,}", "\n\n", out)
     return out
 
 
@@ -208,7 +212,8 @@ def assistant_panel(client) -> str:
      chips=document.getElementById('aChips'),rst=document.getElementById('aReset');
  function esc(s){{return s.replace(/[&<>"']/g,function(c){{return {{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#x27;'}}[c];}});}}
  function md(s){{return esc(s).replace(/\\*\\*(.+?)\\*\\*/g,'<b>$1</b>')
-   .replace(/^\\s*[-*]\\s+/gm,'• ').replace(/^#{{1,6}}\\s*/gm,'');}}
+   .replace(/^\\s*(?:-{{3,}}|\\*{{3,}}|_{{3,}})\\s*$/gm,'').replace(/^\\s*[-*]\\s+/gm,'• ')
+   .replace(/^#{{1,6}}\\s*/gm,'').replace(/\\n{{3,}}/g,'\\n\\n');}}
  function bottom(){{log.scrollTop=log.scrollHeight;}}
  function add(cls,t){{var d=document.createElement('div');d.className='msg '+cls;
    d.textContent=t;log.appendChild(d);bottom();return d;}}
@@ -236,7 +241,7 @@ def assistant_panel(client) -> str:
      bottom();
    }}
    fetch('/portail/assistant',{{method:'POST',headers:{{'Content-Type':'application/json'}},
-     body:JSON.stringify({{message:q}})}}).then(function(r){{
+     body:JSON.stringify({{message:q,fmt:'ndjson'}})}}).then(function(r){{
      if(!r.ok||!r.body){{return r.text().then(function(t){{throw new Error(t);}});}}
      var rd=r.body.getReader(),dec=new TextDecoder();
      function pump(){{return rd.read().then(function(x){{
@@ -300,6 +305,9 @@ async def assistant_chat(request: Request):
     except (ValueError, json.JSONDecodeError):
         payload = {}
     q = str(payload.get("message") or "").strip()[:_MAX_LEN]
+    # Pages loaded before the NDJSON format shipped read a plain-text stream;
+    # keep serving them that so an open tab never shows raw JSON.
+    ndjson = payload.get("fmt") == "ndjson"
     if not q:
         return HTMLResponse("Écris ta question 🙂", status_code=400)
     if not settings.ANTHROPIC_API_KEY:
@@ -403,6 +411,18 @@ async def assistant_chat(request: Request):
                 ])[-_KEEP:]
                 db2.commit()
 
+    def plain():
+        for line in gen():
+            ev = json.loads(line)
+            if ev["t"] == "text":
+                yield ev["v"]
+            elif ev["t"] == "sources":
+                yield "\n\nSources : " + " · ".join(x["url"] for x in ev["v"])
+
+    if not ndjson:
+        return StreamingResponse(plain(), media_type="text/plain; charset=utf-8",
+                                 headers={"Cache-Control": "no-store",
+                                          "X-Accel-Buffering": "no"})
     return StreamingResponse(gen(), media_type="application/x-ndjson; charset=utf-8",
                              headers={"Cache-Control": "no-store",
                                       "X-Accel-Buffering": "no"})
