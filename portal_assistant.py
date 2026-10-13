@@ -936,6 +936,7 @@ def cards_html(cards) -> str:
             + (f"<div class='hc-desc'>{escape(c['resume'])}</div>" if c.get("resume") else "")
             + pts + _price_line(c) + conf
             + f"<div class='hc-foot'>{pill}<button type='button' class='hc-more hc-open'>Détails</button>"
+              f"<label class='hc-sel'><input type='checkbox' class='hc-chk' data-i='{i - 1}'> Comparer</label>"
               f"<a class='hc-go' href='{SEARCH_URL}'>{go}</a></div>"
             + f"</div><template class='hc-detail'>{hotel_detail_html(c)}</template></div>")
     cmp_btn = cmp = ""
@@ -957,7 +958,7 @@ def cards_html(cards) -> str:
         thead = "".join(f"<th>{escape(c['hotel'])}</th>" for c in cards)
         tbody = "".join(f"<tr><th>{k}</th>{''.join(cell(v) for v in vals)}</tr>"
                         for k, vals in rows if any(vals))
-        cmp_btn = "<button type='button' class='pc-cmpbtn'>Comparer</button>"
+        cmp_btn = "<button type='button' class='pc-cmpbtn'>Comparer tout</button>"
         cmp = (f"<div class='pc-cmp' hidden><table><thead><tr><th></th>{thead}</tr></thead>"
                f"<tbody>{tbody}</tbody></table></div>")
     smap = places.static_map(cards)
@@ -1065,6 +1066,15 @@ def _fill_slots(body: str, dests: str, cards: str, prix: str = "", budget: str =
     return body, tail
 
 
+def steps_html(steps, live: bool = False) -> str:
+    if not steps and not live:
+        return ""
+    items = "".join(f"<li>{escape(x)}</li>" for x in steps or [])
+    label = "Recherche en cours…" if live else f"Recherche · {len(steps)} étape{'s' if len(steps) > 1 else ''}"
+    return (f"<details class='asteps'{' open' if live else ''}><summary>{label}</summary>"
+            f"<ol>{items}</ol></details>")
+
+
 def _bubble(m: dict, last: bool = False) -> str:
     if m.get("role") == "user":
         return f"<div class='msg me'>{escape(m.get('text', ''))}</div>"
@@ -1072,7 +1082,7 @@ def _bubble(m: dict, last: bool = False) -> str:
                              destinations_html(m.get("destinations")),
                              cards_html(m.get("cards")), prix_html(m.get("prix")),
                              budget_html(m.get("budget")))
-    return (f"<div class='msg ai'><div>{body}</div>{tail}"
+    return (f"<div class='msg ai'>{steps_html(m.get('steps'))}<div>{body}</div>{tail}"
             f"{_sources_html(m.get('sources'))}{rate_html(m.get('id', ''), m.get('rating', 0))}"
             f"{questions_html(m.get('questions')) if last else ''}</div>")
 
@@ -1155,9 +1165,13 @@ def assistant_panel(client) -> str:
    send.disabled=true; inp.disabled=true;
    var out=add('ai typing',''),body=document.createElement('div'),st=document.createElement('div');
    st.className='astatus';out.appendChild(st);out.appendChild(body);
-   var raw='',buf='';
+   var raw='',buf='',stp=null;
    function handle(ev){{
      if(ev.t==='status'){{st.textContent=ev.v;out.classList.remove('typing');}}
+     else if(ev.t==='step'){{out.classList.remove('typing');
+       if(!stp){{stp=document.createElement('details');stp.className='asteps';stp.open=true;
+         stp.innerHTML='<summary>Recherche en cours…</summary><ol></ol>';out.insertBefore(stp,st);}}
+       var li=document.createElement('li');li.textContent=ev.v;stp.querySelector('ol').appendChild(li);}}
      else if(ev.t==='text'){{out.classList.remove('typing');st.textContent='';raw+=ev.v;body.innerHTML=md(raw);}}
      else if(ev.t==='marked'&&ev.v){{body.innerHTML=ev.v;}}
      else if(SLOTS[ev.t]&&ev.v){{
@@ -1187,7 +1201,9 @@ def assistant_panel(client) -> str:
      out.classList.remove('typing');st.textContent='';
      body.textContent=(e&&e.message&&e.message.length<300)?e.message:
        "Oups, je n'ai pas pu répondre. Réessaie dans un instant.";
-   }}).finally(function(){{st.textContent='';send.disabled=false;inp.disabled=false;inp.focus();}});
+   }}).finally(function(){{st.textContent='';send.disabled=false;inp.disabled=false;inp.focus();
+     if(stp){{var n=stp.querySelectorAll('li').length;stp.open=false;
+       stp.querySelector('summary').textContent='Recherche · '+n+' étape'+(n>1?'s':'');}}}});
  }}
  f.addEventListener('submit',function(e){{e.preventDefault();ask(inp.value);}});
  if(chips)chips.addEventListener('click',function(e){{
@@ -1233,8 +1249,21 @@ def assistant_panel(client) -> str:
        var on=g.querySelector('.qopt.on');if(on)parts.push(g.getAttribute('data-q').replace(/\\s*\\?\\s*$/,'')+' : '+on.textContent);}});
      if(parts.length)ask(parts.join('\\n'));return;}}
    var c=e.target.closest('.pc-cmpbtn');
-   if(c){{var t=c.closest('.pcards').querySelector('.pc-cmp');t.hidden=!t.hidden;
-     c.textContent=t.hidden?'Comparer':'Masquer la comparaison';return;}}
+   if(c){{var pcs=c.closest('.pcards'),t=pcs.querySelector('.pc-cmp table');if(!t)return;
+     var sel=[].slice.call(pcs.querySelectorAll('.hc-chk:checked')).map(function(x){{return +x.getAttribute('data-i');}});
+     var tb=t.cloneNode(true);
+     if(sel.length>=2)tb.querySelectorAll('tr').forEach(function(tr){{
+       [].slice.call(tr.children).forEach(function(cell,j){{if(j>0&&sel.indexOf(j-1)<0)cell.remove();}});}});
+     tb.querySelectorAll('tbody tr').forEach(function(tr){{
+       if([].slice.call(tr.querySelectorAll('td')).every(function(td){{return td.textContent.trim()==='—';}}))tr.remove();}});
+     hpb.innerHTML='<div class="hd-body"><h3 class="hd-name">Comparaison</h3><div class="pc-cmp hp-cmp"></div>'+
+       '<a class="hd-b hd-main" style="align-self:flex-start" href="{SEARCH_URL}">Vérifier les forfaits</a></div>';
+     hpb.querySelector('.hp-cmp').appendChild(tb);hp.hidden=false;hov.hidden=false;
+     document.body.classList.add('has-panel');hp.scrollTop=0;return;}}
+   var ck=e.target.closest('.hc-chk');
+   if(ck){{var pc=ck.closest('.pcards'),n=pc.querySelectorAll('.hc-chk:checked').length;
+     if(n>4){{ck.checked=false;say('Maximum 4 hôtels à comparer.');return;}}
+     var cb=pc.querySelector('.pc-cmpbtn');if(cb)cb.textContent=n>=2?'Comparer ('+n+')':'Comparer tout';return;}}
    var b=e.target.closest('.rbtn');
    if(b){{var w=b.closest('.rate'),v=+b.getAttribute('data-r');
      w.querySelectorAll('.rbtn').forEach(function(x){{x.classList.toggle('on',x===b);}});
@@ -1330,7 +1359,9 @@ def _run_anthropic(search: bool, system: list, convo: list):
     "cites", "chars", "data"}); data = the afficher_resultats tool input."""
     api = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
     sources, searches, wrote, cites, base, data, seen = [], 0, False, [], 0, None, []
+    usage = {"in": 0, "out": 0, "cache": 0}
     for _attempt in range(3):                     # pause_turn continuations
+        qbuf: dict = {}                           # block index -> partial search input JSON
         blocks = [{"type": "text", "text": system[0], "cache_control": {"type": "ephemeral"}}]
         if system[1]:
             blocks.append({"type": "text", "text": system[1]})
@@ -1347,7 +1378,12 @@ def _run_anthropic(search: bool, system: list, convo: list):
                     if et == "content_block_start":
                         cb = getattr(event, "content_block", None)
                         if getattr(cb, "type", "") == "server_tool_use":
+                            qbuf[getattr(event, "index", -1)] = ""
                             yield ("status", "🔎 Je cherche des options en ligne…")
+                        elif getattr(cb, "type", "") == "web_search_tool_result":
+                            n = len(cb.content) if isinstance(getattr(cb, "content", None), list) else 0
+                            if n:
+                                yield ("step", f"📄 {n} pages trouvées")
                         elif getattr(cb, "type", "") == "tool_use":
                             yield ("status", "📸 Je prépare les fiches…")
                     elif et == "content_block_delta":
@@ -1355,6 +1391,16 @@ def _run_anthropic(search: bool, system: list, convo: list):
                         if getattr(d, "type", "") == "text_delta" and d.text:
                             wrote = True
                             yield ("text", d.text)
+                        elif getattr(d, "type", "") == "input_json_delta" and \
+                                getattr(event, "index", -1) in qbuf:
+                            qbuf[event.index] += d.partial_json or ""
+                    elif et == "content_block_stop" and getattr(event, "index", -1) in qbuf:
+                        try:
+                            qq = json.loads(qbuf.pop(event.index) or "{}").get("query", "")
+                        except ValueError:
+                            qq = ""
+                        if qq:
+                            yield ("step", f"🔎 {qq[:90]}")
                 final = stream.get_final_message()
         except anthropic.BadRequestError as exc:
             if search and not wrote:
@@ -1362,6 +1408,9 @@ def _run_anthropic(search: bool, system: list, convo: list):
             raise
         searches += getattr(getattr(final.usage, "server_tool_use", None),
                             "web_search_requests", 0) or 0
+        usage["in"] += getattr(final.usage, "input_tokens", 0) or 0
+        usage["out"] += getattr(final.usage, "output_tokens", 0) or 0
+        usage["cache"] += getattr(final.usage, "cache_read_input_tokens", 0) or 0
         sources += [s for s in _collect_sources(final)
                     if s["url"] not in {x["url"] for x in sources}]
         for block in final.content or []:            # text blocks == streamed text, in order
@@ -1389,7 +1438,8 @@ def _run_anthropic(search: bool, system: list, convo: list):
     if final.stop_reason == "max_tokens":
         log.warning("assistant[anthropic]: answer cut at max_tokens (data=%s)", bool(data))
     yield ("meta", {"sources": sources, "searches": searches, "cites": cites, "chars": base,
-                    "data": data, "seen": seen})
+                    "data": data, "seen": seen, "usage": usage,
+                    "cut": final.stop_reason == "max_tokens"})
 
 
 def _openai_tool() -> dict:
@@ -1431,6 +1481,11 @@ def _run_openai(search: bool, system: list, convo: list):
             elif et == "response.output_item.added" and \
                     getattr(getattr(event, "item", None), "type", "") == "function_call":
                 yield ("status", "📸 Je prépare les fiches…")
+            elif et == "response.output_item.done" and \
+                    getattr(getattr(event, "item", None), "type", "") == "web_search_call":
+                qq = getattr(getattr(event.item, "action", None), "query", "") or ""
+                if qq:
+                    yield ("step", f"🔎 {qq[:90]}")
             elif et == "response.completed":
                 final = event.response
             elif et in ("error", "response.failed"):
@@ -1464,11 +1519,53 @@ def _run_openai(search: bool, system: list, convo: list):
             base += len(part.text or "")
     sources = [x for x in sources if not _blocked(x["url"])]
     cites = [c for c in cites if not _blocked(c["url"])]
+    u = getattr(final, "usage", None)
+    usage = {"in": getattr(u, "input_tokens", 0) or 0, "out": getattr(u, "output_tokens", 0) or 0,
+             "cache": getattr(getattr(u, "input_tokens_details", None), "cached_tokens", 0) or 0}
     yield ("meta", {"sources": sources[:12], "searches": searches, "cites": cites, "chars": base,
-                    "data": data if isinstance(data, dict) else None})
+                    "data": data if isinstance(data, dict) else None, "usage": usage,
+                    "cut": getattr(final, "status", "") == "incomplete"})
 
 
 _RUNNERS = {"anthropic": _run_anthropic, "openai": _run_openai}
+
+_REPAIR_ASK = ("Appelle maintenant l'outil afficher_resultats avec les données structurées qui "
+               "correspondent exactement à ta réponse ci-dessus (hôtels, prix vus, budget, "
+               "questions, suivis). N'écris rien d'autre.")
+
+
+def repair_results(provider: str, system: list, msgs: list, answer: str):
+    """Safety net: the answer was written but its structured results are
+    missing (cut or skipped). One quick call, no search, tool forced."""
+    convo = msgs + [{"role": "assistant", "content": answer},
+                    {"role": "user", "content": _REPAIR_ASK}]
+    try:
+        if provider == "anthropic":
+            api = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+            r = api.messages.create(
+                model=settings.PORTAL_ASSISTANT_MODEL, max_tokens=6000,
+                system=[{"type": "text", "text": system[0], "cache_control": {"type": "ephemeral"}}]
+                + ([{"type": "text", "text": system[1]}] if system[1] else []),
+                messages=convo, tools=[RESULTS_TOOL],
+                tool_choice={"type": "tool", "name": RESULTS_TOOL["name"]})
+            for b in r.content or []:
+                if getattr(b, "type", "") == "tool_use" and isinstance(getattr(b, "input", None), dict):
+                    return b.input
+        else:
+            import openai
+            api = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+            r = api.responses.create(
+                model=settings.OPENAI_ASSISTANT_MODEL, instructions="\n\n".join(x for x in system if x),
+                input=[{"role": m["role"], "content": m["content"]} for m in convo],
+                tools=[_openai_results_tool()],
+                tool_choice={"type": "function", "name": RESULTS_TOOL["name"]},
+                max_output_tokens=8000)
+            for it in getattr(r, "output", None) or []:
+                if getattr(it, "type", "") == "function_call":
+                    return json.loads(getattr(it, "arguments", "") or "{}")
+    except Exception as exc:  # noqa: BLE001 — the text answer still stands
+        log.warning("assistant[%s]: results repair failed: %s", provider, exc)
+    return None
 
 place_details = places.enrich            # Google Places (no-op without a key)
 
@@ -1526,6 +1623,8 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
     parts: list[str] = []          # everything the model wrote
     shown = [0]                    # chars of `parts` already sent
     meta = {"sources": [], "searches": 0, "cites": []}
+    steps: list = []
+    t0 = time.monotonic()
 
     def visible_cut(full: str) -> int:
         cuts = [i for i in (full.find(t) for t in _TAGS) if i != -1]
@@ -1552,6 +1651,8 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
                     elif kind == "meta":
                         meta = val
                     else:
+                        if kind == "step":
+                            steps.append(val)
                         yield _ev(kind, val)
                 break
             except SearchRefused as exc:
@@ -1587,6 +1688,15 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
         else:
             marked = ""
     data = meta.get("data") or {}
+    wants = "[[HOTELS]]" in answer or "[[PRIX]]" in answer or "[[DESTINATIONS]]" in answer
+    if not data and answer and wants and not _PISTES_RE.search(full):
+        yield _ev("status", "📸 Je prépare les fiches…")
+        data = repair_results(provider, system_for(search), msgs, answer) or {}
+        log.info("assistant[%s]: results repaired=%s (cut=%s)", provider, bool(data), meta.get("cut"))
+    u = meta.get("usage") or {}
+    log.info("assistant[%s] %s: %.1fs, %s searches, tokens in=%s (cache %s) out=%s, hotels=%s",
+             provider, model_name(provider), time.monotonic() - t0, meta.get("searches", 0),
+             u.get("in"), u.get("cache"), u.get("out"), len(data.get("hotels") or []))
     known = sources + [x for x in meta.get("seen") or [] if x["url"] not in {y["url"] for y in sources}]
 
     def block(key, regex):
@@ -1630,7 +1740,7 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
     persist({"role": "user", "text": q, "at": now},
             {"role": "assistant", "id": mid, "text": answer, "marked": marked, "cards": cards,
              "destinations": dests, "questions": questions, "prix": prix, "budget": budget,
-             "suivis": suivis, "sources": sources,
+             "suivis": suivis, "sources": sources, "steps": steps[:12],
              "provider": provider, "model": model_name(provider), "at": now})
 
 

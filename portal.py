@@ -2368,6 +2368,16 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .hc-more{{all:unset;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--foam);border:1px solid var(--line);border-radius:999px;padding:3px 10px}}
  .hc-more:hover{{border-color:var(--pacific)}}
  .hd-desc h4{{margin:12px 0 4px;font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--mist);font-family:"Space Grotesk",monospace}}
+
+ .asteps{{margin:0 0 10px;font-size:13px;color:var(--mist);white-space:normal}}
+ .asteps summary{{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:6px}}
+ .asteps summary::before{{content:"▸";transition:transform .15s}}
+ .asteps[open] summary::before{{transform:rotate(90deg)}}
+ .asteps ol{{margin:6px 0 0;padding-left:20px;line-height:1.6}}
+ .hc-sel{{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;color:var(--mist);cursor:pointer}}
+ .hc-sel input{{accent-color:var(--pacific);width:15px;height:15px;margin:0}}
+ .hp-cmp{{overflow-x:auto;margin:6px 0 12px}}
+ .hp-cmp table{{min-width:0}}
 </style></head><body class="pg{page}">
  <div class="top">
    <div class="brand"><img src="/static/logo.png" alt="Du Voyageur">
