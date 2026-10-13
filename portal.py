@@ -1864,6 +1864,16 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .msg.typing::after{{content:"● ● ●";letter-spacing:2px;color:var(--mist);
    animation:blink 1.2s infinite}}
  @keyframes blink{{50%{{opacity:.3}}}}
+ .msg.ai b{{color:var(--surf)}}
+ .astatus{{font-size:13px;color:var(--mist);font-style:italic}}
+ .astatus:empty{{display:none}}
+ .srcs{{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px;padding-top:9px;
+   border-top:1px solid var(--line);white-space:normal}}
+ .srcs span{{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--mist);
+   font-family:"Space Grotesk",monospace;margin-right:2px}}
+ .srcs a{{font-size:12px;color:var(--pacific);text-decoration:none;max-width:220px;overflow:hidden;
+   text-overflow:ellipsis;white-space:nowrap;border:1px solid var(--line);border-radius:999px;padding:3px 9px}}
+ .srcs a:hover{{border-color:var(--pacific)}}
  .chips{{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 4px}}
  .chip{{background:rgba(6,33,47,.6);border:1px solid rgba(25,211,230,.35);color:var(--foam);
    border-radius:999px;padding:8px 13px;font-size:13px;cursor:pointer;font-family:inherit}}
