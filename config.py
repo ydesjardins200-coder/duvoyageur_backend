@@ -92,6 +92,8 @@ class Settings:
     OPENAI_REASONING_EFFORT: str = os.getenv("OPENAI_REASONING_EFFORT", "low")
     # Emails allowed on the blind Claude vs ChatGPT test page (comma-separated).
     ASSISTANT_TESTERS: str = os.getenv("ASSISTANT_TESTERS", "")
+    # Answer length: "complet" (detailed agent-style advice) or "concis".
+    PORTAL_ASSISTANT_STYLE: str = os.getenv("PORTAL_ASSISTANT_STYLE", "complet")
     PORTAL_ASSISTANT_DAILY_MAX: int = int(os.getenv("PORTAL_ASSISTANT_DAILY_MAX", "40"))
     # Web search (Claude server tool, ~$10 / 1000 searches + result tokens).
     PORTAL_ASSISTANT_SEARCHES_PER_ANSWER: int = int(os.getenv("PORTAL_ASSISTANT_SEARCHES_PER_ANSWER", "3"))

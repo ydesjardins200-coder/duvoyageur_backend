@@ -157,6 +157,25 @@ Destinations que nous couvrons :
 {excerpts}
 """
 
+# Appended when PORTAL_ASSISTANT_STYLE=complet: overrides the brevity rules
+# above so answers are as complete as a seasoned agent's written advice.
+STYLE_FULL = """
+NIVEAU DE DÉTAIL : COMPLET (cette consigne remplace les consignes de longueur
+ci-dessus).
+- Propose 3 ou 4 pistes variées quand tu as trouvé des options (le bloc
+  <pistes> peut contenir jusqu'à 4 objets).
+- Pour chaque piste, un vrai paragraphe de conseiller : pour qui c'est idéal,
+  la plage (calme ou vagues, sable), l'ambiance et la taille du complexe, la
+  distance ou le transfert depuis l'aéroport, le vol (direct ou escale), le
+  prix vu et ce qu'il comprend, les bémols honnêtes et ce qui reste à
+  confirmer. Tu peux reprendre les chiffres clés dans le texte.
+- Termine par une courte recommandation : laquelle tu choisirais selon ses
+  priorités, et pourquoi. Puis la phrase sur notre moteur et ta question.
+- Questions générales : réponse complète et structurée (listes bienvenues),
+  pas seulement 2 ou 3 phrases.
+- Toujours sans titres (#), sans tableaux, sans liens dans le texte.
+"""
+
 _SEARCH_ON = ("cherche sur le web pour lui proposer des options réelles (ta "
               "recherche est limitée aux sites des voyagistes et d'information).")
 _SEARCH_OFF = ("la recherche web n'est pas disponible pour cette réponse : donne "
@@ -328,7 +347,7 @@ def parse_pistes(raw: str, sources: list) -> list:
             "source_url": url,
             "a_confirmer": str(d.get("a_confirmer") or "")[:120],
         })
-        if len(cards) == 3:
+        if len(cards) == 4:
             break
     return cards
 
@@ -603,6 +622,14 @@ def _collect_sources(message) -> list:
 # Model providers — Claude (Anthropic) or ChatGPT (OpenAI), same event stream
 # --------------------------------------------------------------------------- #
 PROVIDERS = ("anthropic", "openai")
+
+
+def _full() -> bool:
+    return settings.PORTAL_ASSISTANT_STYLE.strip().lower() != "concis"
+
+
+def _max_tokens() -> int:
+    return 4000 if _full() else 1500
 _LABELS = {"anthropic": "Claude", "openai": "ChatGPT"}
 
 
@@ -623,7 +650,7 @@ def _run_anthropic(search: bool, system: str, convo: list):
     api = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
     sources, searches, wrote = [], 0, False
     for _attempt in range(3):                     # pause_turn continuations
-        kw = dict(model=settings.PORTAL_ASSISTANT_MODEL, max_tokens=1500,
+        kw = dict(model=settings.PORTAL_ASSISTANT_MODEL, max_tokens=_max_tokens(),
                   system=system, messages=convo)
         if search:
             kw["tools"] = [_search_tool()]
@@ -672,7 +699,7 @@ def _run_openai(search: bool, system: str, convo: list):
     api = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
     kw = dict(model=settings.OPENAI_ASSISTANT_MODEL, instructions=system,
               input=[{"role": m["role"], "content": m["content"]} for m in convo],
-              max_output_tokens=6000, stream=True)
+              max_output_tokens=_max_tokens() + 6000, stream=True)   # + reasoning
     if settings.OPENAI_REASONING_EFFORT:
         kw["reasoning"] = {"effort": settings.OPENAI_REASONING_EFFORT}
     if search:
@@ -737,6 +764,8 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
             catalogue=catalogue,
             excerpts=("\nExtraits de nos pages liés à la conversation :\n" + excerpts)
             if excerpts else "")
+        if _full():
+            s += STYLE_FULL
         return s + (f"\nLe membre s'appelle {name}." if name else "")
 
     parts: list[str] = []          # everything the model wrote
