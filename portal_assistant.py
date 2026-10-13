@@ -27,6 +27,7 @@ import json
 import logging
 import re
 import time
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
@@ -283,12 +284,13 @@ def _allowed_domain(url: str) -> bool:
     return any(host == d or host.endswith("." + d) for d in domains)
 
 
-def og_image(url: str) -> str:
-    """The page's share image (og:image / twitter:image), like a link preview.
-    Best effort: 3 s timeout, 600 KB read cap, cached; "" when unavailable."""
+def page_preview(url: str):
+    """(share image, page_is_dead) for a source page — like a link preview.
+    og:image / twitter:image; 3 s timeout, 600 KB read cap, cached.
+    page_is_dead is True only on 404/410: the link itself is broken."""
     if url in _OG_CACHE:
         return _OG_CACHE[url]
-    img = ""
+    img, dead = "", False
     try:
         req = urllib.request.Request(url, headers={"User-Agent": _UA,
                                                    "Accept-Language": "fr-CA,fr;q=0.9"})
@@ -299,12 +301,16 @@ def og_image(url: str) -> str:
                 cand = urljoin(url, p.image) if p.image else ""
                 if cand.startswith("https://"):
                     img = cand
+    except urllib.error.HTTPError as exc:
+        dead = exc.code in (404, 410)
+        if not dead:            # 403/5xx: site blocks bots or is down — link may still work
+            log.info("preview unavailable (%s) for %s", exc.code, url)
     except Exception as exc:  # noqa: BLE001 — a missing photo is fine
-        log.info("og:image unavailable for %s: %s", url, exc)
+        log.info("preview unavailable for %s: %s", url, exc)
     if len(_OG_CACHE) > 500:
         _OG_CACHE.clear()
-    _OG_CACHE[url] = img
-    return img
+    _OG_CACHE[url] = (img, dead)
+    return img, dead
 
 
 def _money(v) -> str:
@@ -329,6 +335,13 @@ def parse_pistes(raw: str, sources: list) -> list:
         if not isinstance(d, dict) or not str(d.get("hotel") or "").strip():
             continue
         url = str(d.get("source_url") or "").strip()
+        if url not in known and url.startswith("https://"):
+            # Prefer a page the search actually cited on the same site over a
+            # URL the model may have rebuilt from memory.
+            host = urlparse(url).hostname
+            same = [k for k in known if urlparse(k).hostname == host]
+            if len(same) == 1:
+                url = same[0]
         if not (url.startswith("https://") and (url in known or _allowed_domain(url))):
             url = ""
         try:
@@ -353,12 +366,18 @@ def parse_pistes(raw: str, sources: list) -> list:
 
 
 def add_images(cards: list) -> list:
+    """Attach each source page's photo; drop source links that are dead (404)
+    so a member never clicks through to an error page."""
     urls = list({c["source_url"] for c in cards if c.get("source_url")})
     if urls:
-        with ThreadPoolExecutor(max_workers=3) as ex:
-            imgs = dict(zip(urls, ex.map(og_image, urls)))
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            previews = dict(zip(urls, ex.map(page_preview, urls)))
         for c in cards:
-            c["image"] = imgs.get(c.get("source_url"), "")
+            img, dead = previews.get(c.get("source_url"), ("", False))
+            if dead:
+                log.info("assistant: dead source link removed from card: %s", c["source_url"])
+                c["source_url"] = ""
+            c["image"] = img
     return cards
 
 
