@@ -182,6 +182,22 @@ TEMPLATE_CATEGORY_LABELS = {
 }
 
 
+class AssistantFeedback(Base):
+    """👍/👎 on a portal assistant answer, with the exchange it rates — the raw
+    material for measuring answer quality and building an eval set."""
+    __tablename__ = "assistant_feedback"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    client_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    message_id: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    rating: Mapped[int] = mapped_column(Integer)          # 1 = 👍, -1 = 👎
+    question: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cards: Mapped[list] = mapped_column(JSON, default=list)
+    model: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+
+
 class ReplyTemplate(Base):
     """A saved canned reply the team can drop into the answer box. Categorised by
     channel so the reply box only offers the relevant ones (+ 'general')."""

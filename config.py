@@ -100,6 +100,10 @@ class Settings:
     # Messenger (the admin ticket queue is no longer used).
     MESSENGER_URL: str = os.getenv("MESSENGER_URL", "https://m.me/duvoyageur.ca")
 
+    # Public site base URL, used for « Nos guides » links in the assistant
+    # (switch to https://duvoyageur.ca once the domain is connected).
+    SITE_BASE_URL: str = os.getenv("SITE_BASE_URL", "https://duvoyageur.netlify.app")
+
     # --- Softvoyage DMO package search engine (iframe in the portal) ---
     # Shown at /portail/recherche once the agency alias is set; until then the
     # page says "bientôt disponible".

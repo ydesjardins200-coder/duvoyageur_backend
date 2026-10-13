@@ -36,12 +36,15 @@ from html import escape
 from urllib.parse import urlencode, urlparse
 from zoneinfo import ZoneInfo
 
+import secrets
+
 import anthropic
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 
 from config import settings
-from db import Client, SessionLocal
+from db import AssistantFeedback, Client, SessionLocal
+import site_knowledge as kb
 from portal import (_bell_panel, _logged_out, _nav, _set_session_cookie, _shell,
                     current_portal_client_id)
 
@@ -69,57 +72,89 @@ forfait dans notre moteur de réservation (bouton « Rechercher un forfait » da
 son espace). Son Rabais Récompense (jusqu'à 5 % sur le prix avant taxes) est
 déjà appliqué aux prix affichés dans ce moteur.
 
-Ton rôle : aider le membre à choisir, comme un conseiller futé.
-- Quand il décrit un voyage (budget, dates, nombre de voyageurs, départ,
-  priorités comme la plage ou le vol direct) : {search_rule}
-  Propose 2 ou 3 pistes concrètes. Pour chacune : hôtel et destination, le
-  prix PUBLIC vu (en précisant par personne ou total, et taxes incluses ou
-  non si c'est indiqué) et pourquoi ça colle à ses critères.
-- Sois honnête : dis clairement ce que tu n'as pas pu confirmer (ex. vol
-  direct, date exacte, plage avec vagues). Les prix publics changent vite :
-  présente-les toujours comme « vu en ligne », jamais comme garantis.
-- Termine TOUJOURS une réponse avec des prix par une phrase du genre : « Ces
-  prix sont des prix publics. Cherche le même forfait dans notre moteur : c'est
-  souvent moins cher, avec ton Rabais Récompense déjà appliqué. »
-- S'il manque un critère important, pose UNE question de précision à la fin.
-- Pour les questions générales (saison, météo en général, tout inclus,
-  bagages), réponds directement, sans chercher.
+TON RÔLE : un conseiller d'expérience qui aide à CHOISIR, pas un moteur de prix.
+
+1. Avant de chercher, vérifie que tu as l'essentiel : la période (dates ou
+   mois), qui voyage (adultes, enfants et leurs âges) et la ville de départ.
+   - S'il manque la période ou les voyageurs, NE CHERCHE PAS encore : pose en
+     un seul message court les 2 ou 3 questions qui manquent, avec des
+     exemples de réponse, puis arrête-toi.
+   - Ville de départ non précisée : suppose Montréal (YUL) et dis-le.
+   - Budget, style, priorités : utiles mais pas obligatoires.
+   - Ne repose jamais une question déjà répondue plus haut dans la conversation.
+2. Quand tu as l'essentiel : {search_rule}
+   Propose 2 ou 3 pistes VARIÉES (pas trois hôtels identiques) qui répondent
+   vraiment aux priorités nommées.
+3. Raisonne comme un conseiller qui connaît le Sud, et dis-le en une ligne
+   par piste quand c'est pertinent :
+   - Saison des ouragans dans l'Atlantique et les Caraïbes : juin à novembre,
+     surtout août à octobre.
+   - Sargasses : surtout sur la côte caraïbe du Mexique (Cancún, Riviera Maya)
+     et parfois à Punta Cana, plutôt du printemps à l'automne ; ça varie
+     beaucoup d'une année à l'autre. Côté Pacifique (Puerto Vallarta, Los
+     Cabos, Huatulco), ce n'est pas un enjeu.
+   - Plage : mer calme ou vagues, sable ou roches, plage en pente douce pour
+     les enfants. Ne l'affirme que si tes sources ou notre contenu le disent.
+   - Durée du transfert aéroport-hôtel, vol direct ou avec escale, taille du
+     complexe, adultes seulement vs famille (mini-club, glissades).
+   - Cuba : rappelle de vérifier l'avis aux voyageurs actuel sur voyage.gc.ca.
+4. Utilise d'abord le CONTENU VÉRIFIÉ DE DU VOYAGEUR ci-dessous : nos
+   destinations et nos coups de cœur. Quand un de nos coups de cœur colle aux
+   critères, privilégie-le. Ne contredis jamais ce contenu. Les liens vers nos
+   pages s'affichent automatiquement : ne les écris pas.
+5. Sois honnête : dis clairement ce que tu n'as pas pu confirmer (vol direct,
+   date exacte, prix total). Les prix publics changent vite : présente-les
+   comme « vu en ligne », jamais comme garantis.
+6. Termine une réponse avec des prix par une phrase du genre : « Ces prix sont
+   des prix publics. Cherche le même forfait dans notre moteur : c'est souvent
+   moins cher, avec ton Rabais Récompense déjà appliqué. » Puis, si utile, UNE
+   question pour affiner.
+7. Questions générales (saison, tout inclus, bagages, pourboires) : réponds
+   directement, sans chercher, en t'appuyant sur notre contenu.
 
 Règles strictes :
 - Ne promets jamais que notre prix sera plus bas ni un montant de rabais
   précis : dis « souvent moins cher » et « jusqu'à 5 % avant taxes ».
 - Tu ne peux pas réserver ni confirmer une disponibilité.
-- N'invente jamais un hôtel, un prix ou un détail : tout prix que tu donnes
-  doit venir de tes résultats de recherche.
+- N'invente jamais un hôtel, un prix ou un détail : un prix vient de tes
+  résultats de recherche ; un détail d'hôtel vient de tes sources ou de notre
+  contenu.
 - Ne recommande pas d'autres agences de voyages.
-- Passeports, visas, avis aux voyageurs, santé : idée générale seulement, et
-  renvoie à voyage.gc.ca.
+- Passeports, visas, santé : idée générale, et renvoie à voyage.gc.ca.
 - Problème avec une réservation, changement, annulation, ou envie de parler à
-  un humain : écrire à l'équipe sur Messenger (onglet « Aide »).
+  un humain : bouton « Parler à un conseiller » ou Messenger (onglet « Aide »).
 - Hors voyage : ramène gentiment la conversation au voyage.
 
-Fiches de pistes : quand tu proposes des forfaits trouvés en ligne avec un
-prix, ajoute à la TOUTE FIN de ta réponse un bloc de données, sans rien après :
+BLOCS DE DONNÉES (à la TOUTE FIN de ta réponse, sans rien après, jamais
+mentionnés dans ton texte) :
+a) Quand tu proposes des forfaits trouvés en ligne avec un prix :
 <pistes>[{{"hotel": "Ocean El Faro", "destination": "Punta Cana",
 "depart": "15 novembre 2026", "nuits": 7, "prix_personne": 1887,
 "total": 3774, "voyageurs": "2 adultes", "taxes": "incluses",
 "source_url": "https://…", "a_confirmer": "vol direct"}}]</pistes>
-- Un objet par piste (3 maximum), uniquement avec des données vues dans tes
-  résultats de recherche ; mets null pour ce que tu ne sais pas.
-- source_url = l'adresse exacte de la page où tu as vu le prix.
-- taxes : "incluses", "en sus" ou null. Montants en dollars, sans symbole.
-- Ces fiches s'affichent en cartes avec photo : dans ton texte, ne répète pas
-  tous les chiffres. Garde le texte court : une phrase d'intro, une ligne de
-  nuance par piste (ce qui colle aux critères, ce qui reste à confirmer), puis
-  la phrase sur notre moteur et ta question de précision.
-- Pas de bloc <pistes> pour une réponse sans prix trouvés.
+   - Un objet par piste (3 maximum), uniquement avec des données vues dans
+     tes résultats ; null pour ce que tu ne sais pas.
+   - source_url = l'adresse exacte de la page où tu as vu le prix.
+   - taxes : "incluses", "en sus" ou null. Montants en dollars, sans symbole.
+   - Ces fiches s'affichent en cartes avec photo : ne répète pas les chiffres
+     dans ton texte. Texte court : une phrase d'intro, une ligne de conseil par
+     piste (pourquoi elle colle, ce qui reste à confirmer), la phrase sur notre
+     moteur, ta question.
+b) Après une réponse qui propose des pistes ou des destinations, 3 ou 4
+   raffinements que le membre pourrait vouloir, rédigés comme SA demande,
+   courts (moins de 40 caractères) et adaptés à la conversation :
+<suivis>["Moins cher, autour de 3 000 $", "Seulement avec vol direct", "Plus calme, adultes seulement"]</suivis>
 
 Style : français québécois chaleureux, tu tutoies, concis. Tu peux mettre
 quelques mots en **gras** et faire des listes avec des tirets « - ». Pas de
 titres (#), pas de séparateurs (---), pas de tableaux, pas de liens dans le
-texte : les sources sont affichées automatiquement sous ta réponse. Emojis :
-deux ou trois au maximum. Reste concis : 2 ou 3 pistes, pas de résumé qui
-répète ce que tu viens de dire.
+texte. Emojis : deux ou trois au maximum. Pas de résumé qui répète ce que tu
+viens de dire.
+
+CONTENU VÉRIFIÉ DE DU VOYAGEUR
+Destinations que nous couvrons :
+{catalogue}
+{excerpts}
 """
 
 _SEARCH_ON = ("cherche sur le web pour lui proposer des options réelles (ta "
@@ -187,6 +222,23 @@ def _sources_html(sources) -> str:
 
 
 _PISTES_RE = re.compile(r"<pistes>(.*?)(?:</pistes>|$)", re.S)
+_SUIVIS_RE = re.compile(r"<suivis>(.*?)(?:</suivis>|$)", re.S)
+_TAGS = ("<pistes>", "<suivis>")
+
+
+def strip_blocks(text: str) -> str:
+    """The answer as the member sees it: everything before the first data block."""
+    cuts = [i for i in (text.find(t) for t in _TAGS) if i != -1]
+    return (text[:min(cuts)] if cuts else text).strip()
+
+
+def parse_suivis(raw: str) -> list:
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    return [str(x).strip()[:60] for x in data if isinstance(x, str) and x.strip()][:4] \
+        if isinstance(data, list) else []
 _OG_CACHE: dict = {}            # page url -> image url or "" (process-wide)
 _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
@@ -315,6 +367,10 @@ def cards_html(cards) -> str:
                  f", {tail}.</div>") if tot else ""
         chip = (f"<a class='pc-src' href=\"{escape(url)}\" target='_blank' rel='noopener nofollow'>"
                 f"{escape(host)}</a>") if host else ""
+        ours = kb.hotel_page(c["hotel"])
+        if ours:
+            chip += (f"<a class='pc-ours' href=\"{escape(ours)}\" target='_blank' rel='noopener'>"
+                     "⭐ Notre coup de cœur</a>")
         conf = (f"<div class='pc-conf'>À confirmer : {escape(c['a_confirmer'])}</div>"
                 if c.get("a_confirmer") else "")
         img = c.get("image") or ""
@@ -325,14 +381,60 @@ def cards_html(cards) -> str:
                    f"<div class='pc-foot'>{chip}<a class='pc-go' href='{SEARCH_URL}'>"
                    f"Voir dans notre moteur →</a></div>{conf}</div></div>")
     head = "Meilleure piste trouvée" if len(cards) == 1 else "Pistes trouvées"
-    return f"<div class='pcards'><div class='pc-head'>{head}</div>{''.join(out)}</div>"
+    cmp_btn = cmp = ""
+    if len(cards) >= 2:
+        def cell(v):
+            return f"<td>{v or '—'}</td>"
+        rows = [
+            ("Destination", [escape(c.get("destination") or "") for c in cards]),
+            ("Départ", [escape(c.get("depart") or "") for c in cards]),
+            ("Nuits", [str(c["nuits"]) if c.get("nuits") else "" for c in cards]),
+            ("Prix / pers.", [_money(c.get("prix_personne")) for c in cards]),
+            ("Total", [_money(c.get("total")) for c in cards]),
+            ("Taxes", [{"incluses": "comprises", "en sus": "en sus"}.get(c.get("taxes"), "") for c in cards]),
+            ("À confirmer", [escape(c.get("a_confirmer") or "") for c in cards]),
+        ]
+        thead = "".join(f"<th>{escape(c['hotel'])}</th>" for c in cards)
+        tbody = "".join(f"<tr><th>{k}</th>{''.join(cell(v) for v in vals)}</tr>"
+                        for k, vals in rows if any(vals))
+        cmp_btn = "<button type='button' class='pc-cmpbtn'>Comparer</button>"
+        cmp = (f"<div class='pc-cmp' hidden><table><thead><tr><th></th>{thead}</tr></thead>"
+               f"<tbody>{tbody}</tbody></table></div>")
+    return (f"<div class='pcards'><div class='pc-head'><span>{head}</span>{cmp_btn}</div>"
+            f"{cmp}{''.join(out)}</div>")
+
+
+def guides_html(links) -> str:
+    if not links:
+        return ""
+    a = "".join(f"<a href=\"{escape(l['url'])}\" target='_blank' rel='noopener'>{escape(l['title'])}</a>"
+                for l in links)
+    return f"<div class='guides'><span>Nos guides</span>{a}</div>"
+
+
+def suivis_html(items) -> str:
+    if not items:
+        return ""
+    return "<div class='refine'>" + "".join(
+        f"<button type='button' class='chip rchip'>{escape(x)}</button>" for x in items) + "</div>"
+
+
+def rate_html(mid: str, rating: int = 0) -> str:
+    if not mid:
+        return ""
+    up = " on" if rating == 1 else ""
+    down = " on" if rating == -1 else ""
+    return (f"<div class='rate' data-mid=\"{escape(mid)}\">"
+            f"<button type='button' class='rbtn{up}' data-r='1' aria-label='Réponse utile'>👍</button>"
+            f"<button type='button' class='rbtn{down}' data-r='-1' aria-label='Réponse pas utile'>👎</button></div>")
 
 
 def _bubble(m: dict) -> str:
     if m.get("role") == "user":
         return f"<div class='msg me'>{escape(m.get('text', ''))}</div>"
     return (f"<div class='msg ai'>{render_md(m.get('text', ''))}"
-            f"{cards_html(m.get('cards'))}{_sources_html(m.get('sources'))}</div>")
+            f"{cards_html(m.get('cards'))}{guides_html(m.get('guides'))}"
+            f"{_sources_html(m.get('sources'))}{rate_html(m.get('id', ''), m.get('rating', 0))}</div>")
 
 
 def assistant_panel(client) -> str:
@@ -349,8 +451,14 @@ def assistant_panel(client) -> str:
         "<div class='chips' id='aChips'>" + "".join(
             f"<button type='button' class='chip'>{escape(s)}</button>" for s in _SUGGESTIONS)
         + "</div>")
+    if thread and thread[-1].get("role") == "assistant" and thread[-1].get("suivis"):
+        chips = ("<div class='chips' id='aChips'>" + "".join(
+            f"<button type='button' class='chip'>{escape(s)}</button>"
+            for s in thread[-1]["suivis"]) + "</div>")
     reset = ("<button type='button' class='areset' id='aReset'>Nouvelle conversation</button>"
              if thread else "")
+    human = ("<button type='button' class='areset' id='aHuman'>💬 Parler à un conseiller</button>")
+    messenger = json.dumps(settings.MESSENGER_URL)
     return f"""
 <a class='searchcta' href='{SEARCH_URL}'>
   <div><b>🔎 Rechercher un forfait</b>
@@ -358,7 +466,9 @@ def assistant_panel(client) -> str:
   <span class='sc-go'>→</span></a>
 <div class='assist'>
   <div class='a-head'><div><h3>Ton assistant voyage</h3>
-    <span class='a-sub'>Propulsé par l'IA · prix publics à titre indicatif</span></div>{reset}</div>
+    <span class='a-sub'>Propulsé par l'IA · prix publics à titre indicatif</span></div>
+    <div class='a-acts'>{human}{reset}</div></div>
+  <div class='a-toast' id='aToast' hidden></div>
   <div class='a-log' id='aLog' aria-live='polite'>{msgs}</div>
   {chips}
   <form class='a-form' id='aForm' autocomplete='off'>
@@ -371,7 +481,11 @@ def assistant_panel(client) -> str:
 (function(){{
  var log=document.getElementById('aLog'),f=document.getElementById('aForm'),
      inp=document.getElementById('aIn'),send=document.getElementById('aSend'),
-     chips=document.getElementById('aChips'),rst=document.getElementById('aReset');
+     chips=document.getElementById('aChips'),rst=document.getElementById('aReset'),
+     hum=document.getElementById('aHuman'),toast=document.getElementById('aToast');
+ var MSGR={messenger};
+ function say(t){{toast.textContent=t;toast.hidden=false;clearTimeout(say.t);
+   say.t=setTimeout(function(){{toast.hidden=true;}},5000);}}
  function esc(s){{return s.replace(/[&<>"']/g,function(c){{return {{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#x27;'}}[c];}});}}
  function md(s){{return esc(s).replace(/\\*\\*(.+?)\\*\\*/g,'<b>$1</b>')
    .replace(/^\\s*(?:-{{3,}}|\\*{{3,}}|_{{3,}})\\s*$/gm,'').replace(/^\\s*[-*]\\s+/gm,'• ')
@@ -386,7 +500,8 @@ def assistant_panel(client) -> str:
  bottom();
  function ask(q){{
    q=(q||'').trim(); if(!q||send.disabled)return;
-   if(chips)chips.remove();
+   if(chips){{chips.remove();chips=null;}}
+   var old=log.querySelectorAll('.refine');old.forEach(function(x){{x.remove();}});
    add('me',q); inp.value=''; grow();
    send.disabled=true; inp.disabled=true;
    var out=add('ai typing',''),body=document.createElement('div'),st=document.createElement('div');
@@ -395,9 +510,10 @@ def assistant_panel(client) -> str:
    function handle(ev){{
      if(ev.t==='status'){{st.textContent=ev.v;out.classList.remove('typing');}}
      else if(ev.t==='text'){{out.classList.remove('typing');st.textContent='';raw+=ev.v;body.innerHTML=md(raw);}}
-     else if(ev.t==='cards'&&ev.v){{st.textContent='';var cd=document.createElement('div');
-       cd.innerHTML=ev.v;out.appendChild(cd);}}
-     else if(ev.t==='sources'&&ev.v&&ev.v.length){{
+     else if((ev.t==='cards'||ev.t==='guides'||ev.t==='refine'||ev.t==='rate')&&ev.v){{
+       st.textContent='';var cd=document.createElement('div');cd.innerHTML=ev.v;
+       while(cd.firstChild)out.appendChild(cd.firstChild);}}
+     else if(ev.t==='sources'&&ev.v&&ev.v.length&&!out.querySelector('.srcs')){{
        var s=document.createElement('div');s.className='srcs';s.innerHTML='<span>Sources</span>';
        ev.v.forEach(function(x){{if(!/^https:\\/\\//.test(x.url))return;var a=document.createElement('a');
          a.href=x.url;a.target='_blank';a.rel='noopener nofollow';a.textContent=x.title||x.url;s.appendChild(a);}});
@@ -423,6 +539,28 @@ def assistant_panel(client) -> str:
  f.addEventListener('submit',function(e){{e.preventDefault();ask(inp.value);}});
  if(chips)chips.addEventListener('click',function(e){{
    var b=e.target.closest('.chip');if(b)ask(b.textContent);}});
+ log.addEventListener('click',function(e){{
+   var r=e.target.closest('.rchip');if(r){{ask(r.textContent);return;}}
+   var c=e.target.closest('.pc-cmpbtn');
+   if(c){{var t=c.closest('.pcards').querySelector('.pc-cmp');t.hidden=!t.hidden;
+     c.textContent=t.hidden?'Comparer':'Masquer la comparaison';return;}}
+   var b=e.target.closest('.rbtn');
+   if(b){{var w=b.closest('.rate'),v=+b.getAttribute('data-r');
+     w.querySelectorAll('.rbtn').forEach(function(x){{x.classList.toggle('on',x===b);}});
+     fetch('/portail/assistant/feedback',{{method:'POST',headers:{{'Content-Type':'application/json'}},
+       body:JSON.stringify({{id:w.getAttribute('data-mid'),rating:v}})}});
+     if(v<0)say("Merci! Dis-moi ce qui cloche et je vais ajuster.");else say("Merci pour ton retour!");}}
+ }});
+ if(hum)hum.addEventListener('click',function(){{
+   var me=[].slice.call(log.querySelectorAll('.msg.me')).slice(-3).map(function(x){{return '- '+x.textContent;}});
+   var pc=[].slice.call(log.querySelectorAll('.pc-name')).slice(-3).map(function(x){{return x.textContent;}});
+   var txt='Bonjour! Je viens de l\'assistant voyage de mon espace client.'+
+     (me.length?'\nMa demande :\n'+me.join('\n'):'')+(pc.length?'\nPistes vues : '+pc.join(', '):'');
+   var w=window.open(MSGR,'_blank','noopener');
+   if(navigator.clipboard)navigator.clipboard.writeText(txt).then(function(){{
+     say('Résumé copié 📋 — colle-le dans Messenger pour que le conseiller parte de là.');}},function(){{}});
+   if(!w)location.href=MSGR;
+ }});
  if(rst)rst.addEventListener('click',function(){{
    fetch('/portail/assistant/reset',{{method:'POST'}}).then(function(){{location.reload();}});}});
 }})();
@@ -497,10 +635,16 @@ async def assistant_chat(request: Request):
         msgs.pop(0)
     msgs.append({"role": "user", "content": q})
     can_search = _searches_left(cid) > 0
+    convo_text = " ".join([m["text"] for m in history[-6:] if m.get("role") == "user"] + [q])
+    excerpts = kb.context_for(convo_text)
+    catalogue = kb.catalogue()
 
     def system_for(search: bool) -> str:
-        s = SYSTEM_PROMPT.format(today=_today(),
-                                 search_rule=_SEARCH_ON if search else _SEARCH_OFF)
+        s = SYSTEM_PROMPT.format(
+            today=_today(), search_rule=_SEARCH_ON if search else _SEARCH_OFF,
+            catalogue=catalogue,
+            excerpts=("\nExtraits de nos pages liés à la conversation :\n" + excerpts)
+            if excerpts else "")
         return s + (f"\nLe membre s'appelle {name}." if name else "")
 
     def run(api, search: bool, convo: list):
@@ -526,18 +670,18 @@ async def assistant_chat(request: Request):
         parts: list[str] = []          # everything the model wrote
         shown = [0]                    # chars of `parts` already sent
         sources: list = []
-        tag = "<pistes>"
+        def visible_cut(full: str) -> int:
+            cuts = [i for i in (full.find(t) for t in _TAGS) if i != -1]
+            if cuts:
+                return min(cuts)
+            for k in range(len("<suivis>") - 1, 0, -1):     # possible partial tag
+                if any(full.endswith(t[:k]) for t in _TAGS):
+                    return len(full) - k
+            return len(full)
 
         def visible_delta() -> str:
-            # Send text up to the <pistes> block; hold back a possible partial tag.
             full = "".join(parts)
-            cut = full.find(tag)
-            if cut == -1:
-                cut = len(full)
-                for k in range(len(tag) - 1, 0, -1):
-                    if full.endswith(tag[:k]):
-                        cut = len(full) - k
-                        break
+            cut = visible_cut(full)
             if cut > shown[0]:
                 d = full[shown[0]:cut]
                 shown[0] = cut
@@ -585,29 +729,39 @@ async def assistant_chat(request: Request):
                 yield _ev("text", "Oups, je n'ai pas pu répondre. Réessaie dans un instant.")
             return
         full = "".join(parts)
+        answer = strip_blocks(full)
+        tail = full[shown[0]:len(answer) + (len(full) - len(full.lstrip()))]
+        if shown[0] < len(answer) and tail.strip():     # text held back for a partial tag
+            yield _ev("text", full[shown[0]:visible_cut(full)])
         m = _PISTES_RE.search(full)
-        cards = []
-        if m:
-            cards = parse_pistes(m.group(1).strip(), sources)
-            if cards:
-                yield _ev("status", "📸 Je prépare les fiches…")
-                cards = add_images(cards)
-                yield _ev("cards", cards_html(cards))
-        elif shown[0] < len(full):      # flush text held back for a partial tag
-            yield _ev("text", full[shown[0]:])
+        cards = parse_pistes(m.group(1).strip(), sources) if m else []
+        if cards:
+            yield _ev("status", "📸 Je prépare les fiches…")
+            cards = add_images(cards)
+            yield _ev("cards", cards_html(cards))
+        guides = kb.related_links(" ".join([q, answer] + [c["hotel"] + " " + c.get("destination", "")
+                                                          for c in cards]))
+        if guides:
+            yield _ev("guides", guides_html(guides))
         if sources:
             yield _ev("sources", sources)
-        answer = _PISTES_RE.sub("", full).strip()
+        sm = _SUIVIS_RE.search(full)
+        suivis = parse_suivis(sm.group(1).strip()) if sm else []
         if not answer:
             return
+        mid = secrets.token_hex(8)
+        yield _ev("rate", rate_html(mid))
+        if suivis:
+            yield _ev("refine", suivis_html(suivis))
         now = datetime.utcnow().isoformat(timespec="seconds")
         with SessionLocal() as db2:
             c = db2.get(Client, cid)
             if c:
                 c.assistant_chat = (list(c.assistant_chat or []) + [
                     {"role": "user", "text": q, "at": now},
-                    {"role": "assistant", "text": answer, "cards": cards,
-                     "sources": sources, "at": now},
+                    {"role": "assistant", "id": mid, "text": answer, "cards": cards,
+                     "guides": guides, "suivis": suivis, "sources": sources,
+                     "model": settings.PORTAL_ASSISTANT_MODEL, "at": now},
                 ])[-_KEEP:]
                 db2.commit()
 
@@ -626,6 +780,39 @@ async def assistant_chat(request: Request):
     return StreamingResponse(gen(), media_type="application/x-ndjson; charset=utf-8",
                              headers={"Cache-Control": "no-store",
                                       "X-Accel-Buffering": "no"})
+
+
+@router.post("/portail/assistant/feedback")
+async def assistant_feedback(request: Request):
+    cid = current_portal_client_id(request)
+    if not cid:
+        return JSONResponse({"error": "auth"}, status_code=401)
+    try:
+        payload = await request.json()
+    except (ValueError, json.JSONDecodeError):
+        payload = {}
+    mid = str(payload.get("id") or "")[:40]
+    rating = 1 if payload.get("rating") == 1 else -1 if payload.get("rating") == -1 else 0
+    if not mid or not rating:
+        return JSONResponse({"error": "bad request"}, status_code=400)
+    with SessionLocal() as db:
+        c = db.get(Client, cid)
+        chat = list((c.assistant_chat if c else None) or [])
+        idx = next((i for i, m in enumerate(chat) if m.get("id") == mid), None)
+        if idx is None:                       # only the member's own answers
+            return JSONResponse({"error": "not found"}, status_code=404)
+        chat[idx] = {**chat[idx], "rating": rating}
+        c.assistant_chat = chat
+        q = next((chat[j]["text"] for j in range(idx - 1, -1, -1)
+                  if chat[j].get("role") == "user"), None)
+        row = db.query(AssistantFeedback).filter_by(message_id=mid).first()
+        if not row:
+            row = AssistantFeedback(message_id=mid, client_id=cid)
+            db.add(row)
+        row.rating, row.question, row.answer = rating, q, chat[idx].get("text")
+        row.cards, row.model = chat[idx].get("cards") or [], chat[idx].get("model")
+        db.commit()
+    return JSONResponse({"ok": True})
 
 
 @router.post("/portail/assistant/reset")
