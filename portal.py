@@ -899,7 +899,6 @@ def _nav(active: str, locked: bool = False) -> str:
     items = [("accueil", "/portail", "Accueil"),
              ("recherche", "/portail/recherche", "Rechercher"),
              ("aide", "/portail/service", "Aide"),
-             ("avis", "/portail/avis", "Mes avis"),
              ("profil", "/portail/profil", "Mon profil")]
     links = "".join(
         f"<a class='pill{' on' if k == active else ''}' href='{href}'>{label}</a>"
@@ -914,7 +913,9 @@ def _shell(title: str, body: str, logged_in: bool = False, nav: str = "",
            bell: str = "") -> str:
     logout = ("<a class='logout' href='/portail/logout'>Déconnexion</a>"
               if logged_in else "")
-    actions = f"<div class='topact'>{bell}{logout}</div>" if logged_in else logout
+    # The notification bell was retired with the admin queue (bookings and
+    # support now live in PC Voyages / Messenger); `bell` is accepted and ignored.
+    actions = f"<div class='topact'>{logout}</div>" if logged_in else logout
     return _PORTAL_PAGE.format(title=escape(title), body=body, logout=actions, nav=nav)
 
 
@@ -1034,7 +1035,12 @@ def portal_home(request: Request, new: int = 0, avis: int = 0):
 
 
 @router.get("/portail/notifications", response_class=HTMLResponse)
-def portal_notifications(request: Request):
+def portal_notifications_retired(request: Request):
+    # The notification bell was retired; old links land on the home page.
+    return RedirectResponse("/portail", status_code=303)
+
+
+def _legacy_portal_notifications(request: Request):
     cid, gate = _gate(request)
     if gate:
         return gate
@@ -1238,7 +1244,12 @@ async def portal_new_trip_save(request: Request):
 
 
 @router.get("/portail/avis", response_class=HTMLResponse)
-def portal_avis(request: Request, ok: int = 0):
+def portal_reviews_retired(request: Request):
+    # "Mes avis" was retired (no more trip data in the backend).
+    return RedirectResponse("/portail", status_code=303)
+
+
+def _legacy_portal_avis(request: Request, ok: int = 0):
     cid, gate = _gate(request)
     if gate:
         return gate
