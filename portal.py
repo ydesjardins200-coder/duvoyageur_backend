@@ -2378,6 +2378,27 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .hc-sel input{{accent-color:var(--pacific);width:15px;height:15px;margin:0}}
  .hp-cmp{{overflow-x:auto;margin:6px 0 12px}}
  .hp-cmp table{{min-width:0}}
+
+ .chat .chips.starters{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;width:100%;margin:14px 0 0}}
+ .chat:not(.empty) .chips.starters{{display:none}}
+ .chip.starter{{display:flex;flex-direction:column;align-items:flex-start;gap:3px;text-align:left;border-radius:16px;
+   padding:13px 15px;white-space:normal;background:rgba(10,40,55,.7);border-color:var(--line)}}
+ .chip.starter:hover{{border-color:var(--pacific);background:rgba(25,211,230,.08)}}
+ .chip.starter .st-ic{{font-size:18px;line-height:1}}
+ .chip.starter b{{font-size:14px;color:var(--foam)}}
+ .chip.starter .st-q{{font-size:12.5px;line-height:1.45;color:var(--mist)}}
+ @media(max-width:560px){{.chat .chips.starters{{grid-template-columns:1fr;gap:8px}}.chip.starter{{padding:11px 13px}}}}
+
+ .aprog{{margin:2px 0 14px;max-width:420px;transition:opacity .5s}}
+ .aprog.done{{opacity:0}}
+ .ap-lbl{{font-size:13.5px;color:var(--surf);margin-bottom:7px}}
+ .ap-bar{{height:6px;border-radius:999px;background:rgba(155,246,236,.12);overflow:hidden}}
+ .ap-bar span{{display:block;height:100%;width:0;border-radius:999px;
+   background:linear-gradient(90deg,var(--pacific),var(--lagoon));transition:width .6s ease}}
+ .msg.ai.typing:has(.aprog)::after{{content:none}}
+ .chat.empty .c-dock{{display:flex;flex-direction:column}}
+ .chat.empty .c-dock .chips{{order:3}}
+ .chat.empty .c-dock .c-note{{order:2}}
 </style></head><body class="pg{page}">
  <div class="top">
    <div class="brand"><img src="/static/logo.png" alt="Du Voyageur">

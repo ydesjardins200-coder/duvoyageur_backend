@@ -260,11 +260,21 @@ _SEARCH_OFF = ("PAS de recherche web pour cette réponse (limite atteinte) : rec
                "hôtels que tu connais bien, sans prix ni note précise, et envoie-le vers "
                "notre moteur pour les prix.")
 
+# Starter examples on the empty chat: COMPLETE requests (destination, dates,
+# travellers, length, budget, wishes) so members see what a good ask looks like.
 _SUGGESTIONS = [
-    "2 adultes, 4 000 $ max, priorité plage, départ de Montréal en novembre",
-    "Quand partir au Mexique?",
-    "Quelle destination pour une famille avec des petits?",
-    "Quoi mettre dans ma valise pour le Sud?",
+    ("🌮", "Mexique gourmand",
+     "Mexique côte Pacifique, départ de Montréal le 31 décembre 2026, 7 nuits, 2 adultes, "
+     "budget 5 000 à 7 000 $ pour deux. On veut très bien manger et faire des activités."),
+    ("👨‍👩‍👧", "Punta Cana en famille",
+     "Punta Cana pendant la relâche, du 6 au 13 mars 2027, 2 adultes et 2 enfants de 5 et 9 ans, "
+     "départ de Montréal, budget 8 000 $ en tout. Mini-club et glissades d'eau essentiels."),
+    ("💍", "Lune de miel",
+     "Lune de miel en février 2027, 10 nuits, 2 adultes, adultes seulement, départ de Montréal, "
+     "budget 9 000 $ pour deux. Plage magnifique, chambre avec vue et restos à la carte."),
+    ("💸", "Cuba à petit prix",
+     "Cuba en novembre 2026, 7 nuits, 2 adultes, départ de Montréal, maximum 2 500 $ pour deux. "
+     "Une belle plage avant tout, tout inclus correct sans plus."),
 ]
 
 
@@ -1082,7 +1092,7 @@ def _bubble(m: dict, last: bool = False) -> str:
                              destinations_html(m.get("destinations")),
                              cards_html(m.get("cards")), prix_html(m.get("prix")),
                              budget_html(m.get("budget")))
-    return (f"<div class='msg ai'>{steps_html(m.get('steps'))}<div>{body}</div>{tail}"
+    return (f"<div class='msg ai'><div>{body}</div>{tail}"
             f"{_sources_html(m.get('sources'))}{rate_html(m.get('id', ''), m.get('rating', 0))}"
             f"{questions_html(m.get('questions')) if last else ''}</div>")
 
@@ -1093,11 +1103,16 @@ def assistant_panel(client) -> str:
     thread = list(client.assistant_chat or [])
     hi = escape(_first_name(client))
     msgs = "".join(_bubble(m, last=(i == len(thread) - 1)) for i, m in enumerate(thread))
-    chip_list = _SUGGESTIONS if not thread else (
-        thread[-1].get("suivis") or [] if thread[-1].get("role") == "assistant" else [])
-    chips = ("<div class='chips' id='aChips'>" + "".join(
-        f"<button type='button' class='chip'>{escape(s)}</button>" for s in chip_list)
-        + "</div>") if chip_list else ""
+    if not thread:
+        chips = ("<div class='chips starters' id='aChips'>" + "".join(
+            f"<button type='button' class='chip starter' data-q=\"{escape(q)}\">"
+            f"<span class='st-ic'>{ic}</span><b>{escape(t)}</b><span class='st-q'>{escape(q)}</span></button>"
+            for ic, t, q in _SUGGESTIONS) + "</div>")
+    else:
+        chip_list = thread[-1].get("suivis") or [] if thread[-1].get("role") == "assistant" else []
+        chips = ("<div class='chips' id='aChips'>" + "".join(
+            f"<button type='button' class='chip'>{escape(s)}</button>" for s in chip_list)
+            + "</div>") if chip_list else ""
     reset = ("<button type='button' class='areset' id='aReset'>Nouvelle conversation</button>"
              if thread else "")
     human = "<button type='button' class='areset' id='aHuman'>💬 Conseiller</button>"
@@ -1139,6 +1154,7 @@ def assistant_panel(client) -> str:
      hum=document.getElementById('aHuman'),toast=document.getElementById('aToast');
  var MSGR={messenger};
  var SLOTS={{dests:'destinations',cards:'hotels',prix:'prix',budget:'budget'}};
+ var MAXS={settings.PORTAL_ASSISTANT_SEARCHES_PER_ANSWER}||8;
  function say(t){{toast.textContent=t;toast.hidden=false;clearTimeout(say.t);
    say.t=setTimeout(function(){{toast.hidden=true;}},5000);}}
  function esc(s){{return s.replace(/[&<>"']/g,function(c){{return {{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#x27;'}}[c];}});}}
@@ -1165,14 +1181,24 @@ def assistant_panel(client) -> str:
    send.disabled=true; inp.disabled=true;
    var out=add('ai typing',''),body=document.createElement('div'),st=document.createElement('div');
    st.className='astatus';out.appendChild(st);out.appendChild(body);
-   var raw='',buf='',stp=null;
+   var raw='',buf='',nsrch=0,pr=document.createElement('div'),pct=0,cap=12;
+   pr.className='aprog';pr.innerHTML='<div class="ap-lbl">Je lis ta demande…</div><div class="ap-bar"><span></span></div>';
+   out.insertBefore(pr,st);
+   function prog(p,label){{cap=Math.max(cap,p);if(p>pct)pct=p;pr.querySelector('span').style.width=pct+'%';
+     if(label)pr.querySelector('.ap-lbl').textContent=label;}}
+   prog(5);
+   var creep=setInterval(function(){{if(pct<cap-1){{pct+=Math.max(.3,(cap-pct)/14);
+     pr.querySelector('span').style.width=pct+'%';}}}},700);
    function handle(ev){{
-     if(ev.t==='status'){{st.textContent=ev.v;out.classList.remove('typing');}}
+     if(ev.t==='status'){{out.classList.remove('typing');
+       if(/fiches/.test(ev.v))prog(88,'Je prépare les fiches et les photos…');
+       else if(/cherche/.test(ev.v))prog(14,'Je cherche les meilleures options…');}}
      else if(ev.t==='step'){{out.classList.remove('typing');
-       if(!stp){{stp=document.createElement('details');stp.className='asteps';stp.open=true;
-         stp.innerHTML='<summary>Recherche en cours…</summary><ol></ol>';out.insertBefore(stp,st);}}
-       var li=document.createElement('li');li.textContent=ev.v;stp.querySelector('ol').appendChild(li);}}
-     else if(ev.t==='text'){{out.classList.remove('typing');st.textContent='';raw+=ev.v;body.innerHTML=md(raw);}}
+       if(ev.v.indexOf('🔎')===0){{nsrch++;
+         prog(14+Math.min(56,nsrch*56/MAXS),nsrch<3?'Je cherche les meilleures options…':
+           (nsrch<6?'Je compare les hôtels, les avis et les prix…':'Je vérifie les derniers détails…'));}}}}
+     else if(ev.t==='text'){{out.classList.remove('typing');raw+=ev.v;body.innerHTML=md(raw);
+       if(pct<72)prog(72,'Je rédige ta réponse…');}}
      else if(ev.t==='marked'&&ev.v){{body.innerHTML=ev.v;}}
      else if(SLOTS[ev.t]&&ev.v){{
        st.textContent='';var slot=body.querySelector(".slot[data-slot='"+SLOTS[ev.t]+"']");
@@ -1202,12 +1228,12 @@ def assistant_panel(client) -> str:
      body.textContent=(e&&e.message&&e.message.length<300)?e.message:
        "Oups, je n'ai pas pu répondre. Réessaie dans un instant.";
    }}).finally(function(){{st.textContent='';send.disabled=false;inp.disabled=false;inp.focus();
-     if(stp){{var n=stp.querySelectorAll('li').length;stp.open=false;
-       stp.querySelector('summary').textContent='Recherche · '+n+' étape'+(n>1?'s':'');}}}});
+     clearInterval(creep);prog(100,'Terminé');pr.classList.add('done');
+     setTimeout(function(){{pr.remove();}},700);}});
  }}
  f.addEventListener('submit',function(e){{e.preventDefault();ask(inp.value);}});
  if(chips)chips.addEventListener('click',function(e){{
-   var b=e.target.closest('.chip');if(b)ask(b.textContent);}});
+   var b=e.target.closest('.chip');if(b)ask(b.getAttribute('data-q')||b.textContent);}});
  var touch=window.matchMedia&&matchMedia('(hover: none)').matches;
  function place(c){{var r=c.getBoundingClientRect();
    c.classList.toggle('down',r.top<380);c.classList.toggle('right',r.left+300>window.innerWidth);}}
