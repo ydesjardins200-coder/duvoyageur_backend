@@ -31,7 +31,7 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
-from urllib.parse import urljoin
+from urllib.parse import quote_plus, urljoin
 from datetime import datetime
 from html import escape
 from urllib.parse import urlencode, urlparse
@@ -104,8 +104,11 @@ et les hôtels, et l'aide à choisir. Pas un moteur de prix.
       - **Mes destinations** : écris [[DESTINATIONS]] seul sur sa ligne
         (les cartes s'affichent là) puis, pour chacune, 1-2 phrases de
         conseil (pourquoi elle colle, son bémol honnête) ;
-      - **Les hôtels que je regarderais** : écris [[HOTELS]] seul sur sa
-        ligne, puis une ligne par hôtel (pour qui, ce qui le distingue) ;
+      - **Les hôtels que je regarderais** : UNE phrase d'intro, puis
+        [[HOTELS]] seul sur sa ligne. Les fiches d'hôtels (photo, angle,
+        résumé, prix, note) s'affichent là depuis le bloc <pistes> : ne
+        décris PAS les hôtels un par un dans le texte. Tu peux ajouter une
+        phrase après pour dire lequel tu choisirais et pourquoi ;
       - **Ton séjour** : ce que tu ferais pendant ses dates, selon ses envies
         (activités, sorties, moments forts comme le 31 décembre) ;
       - **Vols** : ce que tu sais du vol direct depuis sa ville, honnêtement ;
@@ -119,13 +122,16 @@ et les hôtels, et l'aide à choisir. Pas un moteur de prix.
       répète pas tout ; ajuste ce qui change.
 
 4. HÔTELS : recommande selon leur RÉPUTATION RÉELLE, vérifiée en ligne.
-   - Choisis des hôtels reconnus qui collent aux critères (destination,
-     voyageurs, envies, budget). Appuie ton choix sur TripAdvisor (note et
-     nombre d'avis) trouvé par ta recherche ; n'invente jamais une note.
-   - Pour CHAQUE hôtel recommandé, trouve sa fiche chez un grossiste
-     canadien (Transat, Vacances Air Canada, Vacances Sunwing, Vacances
-     WestJet) et mets son adresse exacte dans fiche_url : c'est elle qui
-     affiche les vraies photos de l'hôtel. Pas de fiche trouvée : null.
+   - Choisis 3 à 5 hôtels reconnus qui collent aux critères (destination,
+     voyageurs, envies, budget) et qui sont DIFFÉRENTS les uns des autres :
+     chacun a son angle (« Meilleur pour la gastronomie », « Meilleur choix
+     luxe », « Meilleur rapport qualité-prix », « Plus calme »…). Pas deux
+     fois le même profil. Appuie ton choix sur TripAdvisor (note et nombre
+     d'avis) trouvé par ta recherche ; n'invente jamais une note.
+   - Pour CHAQUE hôtel recommandé, trouve sa fiche chez un ou plusieurs
+     grossistes canadiens (Transat, Vacances Air Canada, Vacances Sunwing,
+     Vacances WestJet) : fiche_url = la meilleure, fiches = les autres. Ce
+     sont elles qui affichent les vraies photos de l'hôtel. Aucune : null.
    - Pour chaque destination proposée, page_url = une page de cette
      destination chez un de ces grossistes, si tu l'as trouvée.
 
@@ -137,10 +143,9 @@ et les hôtels, et l'aide à choisir. Pas un moteur de prix.
    forfait dans notre moteur : c'est souvent moins cher, avec ton Rabais
    Récompense déjà appliqué. »
 
-6. Le CONTENU DE DU VOYAGEUR ci-dessous (guides, saisons, quoi faire) est
-   une aide pour l'information générale. Pour les hôtels, fie-toi à tes
-   recherches et aux fiches des grossistes. Les liens vers nos guides
-   s'affichent automatiquement : ne les écris pas.
+6. Le CONTENU DE DU VOYAGEUR ci-dessous (saisons, quoi faire) est une aide
+   pour l'information générale seulement. Pour les hôtels, fie-toi à tes
+   recherches et aux fiches des grossistes. Ne renvoie pas à nos pages.
 
 Règles strictes :
 - Ne promets jamais que notre prix sera plus bas ni un montant de rabais
@@ -162,17 +167,27 @@ après, jamais mentionnés dans ton texte :
 "bemol": "plus animé que reposant", "moment": "baleines et Nouvel An festif",
 "page_url": "https://…"}}]</destinations>
    (seulement avec [[DESTINATIONS]] ; 3 ou 4 destinations ; textes courts)
-<pistes>[{{"hotel": "Nom exact", "destination": "Puerto Vallarta",
+<pistes>[{{"hotel": "Nom exact", "destination": "Marina Vallarta, Puerto Vallarta",
+"titre": "Meilleur pour le calme et la gastronomie",
+"type": "Tout-inclus boutique · adultes seulement",
+"resume": "Petit hôtel de 80 suites avec jardin tropical et club de plage. Cuisine réputée, service très attentionné.",
+"points_forts": ["Restaurants à la carte réputés", "Très calme"],
+"bemol": "Plage de l'hôtel petite ; navette vers le club de plage",
 "depart": "31 décembre 2026", "nuits": 7, "prix_personne": null,
-"total": null, "voyageurs": "2 adultes", "taxes": null,
-"fiche_url": "https://…", "source_url": null, "note": 4.5, "avis": 12000,
-"a_confirmer": "vol direct"}}]</pistes>
-   (seulement avec [[HOTELS]] ou des prix ; 3 ou 4 hôtels ; prix,
-   source_url et taxes à null tant que tu n'as pas cherché le prix ;
-   source_url = l'adresse exacte de la page où tu as vu le prix ;
-   fiche_url = la fiche de l'hôtel chez un grossiste canadien ;
-   note et avis = note TripAdvisor et nombre d'avis trouvés, sinon null ;
-   taxes "incluses" ou "en sus" ; montants en dollars sans symbole)
+"total": null, "voyageurs": "2 adultes", "taxes": null, "prix_note": null,
+"fiche_url": "https://…", "fiches": ["https://…"], "source_url": null,
+"note": 4.8, "avis": 3100, "avis_url": "https://www.tripadvisor.ca/…",
+"adresse": null, "a_confirmer": "vol direct"}}]</pistes>
+   (seulement avec [[HOTELS]] ou des prix ; 3 à 5 hôtels ; titre = l'angle
+   qui le distingue des autres, moins de 50 caractères ; resume = 2 phrases
+   concrètes et utiles, pas de formules creuses ; points_forts = 2 ou 3
+   courts ; bemol = honnête ; prix, source_url et taxes à null tant que tu
+   n'as pas cherché le prix ; source_url = l'adresse exacte de la page où
+   tu as vu le prix ; prix_note = une courte précision sur ce prix (« à
+   partir de », date différente…) ou null ; note, avis et avis_url = note
+   TripAdvisor, nombre d'avis et page où tu les as vus, sinon null ;
+   adresse seulement si tu l'as vue dans tes sources ; taxes "incluses" ou
+   "en sus" ; montants en dollars sans symbole)
 <questions>[{{"q": "Budget total pour 2, vols compris ?",
 "options": ["3 500 – 5 000 $", "5 000 – 7 000 $", "7 000 – 10 000 $", "10 000 $ et plus"]}},
 {{"q": "Quel type de séjour ?", "options": ["Tout inclus avec excellente bouffe",
@@ -183,7 +198,8 @@ après, jamais mentionnés dans ton texte :
    (2 ou 3 raffinements rédigés comme SA demande, moins de 40 caractères)
 
 Style : français québécois chaleureux, tu tutoies, riche mais lisible :
-phrases courtes, sections, listes avec « - » quand ça aide. **Gras** pour
+phrases courtes, sections, listes avec « - » quand ça aide. Varie ton
+écriture : pas la même structure de phrase d'une section à l'autre. **Gras** pour
 les titres de section et les noms. Pas de titres avec #, pas de tableaux,
 pas de séparateurs ---, pas de liens dans le texte. Deux ou trois emojis
 au maximum.
@@ -443,8 +459,7 @@ def destinations_html(dests) -> str:
         rows = "".join(f"<div class='dc-row'><span>{k}</span>{escape(v)}</div>" for k, v in (
             ("Idéal pour", d.get("ideal_pour")), ("À tes dates", d.get("moment")),
             ("Bémol", d.get("bemol"))) if v)
-        guide = (f"<a class='dc-guide' href=\"{escape(d['guide'])}\" target='_blank' rel='noopener'>"
-                 "Notre guide →</a>") if d.get("guide") else ""
+        guide = ""
         if d.get("page_url"):
             guide += (f"<a class='dc-guide' href=\"{escape(d['page_url'])}\" target='_blank' "
                       f"rel='noopener nofollow'>Voir sur {escape(d.get('photo_from') or 'le site')} ↗</a>")
@@ -487,17 +502,61 @@ _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
 
 
 class _OgParser(HTMLParser):
+    """Share image + the page's own photo list (JSON-LD "image"), the way a
+    link preview reads a page. Nothing is stored beyond the URLs."""
     def __init__(self):
         super().__init__()
         self.image = ""
+        self.ld: list = []
+        self._in_ld = False
 
     def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == "script" and (a.get("type") or "").lower() == "application/ld+json":
+            self._in_ld = True
+            self.ld.append("")
+            return
         if tag != "meta" or self.image:
             return
-        a = dict(attrs)
         key = (a.get("property") or a.get("name") or "").lower()
         if key in ("og:image", "og:image:secure_url", "twitter:image") and a.get("content"):
             self.image = a["content"].strip()
+
+    def handle_endtag(self, tag):
+        if tag == "script":
+            self._in_ld = False
+
+    def handle_data(self, data):
+        if self._in_ld and self.ld:
+            self.ld[-1] += data
+
+
+def _ld_images(chunks: list) -> list:
+    out = []
+
+    def walk(x):
+        if isinstance(x, dict):
+            img = x.get("image") or x.get("photo")
+            for v in (img if isinstance(img, list) else [img]):
+                if isinstance(v, str):
+                    out.append(v)
+                elif isinstance(v, dict) and isinstance(v.get("url") or v.get("contentUrl"), str):
+                    out.append(v.get("url") or v.get("contentUrl"))
+            for v in x.values():
+                if isinstance(v, (dict, list)):
+                    walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+    for c in chunks:
+        try:
+            walk(json.loads(c))
+        except ValueError:
+            continue
+    return out
+
+
+_GALLERY: dict = {}             # page url -> [image urls] (process-wide)
 
 
 def _allowed_domain(url: str) -> bool:
@@ -544,10 +603,16 @@ def page_preview(url: str):
         with urllib.request.urlopen(req, timeout=3) as r:
             if "html" in (r.headers.get("Content-Type") or ""):
                 p = _OgParser()
-                p.feed(r.read(600_000).decode("utf-8", "ignore"))
+                p.feed(r.read(900_000).decode("utf-8", "ignore"))
                 cand = urljoin(url, p.image) if p.image else ""
                 if cand.startswith("https://"):
                     img = cand
+                pics = [img] if img else []
+                for u in _ld_images(p.ld):
+                    u = urljoin(url, u.strip())
+                    if u.startswith("https://") and u not in pics:
+                        pics.append(u)
+                _GALLERY[url] = pics[:8]
     except urllib.error.HTTPError as exc:
         dead = exc.code in (404, 410)
         if not dead:            # 403/5xx: site blocks bots or is down — link may still work
@@ -556,8 +621,19 @@ def page_preview(url: str):
         log.info("preview unavailable for %s: %s", url, exc)
     if len(_OG_CACHE) > 500:
         _OG_CACHE.clear()
+        _GALLERY.clear()
     _OG_CACHE[url] = (img, dead)
     return img, dead
+
+
+def page_gallery(url: str) -> list:
+    """Photos a page shows of itself (share image + JSON-LD images), live URLs."""
+    if url not in _OG_CACHE:
+        page_preview(url)
+    if url in _GALLERY:
+        return _GALLERY[url]
+    img = _OG_CACHE.get(url, ("", False))[0]
+    return [img] if img else []
 
 
 def _money(v) -> str:
@@ -570,8 +646,12 @@ def _money(v) -> str:
     return f"{n:,.0f}".replace(",", "\u202f") + "\u00a0$"
 
 
+def _txt(v, n: int) -> str:
+    return re.sub(r"\s+", " ", str(v or "")).strip()[:n]
+
+
 def parse_pistes(raw: str, sources: list) -> list:
-    """Validate the model's <pistes> JSON into clean card dicts (max 3)."""
+    """Validate the model's <pistes> JSON into clean hotel card dicts (max 5)."""
     try:
         data = json.loads(raw)
     except (ValueError, TypeError):
@@ -583,9 +663,16 @@ def parse_pistes(raw: str, sources: list) -> list:
             continue
         url = _clean_url(d.get("source_url"), known)
         fiche = _clean_url(d.get("fiche_url"), known, WHOLESALERS)
+        fiches = []
+        for f in (d.get("fiches") or []) if isinstance(d.get("fiches"), list) else []:
+            f = _clean_url(f, known, WHOLESALERS)
+            if f and f != fiche and f not in fiches:
+                fiches.append(f)
+        avis_url = _clean_url(d.get("avis_url"), known, ("tripadvisor.ca", "tripadvisor.com", "tripadvisor.fr"))
+        ta_seen = bool(avis_url) or any("tripadvisor" in k for k in known)
         try:                       # a rating counts only if TripAdvisor was actually consulted
             note = float(d.get("note")) if d.get("note") not in (None, "") else None
-            note = note if note and 0 < note <= 5 and any("tripadvisor" in k for k in known) else None
+            note = note if note and 0 < note <= 5 and ta_seen else None
         except (TypeError, ValueError):
             note = None
         try:
@@ -596,115 +683,188 @@ def parse_pistes(raw: str, sources: list) -> list:
             nuits = int(d.get("nuits")) if d.get("nuits") not in (None, "") else None
         except (TypeError, ValueError):
             nuits = None
+        pts = d.get("points_forts") if isinstance(d.get("points_forts"), list) else []
         cards.append({
-            "hotel": str(d.get("hotel"))[:90],
-            "destination": str(d.get("destination") or "")[:80],
-            "depart": str(d.get("depart") or "")[:40],
+            "hotel": _txt(d.get("hotel"), 90),
+            "destination": _txt(d.get("destination"), 80),
+            "titre": _txt(d.get("titre"), 60),
+            "type": _txt(d.get("type"), 70),
+            "resume": _txt(d.get("resume"), 360),
+            "points_forts": [_txt(p, 70) for p in pts if _txt(p, 70)][:3],
+            "bemol": _txt(d.get("bemol"), 140),
+            "depart": _txt(d.get("depart"), 40),
             "nuits": nuits,
             "prix_personne": d.get("prix_personne"),
             "total": d.get("total"),
-            "voyageurs": str(d.get("voyageurs") or "")[:40],
+            "voyageurs": _txt(d.get("voyageurs"), 40),
             "taxes": d.get("taxes") if d.get("taxes") in ("incluses", "en sus") else None,
+            "prix_note": _txt(d.get("prix_note"), 140),
             "source_url": url,
             "fiche_url": fiche,
+            "fiches": fiches[:3],
+            "avis_url": avis_url,
             "note": note, "avis": avis,
-            "a_confirmer": str(d.get("a_confirmer") or "")[:120],
+            "adresse": _txt(d.get("adresse"), 120),
+            "a_confirmer": _txt(d.get("a_confirmer"), 120),
         })
-        if len(cards) == 4:
+        if len(cards) == 5:
             break
     return cards
 
 
-def add_images(cards: list) -> list:
-    """Real hotel photos, never copied: the share image of the hotel's page at
-    a Canadian wholesaler, displayed live from their site (like a link
-    preview). Falls back to the price page's image, else no photo. Dead
-    links (404/410) are dropped so a member never lands on an error page."""
-    urls = list({u for c in cards for u in (c.get("fiche_url"), c.get("source_url")) if u})
+def _card_urls(c: dict) -> list:
+    return [u for u in dict.fromkeys([c.get("fiche_url"), *c.get("fiches", []),
+                                      c.get("source_url"), c.get("avis_url")]) if u]
+
+
+def add_images(cards: list, titles: dict | None = None) -> list:
+    """Real hotel photos, never copied: what the hotel's pages at Canadian
+    wholesalers show (share image + their own photo list), displayed live
+    from their sites with attribution. Dead links (404/410) are dropped.
+    Also builds each card's source list (for the source pill)."""
+    titles = titles or {}
+    urls = list({u for c in cards for u in _card_urls(c)})
     previews = {}
     if urls:
-        with ThreadPoolExecutor(max_workers=6) as ex:
+        with ThreadPoolExecutor(max_workers=8) as ex:
             previews = dict(zip(urls, ex.map(page_preview, urls)))
     for c in cards:
-        for key in ("fiche_url", "source_url"):
+        for key in ("fiche_url", "source_url", "avis_url"):
             if c.get(key) and previews.get(c[key], ("", False))[1]:
                 log.info("assistant: dead link removed from card: %s", c[key])
                 c[key] = ""
-        img = ""
-        for key in ("fiche_url", "source_url"):
-            if c.get(key) and _on(c[key], WHOLESALERS):
-                img = previews.get(c[key], ("", False))[0]
-                if img:
-                    c["image_from"] = (urlparse(c[key]).hostname or "").removeprefix("www.")
-                    break
-        c["image"] = img
+        c["fiches"] = [f for f in c.get("fiches", []) if not previews.get(f, ("", False))[1]]
+        gallery, seen = [], set()
+        for u in _card_urls(c):
+            if not _on(u, WHOLESALERS):
+                continue
+            pics = page_gallery(u) or ([previews[u][0]] if previews.get(u, ("", False))[0] else [])
+            for p in pics:
+                if p not in seen:
+                    seen.add(p)
+                    gallery.append({"src": p, "host": _host(u), "page": u})
+        c["gallery"] = gallery[:10]
+        c["image"] = gallery[0]["src"] if gallery else ""
+        c["image_from"] = gallery[0]["host"] if gallery else ""
+        c["sources"] = [{"url": u, "host": _host(u), "title": titles.get(u, ""),
+                         "image": previews.get(u, ("", False))[0], "snippet": ""}
+                        for u in _card_urls(c)]
     return cards
 
 
+def _price_line(c: dict) -> str:
+    pp, tot = _money(c.get("prix_personne")), _money(c.get("total"))
+    if not (pp or tot):
+        return ""
+    bits = []
+    if pp:
+        bits.append(f"{pp}/personne")
+    if tot:
+        bits.append(f"soit {tot}" + (f" pour {escape(c['voyageurs'])}" if c.get("voyageurs") else ""))
+    when = ", ".join(x for x in (escape(c.get("depart") or ""),
+                                 f"{c['nuits']} nuits" if c.get("nuits") else "") if x)
+    tax = {"incluses": "taxes comprises", "en sus": "taxes en sus"}.get(c.get("taxes"), "")
+    tail = " · ".join(x for x in (when, tax) if x)
+    note = f" {escape(c['prix_note'])}" if c.get("prix_note") else ""
+    return (f"<div class='hc-price'><b>Tarif repéré :</b> {', '.join(bits)}"
+            f"{(' (' + tail + ')') if tail else ''}.{note}</div>")
+
+
+def _rating(c: dict) -> str:
+    if not c.get("note"):
+        return ""
+    rv = c.get("avis")
+    return (f"★ {str(c['note']).replace('.', ',')}"
+            + (f" · {rv:,} avis".replace(",", " ") if rv else "") + " TripAdvisor")
+
+
+def hotel_detail_html(c: dict) -> str:
+    """Side panel (desktop) / sheet (mobile) for one hotel, chatgpt.com style."""
+    pics = "".join(
+        f"<figure class='hd-shot'><img src=\"{escape(g['src'])}\" alt='' loading='lazy' "
+        "referrerpolicy='no-referrer' onerror=\"this.parentNode.remove()\">"
+        f"<figcaption>Photo : {escape(g['host'])}</figcaption></figure>"
+        for g in c.get("gallery") or [])
+    gal = (f"<div class='hd-gal'>{pics}</div>" if pics
+           else "<div class='hd-gal hd-nogal'>Photos sur la fiche du grossiste</div>")
+    meta = " · ".join(escape(x) for x in (_rating(c), c.get("type")) if x)
+    maps = ("https://www.google.com/maps/search/?api=1&query="
+            + quote_plus(f"{c['hotel']} {c.get('destination') or ''}"))
+    fiche = c.get("fiche_url") or (c.get("fiches") or [""])[0]
+    btns = (f"<a class='hd-b hd-main' href='{SEARCH_URL}'>Voir les prix avec mon rabais</a>"
+            f"<a class='hd-b' href=\"{escape(maps)}\" target='_blank' rel='noopener'>Itinéraire</a>"
+            + (f"<a class='hd-b' href=\"{escape(fiche)}\" target='_blank' rel='noopener nofollow'>"
+               f"Fiche {escape(_host(fiche))} ↗</a>" if fiche else ""))
+    rows = ""
+    if c.get("adresse"):
+        rows += f"<div class='hd-row'><span>📍</span>{escape(c['adresse'])}</div>"
+    elif c.get("destination"):
+        rows += f"<div class='hd-row'><span>📍</span>{escape(c['destination'])}</div>"
+    if c.get("depart") or c.get("nuits"):
+        rows += ("<div class='hd-row'><span>🗓️</span>" + escape(", ".join(x for x in (
+            c.get("depart") or "", f"{c['nuits']} nuits" if c.get("nuits") else "") if x)) + "</div>")
+    desc = f"<p>{escape(c['resume'])}</p>" if c.get("resume") else ""
+    if c.get("points_forts"):
+        desc += "<ul>" + "".join(f"<li>{escape(p)}</li>" for p in c["points_forts"]) + "</ul>"
+    if c.get("bemol"):
+        desc += f"<p class='hd-bemol'><b>Bémol :</b> {escape(c['bemol'])}</p>"
+    price = _price_line(c)
+    conf = (f"<p class='hd-conf'>À confirmer : {escape(c['a_confirmer'])}</p>"
+            if c.get("a_confirmer") else "")
+    srcs = "".join(f"<a href=\"{escape(x['url'])}\" target='_blank' rel='noopener nofollow'>"
+                   f"{escape(x['host'])}</a>" for x in c.get("sources") or [])
+    return (f"<div class='hd'>{gal}<div class='hd-body'>"
+            f"<h3 class='hd-name'>{escape(c['hotel'])}</h3>"
+            + (f"<div class='hd-meta'>{meta}</div>" if meta else "")
+            + f"<div class='hd-btns'>{btns}</div>{rows}"
+            + f"<div class='hd-desc'>{desc}{price}{conf}</div>"
+            + (f"<div class='hd-srcs'><span>Sources</span>{srcs}</div>" if srcs else "")
+            + "<p class='hd-note'>Photos et infos affichées en direct depuis les sites cités. "
+              "Prix publics à titre indicatif : ton Rabais Récompense s’applique dans notre moteur.</p>"
+            + "</div></div>")
+
+
 def cards_html(cards) -> str:
+    """Hotel recommendations as a numbered, structured list (chatgpt.com
+    style): photo, name, angle, summary, price seen, source pill. Clicking a
+    hotel opens its detail panel."""
     if not cards:
         return ""
     out = []
-    for c in cards:
-        url = c.get("source_url") or ""
-        fiche = c.get("fiche_url") or url
-        host = (urlparse(url).hostname or "").removeprefix("www.") if url else ""
-        name = escape(c["hotel"])
-        title = (f"<a class='pc-name' href=\"{escape(fiche)}\" target='_blank' "
-                 f"rel='noopener nofollow'>{name}</a>") if fiche else f"<span class='pc-name'>{name}</span>"
-        sub = " — ".join(x for x in (
-            escape(c.get("destination") or ""),
-            escape(", ".join(x for x in (
-                f"départ {c['depart']}" if c.get("depart") else "",
-                f"{c['nuits']} nuits" if c.get("nuits") else "") if x))) if x)
-        pp, tot = _money(c.get("prix_personne")), _money(c.get("total"))
-        price = f"<div class='pc-price'>{pp}<span>/personne</span></div>" if pp else ""
-        tail = ", ".join(x for x in (
-            f"taxes {'comprises' if c['taxes'] == 'incluses' else 'en sus'}" if c.get("taxes") else "",
-            "prix affiché") if x)
-        total = (f"<div class='pc-total'><b>{tot}{(' pour ' + escape(c['voyageurs'])) if c.get('voyageurs') else ''}</b>"
-                 f", {tail}.</div>") if tot else ""
-        chips = []
-        if c.get("fiche_url"):
-            fh = (urlparse(c["fiche_url"]).hostname or "").removeprefix("www.")
-            chips.append(f"<a class='pc-src' href=\"{escape(c['fiche_url'])}\" target='_blank' "
-                         f"rel='noopener nofollow'>Fiche {escape(fh)}</a>")
-        if host and url != c.get("fiche_url"):
-            chips.append(f"<a class='pc-src' href=\"{escape(url)}\" target='_blank' "
-                         f"rel='noopener nofollow'>Prix vu sur {escape(host)}</a>")
-        chip = "".join(chips)
-        rate = ""
-        if c.get("note"):
-            rv = c.get("avis")
-            rate = (f"<div class='pc-rate'>★ {str(c['note']).replace('.', ',')}/5 TripAdvisor"
-                    + (f" · {rv:,} avis".replace(",", "\u202f") if rv else "") + "</div>")
-        conf = (f"<div class='pc-conf'>À confirmer : {escape(c['a_confirmer'])}</div>"
-                if c.get("a_confirmer") else "")
+    for i, c in enumerate(cards, 1):
         img = c.get("image") or ""
-        pic = (f"<figure class='pc-fig'><img class='pc-img' src=\"{escape(img)}\" alt='' loading='lazy' "
-               "referrerpolicy='no-referrer' onerror=\"this.parentNode.remove()\">"
-               f"<figcaption>{escape(c.get('image_from') or '')}</figcaption></figure>") if img else ""
-        out.append(f"<div class='pcard{'' if pic else ' noimg'}'>{pic}<div class='pc-body'>"
-                   f"{title}<div class='pc-sub'>{sub}</div>{rate}{price}{total}"
-                   f"<div class='pc-foot'>{chip}<a class='pc-go' href='{SEARCH_URL}'>"
-                   f"Voir dans notre moteur →</a></div>{conf}</div></div>")
-    priced = any(_money(c.get("prix_personne")) or _money(c.get("total")) for c in cards)
-    head = (("Meilleure piste trouvée" if len(cards) == 1 else "Pistes trouvées") if priced
-            else "Hôtels à regarder")
+        pic = (f"<button type='button' class='hc-pic hc-open' aria-label='Voir {escape(c['hotel'])}'>"
+               f"<img src=\"{escape(img)}\" alt='' loading='lazy' referrerpolicy='no-referrer' "
+               "onerror=\"this.parentNode.classList.add('hc-nopic');this.remove()\">"
+               + (f"<span class='hc-n'>+{len(c['gallery']) - 1}</span>" if len(c.get("gallery") or []) > 1 else "")
+               + "</button>") if img else \
+              "<button type='button' class='hc-pic hc-nopic hc-open' aria-label='Voir'>🏝️</button>"
+        sub = escape(c.get("titre") or c.get("type") or c.get("destination") or "")
+        loc = " · ".join(escape(x) for x in (c.get("destination"), _rating(c)) if x)
+        pill = cite_html(list(range(len(c.get("sources") or []))), c.get("sources") or [])
+        conf = (f"<div class='hc-conf'>À confirmer : {escape(c['a_confirmer'])}</div>"
+                if c.get("a_confirmer") else "")
+        out.append(
+            f"<div class='hcard'>{pic}<div class='hc-body'>"
+            f"<button type='button' class='hc-name hc-open'>{i}. {escape(c['hotel'])}</button>"
+            + (f"<div class='hc-sub'>{sub}</div>" if sub else "")
+            + (f"<div class='hc-loc'>{loc}</div>" if loc else "")
+            + (f"<div class='hc-desc'>{escape(c['resume'])}</div>" if c.get("resume") else "")
+            + _price_line(c) + conf
+            + f"<div class='hc-foot'>{pill}<a class='hc-go' href='{SEARCH_URL}'>Voir les prix →</a></div>"
+            + f"</div><template class='hc-detail'>{hotel_detail_html(c)}</template></div>")
     cmp_btn = cmp = ""
     if len(cards) >= 2:
         def cell(v):
             return f"<td>{v or '—'}</td>"
         rows = [
-            ("Destination", [escape(c.get("destination") or "") for c in cards]),
+            ("Pour qui", [escape(c.get("titre") or "") for c in cards]),
+            ("Type", [escape(c.get("type") or "") for c in cards]),
             ("TripAdvisor", [f"{str(c['note']).replace('.', ',')}/5" if c.get("note") else ""
                              for c in cards]),
-            ("Départ", [escape(c.get("depart") or "") for c in cards]),
-            ("Nuits", [str(c["nuits"]) if c.get("nuits") else "" for c in cards]),
             ("Prix / pers.", [_money(c.get("prix_personne")) for c in cards]),
             ("Total", [_money(c.get("total")) for c in cards]),
-            ("Taxes", [{"incluses": "comprises", "en sus": "en sus"}.get(c.get("taxes"), "") for c in cards]),
-            ("À confirmer", [escape(c.get("a_confirmer") or "") for c in cards]),
+            ("Bémol", [escape(c.get("bemol") or "") for c in cards]),
         ]
         thead = "".join(f"<th>{escape(c['hotel'])}</th>" for c in cards)
         tbody = "".join(f"<tr><th>{k}</th>{''.join(cell(v) for v in vals)}</tr>"
@@ -712,7 +872,7 @@ def cards_html(cards) -> str:
         cmp_btn = "<button type='button' class='pc-cmpbtn'>Comparer</button>"
         cmp = (f"<div class='pc-cmp' hidden><table><thead><tr><th></th>{thead}</tr></thead>"
                f"<tbody>{tbody}</tbody></table></div>")
-    return (f"<div class='pcards'><div class='pc-head'><span>{head}</span>{cmp_btn}</div>"
+    return (f"<div class='pcards hlist'><div class='pc-head'><span>Hôtels à regarder</span>{cmp_btn}</div>"
             f"{cmp}{''.join(out)}</div>")
 
 
@@ -760,7 +920,7 @@ def _bubble(m: dict, last: bool = False) -> str:
     body, tail = _fill_slots(render_md(m.get("marked") or m.get("text", ""), m.get("sources")),
                              destinations_html(m.get("destinations")),
                              cards_html(m.get("cards")))
-    return (f"<div class='msg ai'><div>{body}</div>{tail}{guides_html(m.get('guides'))}"
+    return (f"<div class='msg ai'><div>{body}</div>{tail}"
             f"{_sources_html(m.get('sources'))}{rate_html(m.get('id', ''), m.get('rating', 0))}"
             f"{questions_html(m.get('questions')) if last else ''}</div>")
 
@@ -804,6 +964,11 @@ def assistant_panel(client) -> str:
       ton Rabais Récompense s’applique dans notre moteur.</div>
   </div>
 </div>
+<div class='hp-ov' id='hpOv' hidden></div>
+<aside class='hpanel' id='hPanel' hidden aria-label='Fiche de l’hôtel'>
+  <div class='hp-top'><button type='button' class='hp-x' id='hpX' aria-label='Fermer'>✕</button></div>
+  <div id='hpBody'></div>
+</aside>
 <script>
 (function(){{
  var box=document.getElementById('aBox'),log=document.getElementById('aLog'),f=document.getElementById('aForm'),
@@ -881,7 +1046,24 @@ def assistant_panel(client) -> str:
  log.addEventListener('focusin',function(e){{var c=e.target.closest('.cite');if(c)place(c);}});
  document.addEventListener('click',function(e){{
    document.querySelectorAll('.cite.open').forEach(function(x){{if(!x.contains(e.target))x.classList.remove('open');}});}});
+ var hp=document.getElementById('hPanel'),hpb=document.getElementById('hpBody'),hov=document.getElementById('hpOv');
+ function closeHotel(){{hp.hidden=true;hov.hidden=true;document.body.classList.remove('has-panel');
+   log.querySelectorAll('.hcard.on').forEach(function(x){{x.classList.remove('on');}});}}
+ function openHotel(card){{var t=card.querySelector('template.hc-detail');if(!t)return;
+   log.querySelectorAll('.hcard.on').forEach(function(x){{x.classList.remove('on');}});card.classList.add('on');
+   hpb.innerHTML=t.innerHTML;hp.hidden=false;hov.hidden=false;document.body.classList.add('has-panel');
+   hp.scrollTop=0;var g=hpb.querySelector('.hd-gal');
+   if(g&&g.querySelectorAll('.hd-shot').length>1){{
+     ['‹','›'].forEach(function(ch,i){{var b=document.createElement('button');b.type='button';
+       b.className='hd-arr '+(i?'nx':'pv');b.textContent=ch;b.setAttribute('aria-label',i?'Photo suivante':'Photo précédente');
+       b.onclick=function(){{g.scrollBy({{left:(i?1:-1)*g.clientWidth,behavior:'smooth'}});}};
+       g.parentNode.insertBefore(b,g.nextSibling);}});}}
+   document.getElementById('hpX').focus();}}
+ document.getElementById('hpX').addEventListener('click',closeHotel);
+ hov.addEventListener('click',closeHotel);
+ document.addEventListener('keydown',function(e){{if(e.key==='Escape'&&!hp.hidden)closeHotel();}});
  log.addEventListener('click',function(e){{
+   var ho=e.target.closest('.hc-open');if(ho){{openHotel(ho.closest('.hcard'));return;}}
    var ca=e.target.closest('.cite-a');
    if(ca&&touch&&!ca.parentNode.classList.contains('open')){{e.preventDefault();place(ca.parentNode);
      ca.parentNode.classList.add('open');return;}}
@@ -909,7 +1091,7 @@ def assistant_panel(client) -> str:
  }});
  if(hum)hum.addEventListener('click',function(){{
    var me=[].slice.call(log.querySelectorAll('.msg.me')).slice(-3).map(function(x){{return '- '+x.textContent;}});
-   var pc=[].slice.call(log.querySelectorAll('.pc-name')).slice(-3).map(function(x){{return x.textContent;}});
+   var pc=[].slice.call(log.querySelectorAll('.pc-name,.hc-name')).slice(-3).map(function(x){{return x.textContent;}});
    var txt='Bonjour! Je viens de l’assistant voyage de mon espace client.'+
      (me.length?'\\nMa demande :\\n'+me.join('\\n'):'')+(pc.length?'\\nPistes vues : '+pc.join(', '):'');
    var w=window.open(MSGR,'_blank');if(w)try{{w.opener=null;}}catch(e){{}}
@@ -1098,7 +1280,7 @@ def _history_msgs(history: list, q: str) -> list:
         extra = ""
         for key, tag in (("destinations", "destinations"), ("cards", "pistes"), ("questions", "questions")):
             if m.get(key):
-                data = [{k: v for k, v in x.items() if k in ("nom", "hotel", "destination", "prix_personne",
+                data = [{k: v for k, v in x.items() if k in ("nom", "hotel", "destination", "prix_personne", "titre",
                                                                 "total", "q", "options", "depart", "nuits")}
                         for x in m[key]]
                 extra += f"\n<{tag}>" + json.dumps(data, ensure_ascii=False) + f"</{tag}>"
@@ -1208,12 +1390,9 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
     cards = parse_pistes(m.group(1).strip(), sources) if m else []
     if cards:
         yield _ev("status", "📸 Je prépare les fiches…")
-        cards = add_images(cards)
+        cards = add_images(cards, {x["url"]: x.get("title", "") for x in sources})
         yield _ev("cards", cards_html(cards))
-    guides = kb.related_links(" ".join([q, answer] + [c["hotel"] + " " + c.get("destination", "")
-                                                      for c in cards]))
-    if guides:
-        yield _ev("guides", guides_html(guides))
+    guides = []                       # our own pages are not shown in answers anymore
     if sources:
         yield _ev("sources", sources)
     sm = _SUIVIS_RE.search(full)

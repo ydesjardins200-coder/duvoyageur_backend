@@ -2270,6 +2270,74 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .cp-title{{font-size:13.5px;line-height:1.3;color:var(--foam);font-weight:600}}
  .cp-snip{{font-size:12.5px;line-height:1.4;color:var(--mist);display:-webkit-box;-webkit-line-clamp:3;
    -webkit-box-orient:vertical;overflow:hidden}}
+
+ /* Hotel list (chatgpt.com style) */
+ .hlist .pc-head{{margin-bottom:4px}}
+ .hcard{{display:flex;gap:16px;padding:16px 0;border-bottom:1px solid var(--line);white-space:normal}}
+ .hcard:last-child{{border-bottom:0}}
+ .hcard.on .hc-name{{color:var(--pacific)}}
+ .hc-pic{{flex:none;width:168px;height:128px;border-radius:14px;overflow:hidden;padding:0;border:0;cursor:pointer;
+   position:relative;background:rgba(155,246,236,.06)}}
+ .hc-pic img{{width:100%;height:100%;object-fit:cover;display:block;transition:transform .25s}}
+ .hc-pic:hover img{{transform:scale(1.04)}}
+ .hc-nopic{{display:flex;align-items:center;justify-content:center;font-size:34px;
+   background:linear-gradient(135deg,rgba(25,211,230,.18),rgba(61,240,197,.08))}}
+ .hc-n{{position:absolute;right:6px;bottom:6px;font-size:11px;font-weight:600;color:#fff;background:rgba(3,18,27,.72);
+   padding:2px 7px;border-radius:999px}}
+ .hc-body{{min-width:0;flex:1;display:flex;flex-direction:column;gap:4px}}
+ .hc-name{{all:unset;cursor:pointer;font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:18px;
+   color:var(--foam);text-decoration:underline;text-decoration-color:rgba(155,246,236,.3);text-underline-offset:4px}}
+ .hc-name:hover{{text-decoration-color:var(--pacific)}}
+ .hc-name:focus-visible{{outline:2px solid var(--pacific);border-radius:4px}}
+ .hc-sub{{font-size:13px;font-weight:600;color:var(--surf)}}
+ .hc-loc{{font-size:12.5px;color:var(--mist)}}
+ .hc-desc{{font-size:14.5px;line-height:1.55;color:var(--foam);margin-top:2px}}
+ .hc-price{{font-size:14px;line-height:1.5;margin-top:2px}}
+ .hc-price b{{color:var(--lagoon)}}
+ .hc-conf{{font-size:12.5px;color:var(--gold)}}
+ .hc-foot{{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px}}
+ .hc-go{{font-size:12.5px;font-weight:600;color:var(--pacific);text-decoration:none}}
+ @media(max-width:560px){{.hcard{{flex-direction:column;gap:10px}}.hc-pic{{width:100%;height:190px}}}}
+ /* Hotel detail panel */
+ .hpanel{{position:fixed;top:0;right:0;bottom:0;width:min(440px,100vw);z-index:40;overflow-y:auto;
+   background:#071e2a;border-left:1px solid var(--line);box-shadow:-24px 0 60px -20px rgba(0,0,0,.8);white-space:normal}}
+ .hpanel[hidden],.hp-ov[hidden]{{display:none}}
+ .hp-top{{position:sticky;top:0;z-index:3;height:0}}
+ .hp-x{{position:absolute;top:12px;right:12px;width:36px;height:36px;border-radius:50%;border:0;cursor:pointer;
+   background:rgba(3,18,27,.75);color:#fff;font-size:15px}}
+ .hp-ov{{position:fixed;inset:0;z-index:39;background:rgba(2,12,18,.55)}}
+ @media(min-width:1180px){{.hp-ov{{display:none}}body.has-panel.chatpage .wrap{{margin-right:460px;margin-left:max(20px,calc((100vw - 460px - 820px)/2))}}}}
+ .hd{{position:relative}}
+ .hd-gal{{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;height:280px;scrollbar-width:none;background:rgba(155,246,236,.05)}}
+ .hd-gal::-webkit-scrollbar{{display:none}}
+ .hd-nogal{{align-items:center;justify-content:center;color:var(--mist);font-size:13px;height:120px}}
+ .hd-shot{{flex:none;width:100%;height:100%;margin:0;scroll-snap-align:start;position:relative}}
+ .hd-shot img{{width:100%;height:100%;object-fit:cover;display:block}}
+ .hd-shot figcaption{{position:absolute;left:10px;bottom:10px;font-size:11px;color:#fff;background:rgba(3,18,27,.72);
+   padding:3px 8px;border-radius:999px}}
+ .hd-arr{{position:absolute;top:122px;width:34px;height:34px;border-radius:50%;border:0;cursor:pointer;
+   background:rgba(255,255,255,.88);color:#03121b;font-size:22px;line-height:1}}
+ .hd-arr.pv{{left:10px}}.hd-arr.nx{{right:10px}}
+ .hd-body{{padding:18px 20px 28px;display:flex;flex-direction:column;gap:12px}}
+ .hd-name{{margin:0;font-size:26px;font-weight:800}}
+ .hd-meta{{font-size:14px;color:var(--mist);margin-top:-6px}}
+ .hd-btns{{display:flex;flex-wrap:wrap;gap:8px}}
+ .hd-b{{font-size:14px;font-weight:600;text-decoration:none;color:var(--foam);border:1px solid var(--line);
+   border-radius:999px;padding:9px 16px}}
+ .hd-b:hover{{border-color:var(--pacific)}}
+ .hd-main{{color:#03121b;border:0;background:linear-gradient(120deg,var(--pacific),var(--lagoon))}}
+ .hd-row{{display:flex;gap:10px;font-size:14px;padding:10px 0;border-top:1px solid var(--line)}}
+ .hd-row+.hd-row{{margin-top:-12px}}
+ .hd-desc{{font-size:15px;line-height:1.6;border-top:1px solid var(--line);padding-top:12px}}
+ .hd-desc p{{margin:0 0 10px}}.hd-desc ul{{margin:0 0 10px;padding-left:20px}}
+ .hd-bemol b{{color:var(--gold)}}
+ .hd-conf{{color:var(--gold);font-size:13px}}
+ .hd-srcs{{display:flex;flex-wrap:wrap;gap:6px;align-items:center}}
+ .hd-srcs span{{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--mist);font-family:"Space Grotesk",monospace}}
+ .hd-srcs a{{font-size:12px;color:var(--pacific);text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:3px 9px}}
+ .hd-note{{font-size:11.5px;color:var(--mist);margin:0}}
+ @media(max-width:640px){{.hpanel{{top:auto;height:92vh;width:100vw;border-left:0;border-radius:20px 20px 0 0}}
+   .hd-gal{{height:240px}}.hd-arr{{top:102px}}}}
 </style></head><body class="pg{page}">
  <div class="top">
    <div class="brand"><img src="/static/logo.png" alt="Du Voyageur">
