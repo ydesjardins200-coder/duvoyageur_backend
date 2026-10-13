@@ -47,7 +47,7 @@ SUPPORT_STATUSES = ("open", "resolved")
 CASE_KINDS = ("trip", "support")
 
 # Kinds of identifiers we can use to recognize a returning client across channels.
-IDENTITY_KINDS = ("messenger_psid", "email", "phone")
+IDENTITY_KINDS = ("messenger_psid", "email", "phone", "google", "facebook")
 
 # Conversation lane chosen by the customer via the Messenger ice-breaker bubbles.
 #   profiling -> the trip-rebate progressive-profiling bot (default)

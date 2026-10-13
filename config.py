@@ -72,6 +72,17 @@ class Settings:
     # How long a portal session lasts once logged in (default 30 days).
     PORTAL_SESSION_MAX_AGE: int = int(os.getenv("PORTAL_SESSION_MAX_AGE", str(60 * 60 * 24 * 30)))
 
+    # --- Social login for the client portal (OAuth). Each button only shows
+    # once its keys are set. Redirect URIs to register with each provider:
+    #   {PUBLIC_BASE_URL}/portail/auth/google/callback
+    #   {PUBLIC_BASE_URL}/portail/auth/facebook/callback
+    GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
+    GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    # Facebook Login can live on the same Meta app as Messenger: the secret
+    # defaults to FB_APP_SECRET when FB_LOGIN_APP_SECRET isn't set.
+    FB_LOGIN_APP_ID: str = os.getenv("FB_LOGIN_APP_ID", "")
+    FB_LOGIN_APP_SECRET: str = os.getenv("FB_LOGIN_APP_SECRET", "") or os.getenv("FB_APP_SECRET", "")
+
     # --- CORS: the Netlify domain(s) allowed to POST the intake form ---
     # Comma-separated, e.g. "https://duvoyageur.netlify.app,https://duvoyageur.ca"
     ALLOWED_ORIGINS: list[str] = os.getenv("ALLOWED_ORIGINS", "*").split(",")

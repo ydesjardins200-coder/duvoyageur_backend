@@ -144,9 +144,9 @@ def _logged_out(to: str = "/portail/connexion"):
 
 
 def _gate(request: Request):
-    """Guard for KYC-protected tabs. Returns (cid, None) when the visitor is
-    logged in AND has completed their identity; otherwise (None, response) with
-    a redirect to the profile (or a login prompt)."""
+    """Guard for portal tabs. Returns (cid, None) when the visitor is logged in;
+    otherwise (None, response) with a login redirect. There is deliberately NO
+    identity/KYC gate: an incomplete profile only shows a soft banner."""
     cid = current_portal_client_id(request)
     if not cid:
         return None, RedirectResponse("/portail/connexion", status_code=303)
@@ -154,8 +154,6 @@ def _gate(request: Request):
         client = db.get(Client, cid)
         if not client:
             return None, _logged_out()
-        if not kyc_complete(client):
-            return None, RedirectResponse("/portail/profil", status_code=303)
     return cid, None
 
 
@@ -504,11 +502,6 @@ def _identity_card(client) -> str:
         rows.append(("Nom", escape(client.display_name)))
     if client.primary_email:
         rows.append(("Courriel", escape(client.primary_email)))
-    if client.primary_phone:
-        rows.append(("Téléphone", escape(client.primary_phone)))
-    city = (client.kyc or {}).get("city")
-    if city:
-        rows.append(("Ville", escape(str(city))))
     body = "".join(f"<div class='idrow'><span class='ik'>{k}</span><span>{v}</span></div>"
                    for k, v in rows)
     return ("<div class='idcard'>"
@@ -581,28 +574,23 @@ def _notifications_page(items) -> str:
 # --------------------------------------------------------------------------- #
 # Identity / KYC
 # --------------------------------------------------------------------------- #
-# (key, label, input type, required, half-width). email/phone live on the
-# Client; everything else is stored in the `kyc` JSON blob. We never ask for or
-# store passport / travel-document data.
+# (key, label, input type, required, half-width). email lives on the Client;
+# everything else is stored in the `kyc` JSON blob. Signup is deliberately
+# minimal: no phone, no postal address (older values stay in the DB untouched,
+# they are just no longer asked for or shown). We never ask for or store
+# passport / travel-document data.
 _KYC_FIELDS = [
-    ("legal_first_name", "Prénom légal", "text", True, True),
-    ("legal_last_name", "Nom légal", "text", True, True),
-    ("date_of_birth", "Date de naissance", "date", True, True),
-    ("phone", "Téléphone", "tel", True, True),
+    ("legal_first_name", "Prénom", "text", True, True),
+    ("legal_last_name", "Nom de famille", "text", True, True),
     ("email", "Courriel", "email", True, False),
-    ("address", "Adresse", "text", True, False),
-    ("city", "Ville", "text", True, True),
-    ("province", "Province / État", "text", True, True),
-    ("postal_code", "Code postal", "text", True, True),
-    ("country", "Pays", "text", True, True),
+    ("date_of_birth", "Date de naissance", "date", True, True),
 ]
+_IDENTITY_KEYS = ("legal_first_name", "legal_last_name", "email", "date_of_birth")
 
 
 def _kyc_value(client, key):
     if key == "email":
         return client.primary_email
-    if key == "phone":
-        return client.primary_phone
     return (client.kyc or {}).get(key)
 
 
@@ -657,21 +645,13 @@ def _kyc_banner(client) -> str:
     n = len(missing)
     return (
         "<a class='banner' href='/portail/profil'>"
-        "<div class='banner-txt'><b>Complète ton identité</b>"
-        f"<span>{n} champ{'s' if n > 1 else ''} à remplir pour qu'on puisse réserver tes voyages.</span></div>"
+        "<div class='banner-txt'><b>Complète ton profil</b>"
+        f"<span>{n} champ{'s' if n > 1 else ''} à remplir ({escape(', '.join(missing).lower())}).</span></div>"
         "<span class='banner-cta'>Compléter →</span></a>")
 
 
-def _profile_form(client, saved: bool = False, locked: bool = False) -> str:
-    done, total, _missing = kyc_status(client)
-    pct = int(done / total * 100) if total else 100
+def _profile_form(client, saved: bool = False) -> str:
     ok = "<div class='note ok'>Profil enregistré ✓</div>" if saved else ""
-    lock = ("<div class='banner'><div class='banner-txt'>"
-            "<b>🔒 Complète ton identité pour débloquer ton espace</b>"
-            "<span>Tes voyages, demandes et avis s'ouvrent dès que ton identité est complète.</span>"
-            "</div></div>") if locked else ""
-    prog = (f"<div class='prog'><span style='width:{pct}%'></span></div>"
-            f"<p class='lede'>{done}/{total} champs remplis.</p>")
 
     def field(k, label, typ, req, half):
         val = escape(str(_kyc_value(client, k) or ""))
@@ -694,17 +674,13 @@ def _profile_form(client, saved: bool = False, locked: bool = False) -> str:
         return (f"<div class='fset'><h3>{title}{s}</h3>"
                 f"<div class='formgrid'>{fields}</div></div>")
 
-    back = ("" if locked
-            else "<a class='btn ghost' href='/portail'>Retour</a>")
     return (
-        lock + ok + prog
+        ok
         + "<form class='form' method='post' action='/portail/profil'>"
-        + group("Identité", ("legal_first_name", "legal_last_name", "date_of_birth"))
-        + group("Coordonnées", ("phone", "email", "address", "city",
-                                "province", "postal_code", "country"))
+        + group("Identité", _IDENTITY_KEYS)
         + "<div class='actions'>"
           "<button class='btn block' type='submit'>Enregistrer mon profil</button>"
-          + back + "</div></form>")
+          "<a class='btn ghost' href='/portail'>Retour</a></div></form>")
 
 
 # --------------------------------------------------------------------------- #
@@ -1067,9 +1043,7 @@ def portal_home(request: Request, new: int = 0, avis: int = 0):
         if not client:
             return _logged_out()
         cases = list(client.requests)
-        if not kyc_complete(client):
-            return RedirectResponse("/portail/profil", status_code=303)
-        body = _accueil(client, cases, flash=flash)
+        body = _kyc_banner(client) + _accueil(client, cases, flash=flash)
         bell = _bell_panel(client)
     resp = HTMLResponse(_shell("Accueil", body, logged_in=True,
                                nav=_nav("accueil"), bell=bell))
@@ -1106,14 +1080,12 @@ def portal_profile(request: Request, saved: int = 0):
         client = db.get(Client, cid)
         if not client:
             return _logged_out()
-        locked = not kyc_complete(client)
-        lede = ("Bienvenue ! Complète ton identité pour ouvrir ton espace."
-                if locked else "Ces infos nous servent à réserver tes voyages au bon nom.")
+        lede = "Ces infos nous servent à réserver tes voyages au bon nom."
         body = (f"<div class='hello'><h2>Mon profil</h2><p class='lede'>{lede}</p></div>"
-                + _profile_form(client, saved=bool(saved), locked=locked))
+                + _profile_form(client, saved=bool(saved)))
         bell = _bell_panel(client)
     resp = HTMLResponse(_shell("Mon profil", body, logged_in=True,
-                               nav=_nav("profil", locked=locked), bell=bell))
+                               nav=_nav("profil"), bell=bell))
     _set_session_cookie(resp, cid)
     return resp
 
@@ -1135,11 +1107,8 @@ async def portal_profile_save(request: Request):
                     if em:
                         client.primary_email = em
                         replace_primary_identity(db, client, "email", em)
-                elif k == "phone":
-                    ph = normalize_phone(v)
-                    if ph:
-                        client.primary_phone = ph
-                        replace_primary_identity(db, client, "phone", ph)
+                elif k == "date_of_birth" and not v:
+                    continue            # never wipe a stored DOB with a blank form
                 else:
                     kyc[k] = v or None
             client.kyc = kyc
@@ -1580,9 +1549,9 @@ def _login_form(error: str = "") -> str:
     return (
         err
         + "<div class='hello'><h2>Connexion</h2>"
-        "<p class='lede'>Accède à ton espace avec ton courriel et ta date de "
-        "naissance.</p></div>"
-        "<form class='form' method='post' action='/portail/connexion'>"
+        "<p class='lede'>Accède à ton espace en un clic.</p></div>"
+        + _social_buttons()
+        + "<form class='form' method='post' action='/portail/connexion'>"
         "<div class='fset'><div class='formgrid'>"
         "<div class='field'><label>Courriel</label>"
         "<input name='email' type='email' inputmode='email' autocomplete='email' required></div>"
@@ -1630,11 +1599,12 @@ async def portal_login_credentials(request: Request):
 
 
 # --------------------------------------------------------------------------- #
-# Self-service signup (collects the full KYC up front)
+# Self-service signup — minimal: name, email, date of birth (or Google/Facebook)
 # --------------------------------------------------------------------------- #
 _SIGNUP_HITS: dict = {}
 _SIGNUP_WINDOW = 3600           # 1 hour
 _SIGNUP_MAX = 5                 # new accounts per hour per IP
+SOCIAL_KINDS = ("google", "facebook")
 
 
 def _signup_ok(ip: str) -> bool:
@@ -1648,44 +1618,80 @@ def _signup_hit(ip: str) -> None:
     _SIGNUP_HITS.setdefault(ip, []).append(time.monotonic())
 
 
+_G_ICON = ("<svg width='18' height='18' viewBox='0 0 48 48' aria-hidden='true'>"
+           "<path fill='#FFC107' d='M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z'/>"
+           "<path fill='#FF3D00' d='M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z'/>"
+           "<path fill='#4CAF50' d='M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z'/>"
+           "<path fill='#1976D2' d='M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C36.9 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z'/></svg>")
+_F_ICON = ("<svg width='18' height='18' viewBox='0 0 24 24' aria-hidden='true'>"
+           "<path fill='#fff' d='M24 12.07C24 5.4 18.63 0 12 0S0 5.4 0 12.07C0 18.1 4.39 23.1 10.13 24v-8.44H7.08v-3.49h3.04V9.41c0-3.02 1.79-4.69 4.53-4.69 1.31 0 2.68.24 2.68.24v2.97h-1.51c-1.49 0-1.96.93-1.96 1.89v2.25h3.33l-.53 3.49h-2.8V24C19.61 23.1 24 18.1 24 12.07z'/></svg>")
+
+
+def _social_buttons(verb: str = "Continuer") -> str:
+    """Google / Facebook buttons — each one only appears once its OAuth keys
+    are configured on Railway, so nothing breaks before setup."""
+    btns = []
+    if settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET:
+        btns.append("<a class='sbtn sg' href='/portail/auth/google'>"
+                    f"{_G_ICON}<span>{verb} avec Google</span></a>")
+    if settings.FB_LOGIN_APP_ID and settings.FB_LOGIN_APP_SECRET:
+        btns.append("<a class='sbtn sf' href='/portail/auth/facebook'>"
+                    f"{_F_ICON}<span>{verb} avec Facebook</span></a>")
+    if not btns:
+        return ""
+    return ("<div class='social'>" + "".join(btns) + "</div>"
+            "<div class='orsep'><span>ou avec ton courriel</span></div>")
+
+
 def _signup_form(values=None, error: str = "") -> str:
     values = values or {}
     err = f"<div class='note err'>{escape(error)}</div>" if error else ""
 
     def field(k, label, typ, req, half):
         val = escape(str(values.get(k) or ""))
-        star = " <span class='req'>*</span>" if req else ""
         cls = "field half" if half else "field"
         if k == "date_of_birth":
-            return (f"<div class='{cls}'><label>{label}{star}</label>"
-                    f"{_dob_field(values.get(k) or '')}</div>")
-        return (f"<div class='{cls}'><label>{label}{star}</label>"
-                f"<input name='{k}' type='{typ}' value=\"{val}\" inputmode='"
-                f"{'email' if typ == 'email' else ('tel' if typ == 'tel' else 'text')}'"
-                f"{' required' if req else ''}></div>")
+            return (f"<div class='{cls}'><label>{label}</label>"
+                    f"{_dob_field(values.get(k) or '')}"
+                    "<small class='hint'>Elle te sert à te reconnecter avec ton courriel.</small></div>")
+        auto = {"legal_first_name": "given-name", "legal_last_name": "family-name",
+                "email": "email"}.get(k, "on")
+        return (f"<div class='{cls}'><label>{label}</label>"
+                f"<input name='{k}' type='{typ}' value=\"{val}\" autocomplete='{auto}' "
+                f"inputmode='{'email' if typ == 'email' else 'text'}' required></div>")
 
-    def group(title, keys):
-        fields = "".join(field(*f) for f in _KYC_FIELDS if f[0] in keys)
-        return f"<div class='fset'><h3>{title}</h3><div class='formgrid'>{fields}</div></div>"
-
+    fields = "".join(field(*f) for f in _KYC_FIELDS)
     return (
         err
         + "<div class='hello'><h2>Créer mon compte</h2>"
-        "<p class='lede'>Quelques infos et ton espace est prêt — tu pourras suivre "
+        "<p class='lede'>30 secondes et ton espace est prêt — tu pourras suivre "
         "tes voyages, tes soumissions et tes économies.</p></div>"
-        "<form class='form' method='post' action='/portail/inscription'>"
-        + group("Identité", ("legal_first_name", "legal_last_name", "date_of_birth"))
-        + group("Coordonnées", ("phone", "email", "address", "city",
-                                "province", "postal_code", "country"))
-        + "<div class='actions'>"
-          "<button class='btn block' type='submit'>Créer mon compte</button>"
-          "<a class='btn ghost' href='/portail/connexion'>J'ai déjà un compte</a></div>"
-          "</form>")
+        + _social_buttons()
+        + "<form class='form' method='post' action='/portail/inscription'>"
+        f"<div class='fset'><div class='formgrid'>{fields}</div></div>"
+        "<div class='actions'>"
+        "<button class='btn block' type='submit'>Créer mon compte</button></div>"
+        "</form>"
+        "<p class='muted' style='text-align:center;margin-top:16px'>Déjà un compte ? "
+        "<a href='/portail/connexion'>Connecte-toi</a></p>")
+
+
+def _claimable(db, client) -> bool:
+    """A record found by email may be 'claimed' by a signup only if it is a
+    guest dossier (created by a /demande form or Messenger): no date of birth
+    on file and no Google/Facebook login attached. Otherwise someone could take
+    over a real account just by knowing its email."""
+    if (client.kyc or {}).get("date_of_birth"):
+        return False
+    from db import ClientIdentity
+    return not (db.query(ClientIdentity)
+                .filter(ClientIdentity.client_id == client.id,
+                        ClientIdentity.kind.in_(SOCIAL_KINDS)).first())
 
 
 @router.get("/portail/inscription", response_class=HTMLResponse)
 def portal_signup_page(request: Request, email: str = "", name: str = "",
-                       prenom: str = "", nom: str = "", phone: str = ""):
+                       prenom: str = "", nom: str = ""):
     if current_portal_client_id(request):
         return RedirectResponse("/portail", status_code=303)
     # Prefill from a /demande hand-off (?email=&name=…): a single "name" is split
@@ -1694,7 +1700,7 @@ def portal_signup_page(request: Request, email: str = "", name: str = "",
         parts = name.split()
         prenom = parts[0] if parts else ""
         nom = " ".join(parts[1:]) if len(parts) > 1 else ""
-    values = {"email": email.strip(), "phone": phone.strip(),
+    values = {"email": email.strip(),
               "legal_first_name": prenom.strip(), "legal_last_name": nom.strip()}
     values = {k: v for k, v in values.items() if v}
     return HTMLResponse(_shell("Inscription", _signup_form(values), logged_in=False))
@@ -1710,54 +1716,41 @@ async def portal_signup_save(request: Request):
     values = {k: (form.get(k) or "").strip() for k, *_ in _KYC_FIELDS}
     values["date_of_birth"] = _dob_from_form(form)
     email = normalize_email(values.get("email"))
-    phone = normalize_phone(values.get("phone"))
-    values["email"], values["phone"] = email or "", phone or ""
+    values["email"] = email or ""
 
-    def missing(k):
-        if k == "email":
-            return not email
-        if k == "phone":
-            return not phone
-        return not values.get(k)
-
-    if any(missing(k) for k, _l, _t, req, _h in _KYC_FIELDS if req):
+    if not all(values.get(k) for k in _IDENTITY_KEYS):
         return HTMLResponse(_shell("Inscription", _signup_form(
-            values, "Remplis tous les champs requis."), logged_in=False))
+            values, "Remplis tous les champs."), logged_in=False))
 
     with SessionLocal() as db:
         existing = (db.query(Client).filter(Client.primary_email == email).first()
                     or find_client_by_identity(db, "email", email))
-        # An existing email with a COMPLETED profile is a real account -> log in.
-        if existing and kyc_complete(existing):
+        if existing and not _claimable(db, existing):
             return HTMLResponse(_shell("Inscription", _signup_form(
-                values, "Ce courriel a déjà un compte. Connecte-toi avec ton "
-                "courriel et ta date de naissance."), logged_in=False))
+                values, "Ce courriel a déjà un compte. Connecte-toi plutôt."),
+                logged_in=False))
 
-        kyc = {k: (values.get(k) or None) for k, *_ in _KYC_FIELDS
-               if k not in ("email", "phone")}
-        legal = " ".join(x for x in (kyc.get("legal_first_name"),
-                                     kyc.get("legal_last_name")) if x)
+        legal = " ".join(x for x in (values["legal_first_name"],
+                                     values["legal_last_name"]) if x)
         if existing:
-            # Guest dossier (created by a /demande submission, no KYC yet):
-            # claim it — fill the identity, keep their existing request(s).
+            # Guest dossier: claim it — fill the identity, keep its request(s).
             client = existing
+            kyc = dict(client.kyc or {})
+            kyc.update({k: values[k] for k in _IDENTITY_KEYS if k != "email"})
             client.kyc = kyc
             client.primary_email = email
-            client.primary_phone = phone
-            if legal:
-                client.display_name = legal
+            client.display_name = legal
             client.preferred_channel = client.preferred_channel or "email"
             replace_primary_identity(db, client, "email", email)
-            replace_primary_identity(db, client, "phone", phone)
             log_activity(db, client.id, "note",
                          "Compte réclamé via inscription (dossier invité existant)")
         else:
-            client = Client(display_name=legal or None, primary_email=email,
-                            primary_phone=phone, preferred_channel="email", kyc=kyc)
+            kyc = {k: values[k] for k in _IDENTITY_KEYS if k != "email"}
+            client = Client(display_name=legal, primary_email=email,
+                            preferred_channel="email", kyc=kyc)
             db.add(client)
             db.flush()
             add_identity(db, client, "email", email)
-            add_identity(db, client, "phone", phone)
             log_activity(db, client.id, "request_created",
                          "Compte créé (inscription espace client)")
         db.commit()
@@ -1766,6 +1759,8 @@ async def portal_signup_save(request: Request):
     resp = RedirectResponse("/portail", status_code=303)
     _set_session_cookie(resp, cid)
     return resp
+
+
 _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#03121b">
@@ -1966,6 +1961,16 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .prog{{height:8px;border-radius:999px;background:rgba(8,33,47,.7);overflow:hidden;margin:2px 0 6px}}
  .prog span{{display:block;height:100%;border-radius:999px;
    background:linear-gradient(90deg,var(--pacific),var(--lagoon));transition:width .4s ease}}
+ .social{{display:flex;flex-direction:column;gap:10px;margin:0 0 6px}}
+ .sbtn{{display:flex;align-items:center;justify-content:center;gap:10px;min-height:50px;
+   border-radius:14px;font-weight:600;font-size:15px;text-decoration:none;
+   transition:transform .15s, box-shadow .15s}}
+ .sbtn:hover{{transform:translateY(-1px)}}
+ .sbtn.sg{{background:#fff;color:#1f1f1f}}
+ .sbtn.sf{{background:#1877F2;color:#fff}}
+ .orsep{{display:flex;align-items:center;gap:12px;color:var(--mist);font-size:13px;margin:16px 0}}
+ .orsep::before,.orsep::after{{content:"";flex:1;height:1px;background:var(--line)}}
+ .hint{{display:block;color:var(--mist);font-size:12px;margin-top:6px}}
  .note{{border-radius:12px;padding:11px 14px;font-size:14px;margin:0 0 16px}}
  .note.ok{{background:rgba(61,240,197,.12);border:1px solid rgba(61,240,197,.4);color:var(--lagoon)}}
  .note.err{{background:rgba(255,90,110,.12);border:1px solid rgba(255,90,110,.45);color:#ff9aa6}}
