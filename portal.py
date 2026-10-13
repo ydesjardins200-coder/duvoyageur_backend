@@ -1883,6 +1883,33 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
    border-radius:999px;padding:2px 9px}}
  .pc-go{{font-size:13px;font-weight:600;color:#03121b;text-decoration:none;border-radius:999px;
    padding:5px 12px;background:linear-gradient(120deg,var(--pacific),var(--lagoon))}}
+ .pc-head{{display:flex;align-items:center;justify-content:space-between;gap:10px}}
+ .pc-cmpbtn{{background:none;border:1px solid rgba(25,211,230,.45);color:var(--pacific);border-radius:999px;
+   padding:4px 12px;font:600 12px Inter,sans-serif;cursor:pointer}}
+ .pc-cmpbtn:hover{{border-color:var(--pacific)}}
+ .pc-cmp{{overflow-x:auto;margin:0 0 10px;border:1px solid var(--line);border-radius:12px;background:rgba(3,18,27,.55)}}
+ .pc-cmp table{{border-collapse:collapse;width:100%;font-size:13px;min-width:420px}}
+ .pc-cmp th,.pc-cmp td{{padding:7px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}}
+ .pc-cmp thead th{{font-family:"Bricolage Grotesque",sans-serif;font-size:13.5px;color:var(--foam)}}
+ .pc-cmp tbody th{{color:var(--mist);font-weight:500;white-space:nowrap}}
+ .pc-cmp tr:last-child th,.pc-cmp tr:last-child td{{border-bottom:0}}
+ .pc-ours{{font-size:11.5px;color:var(--gold);text-decoration:none;border:1px solid rgba(255,210,63,.4);
+   border-radius:999px;padding:2px 9px}}
+ .guides{{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px;white-space:normal}}
+ .guides span{{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--mist);
+   font-family:"Space Grotesk",monospace;margin-right:2px}}
+ .guides a{{font-size:12.5px;color:var(--foam);text-decoration:none;border-radius:999px;padding:4px 11px;
+   background:rgba(61,240,197,.12);border:1px solid rgba(61,240,197,.35)}}
+ .guides a:hover{{border-color:var(--lagoon)}}
+ .rate{{display:flex;gap:6px;margin-top:10px}}
+ .rbtn{{background:none;border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:14px;
+   cursor:pointer;opacity:.65;filter:grayscale(.6)}}
+ .rbtn:hover,.rbtn.on{{opacity:1;filter:none;border-color:var(--pacific)}}
+ .refine{{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;white-space:normal}}
+ .a-acts{{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}}
+ @media(max-width:560px){{.a-head{{flex-direction:column;align-items:stretch}}.a-acts{{justify-content:flex-start}}}}
+ .a-toast{{margin:-4px 0 10px;padding:9px 12px;border-radius:11px;font-size:13.5px;
+   background:rgba(61,240,197,.12);border:1px solid rgba(61,240,197,.4);color:var(--lagoon)}}
  .pc-conf{{font-size:12px;color:var(--gold);margin-top:2px}}
  @media(max-width:520px){{.pcard{{flex-direction:column}}.pc-img{{width:100%;height:170px}}}}
  .astatus{{font-size:13px;color:var(--mist);font-style:italic}}

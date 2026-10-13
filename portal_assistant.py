@@ -554,9 +554,9 @@ def assistant_panel(client) -> str:
  if(hum)hum.addEventListener('click',function(){{
    var me=[].slice.call(log.querySelectorAll('.msg.me')).slice(-3).map(function(x){{return '- '+x.textContent;}});
    var pc=[].slice.call(log.querySelectorAll('.pc-name')).slice(-3).map(function(x){{return x.textContent;}});
-   var txt='Bonjour! Je viens de l\'assistant voyage de mon espace client.'+
-     (me.length?'\nMa demande :\n'+me.join('\n'):'')+(pc.length?'\nPistes vues : '+pc.join(', '):'');
-   var w=window.open(MSGR,'_blank','noopener');
+   var txt='Bonjour! Je viens de l’assistant voyage de mon espace client.'+
+     (me.length?'\\nMa demande :\\n'+me.join('\\n'):'')+(pc.length?'\\nPistes vues : '+pc.join(', '):'');
+   var w=window.open(MSGR,'_blank');if(w)try{{w.opener=null;}}catch(e){{}}
    if(navigator.clipboard)navigator.clipboard.writeText(txt).then(function(){{
      say('Résumé copié 📋 — colle-le dans Messenger pour que le conseiller parte de là.');}},function(){{}});
    if(!w)location.href=MSGR;
@@ -730,9 +730,9 @@ async def assistant_chat(request: Request):
             return
         full = "".join(parts)
         answer = strip_blocks(full)
-        tail = full[shown[0]:len(answer) + (len(full) - len(full.lstrip()))]
-        if shown[0] < len(answer) and tail.strip():     # text held back for a partial tag
-            yield _ev("text", full[shown[0]:visible_cut(full)])
+        cut = visible_cut(full)
+        if shown[0] < cut:              # text held back while checking for a tag
+            yield _ev("text", full[shown[0]:cut])
         m = _PISTES_RE.search(full)
         cards = parse_pistes(m.group(1).strip(), sources) if m else []
         if cards:
