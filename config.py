@@ -83,6 +83,17 @@ class Settings:
     FB_LOGIN_APP_ID: str = os.getenv("FB_LOGIN_APP_ID", "")
     FB_LOGIN_APP_SECRET: str = os.getenv("FB_LOGIN_APP_SECRET", "") or os.getenv("FB_APP_SECRET", "")
 
+    # --- Portal AI travel assistant (Claude API) ---
+    PORTAL_ASSISTANT_MODEL: str = os.getenv("PORTAL_ASSISTANT_MODEL", "claude-haiku-4-5-20251001")
+    PORTAL_ASSISTANT_DAILY_MAX: int = int(os.getenv("PORTAL_ASSISTANT_DAILY_MAX", "40"))
+
+    # --- Softvoyage DMO package search engine (iframe in the portal) ---
+    # Shown at /portail/recherche once the agency alias is set; until then the
+    # page says "bientôt disponible".
+    SIRRVA_ALIAS: str = os.getenv("SIRRVA_ALIAS", "")
+    SIRRVA_HOST: str = os.getenv("SIRRVA_HOST", "https://trs.sax.softvoyage.com")
+    SIRRVA_CODE_AG: str = os.getenv("SIRRVA_CODE_AG", "trs")
+
     # --- CORS: the Netlify domain(s) allowed to POST the intake form ---
     # Comma-separated, e.g. "https://duvoyageur.netlify.app,https://duvoyageur.ca"
     ALLOWED_ORIGINS: list[str] = os.getenv("ALLOWED_ORIGINS", "*").split(",")

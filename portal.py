@@ -511,33 +511,15 @@ def _identity_card(client) -> str:
 
 
 def _accueil(client, cases, flash: str = "") -> str:
+    """Portal home: greeting, identity card, then the search CTA + AI assistant.
+    Trip/savings cards were removed: bookings now happen self-service in the
+    Softvoyage engine and live in PC Voyages, not in this backend."""
+    from portal_assistant import assistant_panel     # lazy: avoids import cycle
     name = escape(client.display_name or "")
     hello = f"Bonjour {name} 👋" if name else "Bonjour 👋"
-    trips = [c for c in cases if (c.kind or "trip") == "trip"]
-    future = [c for c in trips if c.status != "closed"]
-    past = [c for c in trips if c.status == "closed"]
-    total = _savings_total(trips)
     note = f"<div class='note ok'>{flash}</div>" if flash else ""
-
-    sav = ("<div class='savings'><div><div class='sv-l'>Tes économies</div>"
-           f"<div class='sv-n'>{_fmt_money(total)}</div></div>"
-           "<div style='font-size:30px'>💸</div></div>") if total > 0 else ""
-
-    cta = ("<div style='margin:0 0 6px'>"
-           "<a class='btn' href='/portail/nouveau-voyage'>+ Nouvelle demande de voyage</a></div>")
-
-    fut = ("<h3 class='acc-h'>Voyages à venir</h3><div class='tgrid'>"
-           + "".join(_trip_card(c) for c in future) + "</div>") if future else (
-           "<h3 class='acc-h'>Voyages à venir</h3>"
-           "<div class='tcard empty'>Aucun voyage en cours. Lance une demande ci-dessus ! 🌴</div>")
-    pst = ("<h3 class='acc-h'>Voyages passés</h3><div class='tgrid'>"
-           + "".join(_trip_card(c) for c in past) + "</div>") if past else ""
-
-    idcard = _identity_card(client)
-    toprow = f"<div class='toprow'>{idcard}{sav}</div>" if sav else idcard
-    return (
-        f"<div class='hello'><h2>{hello}</h2></div>"
-        + note + toprow + cta + fut + pst)
+    return (f"<div class='hello'><h2>{hello}</h2></div>"
+            + note + _identity_card(client) + assistant_panel(client))
 
 
 _MONTHS_FR = ["", "janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.",
@@ -915,7 +897,7 @@ def _nav(active: str, locked: bool = False) -> str:
     if locked:                       # KYC incomplete -> no tabs, but still a way out
         return f"<nav class='pnav'>{home}</nav>"
     items = [("accueil", "/portail", "Accueil"),
-             ("nouveau", "/portail/nouveau-voyage", "Nouveau voyage"),
+             ("recherche", "/portail/recherche", "Rechercher"),
              ("aide", "/portail/service", "Aide"),
              ("avis", "/portail/avis", "Mes avis"),
              ("profil", "/portail/profil", "Mon profil")]
@@ -1829,6 +1811,46 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .toprow .savings{{flex:1 1 40%;margin-bottom:0}}
  @media(max-width:640px){{.toprow{{flex-direction:column;gap:0}}
    .toprow .idcard{{margin-bottom:14px}}}}
+ .searchcta{{display:flex;align-items:center;justify-content:space-between;gap:14px;
+   padding:16px 20px;margin:0 0 18px;border-radius:18px;text-decoration:none;color:#03121b;
+   background:linear-gradient(120deg,var(--pacific),var(--lagoon));
+   box-shadow:0 14px 34px -14px var(--glow);transition:transform .15s}}
+ .searchcta:hover{{transform:translateY(-1px)}}
+ .searchcta b{{display:block;font-family:"Bricolage Grotesque",sans-serif;font-size:18px}}
+ .searchcta span{{font-size:13px;opacity:.85}}
+ .searchcta .sc-go{{font-size:24px;font-weight:800;opacity:1}}
+ .assist{{background:linear-gradient(180deg, rgba(20,62,82,.5), rgba(8,33,47,.6));
+   border:1px solid var(--line);border-radius:18px;padding:18px;margin-bottom:22px}}
+ .a-head{{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}}
+ .a-head h3{{margin:0;font-size:18px}}
+ .a-sub{{font-size:12px;color:var(--mist)}}
+ .areset{{background:none;border:1px solid var(--line);color:var(--mist);border-radius:999px;
+   padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;font-family:inherit}}
+ .areset:hover{{color:var(--foam)}}
+ .a-log{{display:flex;flex-direction:column;gap:10px;max-height:min(52vh,460px);overflow-y:auto;
+   padding:4px 2px 8px;scroll-behavior:smooth}}
+ .msg{{max-width:85%;padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.5;
+   white-space:pre-wrap;word-wrap:break-word}}
+ .msg.ai{{align-self:flex-start;background:rgba(6,33,47,.7);border:1px solid var(--line);
+   border-bottom-left-radius:5px}}
+ .msg.me{{align-self:flex-end;background:rgba(25,211,230,.18);border:1px solid rgba(25,211,230,.35);
+   border-bottom-right-radius:5px}}
+ .msg.typing::after{{content:"● ● ●";letter-spacing:2px;color:var(--mist);
+   animation:blink 1.2s infinite}}
+ @keyframes blink{{50%{{opacity:.3}}}}
+ .chips{{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 4px}}
+ .chip{{background:rgba(6,33,47,.6);border:1px solid rgba(25,211,230,.35);color:var(--foam);
+   border-radius:999px;padding:8px 13px;font-size:13px;cursor:pointer;font-family:inherit}}
+ .chip:hover{{border-color:var(--pacific)}}
+ .a-form{{display:flex;gap:8px;align-items:flex-end;margin-top:12px}}
+ .a-form textarea{{flex:1;resize:none;min-height:48px;max-height:140px;padding:12px 14px;
+   border-radius:14px;border:1px solid var(--line);background:var(--field);color:var(--foam);
+   font:inherit;font-size:16px;line-height:1.4}}
+ .a-form textarea:focus{{outline:none;border-color:var(--pacific)}}
+ .a-send{{min-height:48px;flex:none}}
+ .a-send:disabled{{opacity:.6}}
+ .engine{{border-radius:18px;overflow:hidden;background:#fff;border:1px solid var(--line)}}
+ .engine iframe{{display:block;width:100%;height:max(1100px,85vh);border:0}}
  .acc-h{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:15px;
    margin:24px 0 12px;color:var(--surf);letter-spacing:-.01em}}
  .acc-h:first-of-type{{margin-top:8px}}

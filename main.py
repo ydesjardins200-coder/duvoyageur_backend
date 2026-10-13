@@ -52,6 +52,7 @@ from concierge import concierge_reply
 from config import settings
 from portal import router as portal_router, build_portal_login_url
 from portal_oauth import router as portal_oauth_router
+from portal_assistant import router as portal_assistant_router
 import storage
 from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLocal, engine,
                 add_identity, find_client_by_identity, find_duplicate_groups,
@@ -105,6 +106,7 @@ app.add_middleware(
 # Client-facing portal (espace client) — passwordless magic links, separate auth.
 app.include_router(portal_router)
 app.include_router(portal_oauth_router)
+app.include_router(portal_assistant_router)
 
 
 @app.exception_handler(NotAuthenticated)

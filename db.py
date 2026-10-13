@@ -93,6 +93,9 @@ class Client(Base):
     notifications: Mapped[list] = mapped_column(JSON, default=list)
     # Did the client allow us to use their reviews to improve the service?
     review_consent: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    # Portal AI travel assistant thread: list of {role, text, at}. Oldest first,
+    # capped in portal_assistant.py so the row never grows without bound.
+    assistant_chat: Mapped[list] = mapped_column(JSON, default=list)
 
     identities = relationship(
         "ClientIdentity", back_populates="client",
@@ -330,6 +333,8 @@ def _ensure_columns() -> None:
                 "ALTER TABLE clients ADD COLUMN IF NOT EXISTS notifications JSONB DEFAULT '[]'::jsonb"))
             conn.execute(text(
                 "ALTER TABLE clients ADD COLUMN IF NOT EXISTS review_consent BOOLEAN"))
+            conn.execute(text(
+                "ALTER TABLE clients ADD COLUMN IF NOT EXISTS assistant_chat JSONB DEFAULT '[]'::jsonb"))
             has_kind = conn.execute(text(
                 "SELECT 1 FROM information_schema.columns "
                 "WHERE table_name='cases' AND column_name='kind'")).first()
@@ -339,6 +344,9 @@ def _ensure_columns() -> None:
                     "UPDATE cases SET kind='support' "
                     "WHERE needs_clarification::text ILIKE '%support humain%'"))
         elif engine.dialect.name == "sqlite":
+            ccols = [r[1] for r in conn.execute(text("PRAGMA table_info(clients)"))]
+            if ccols and "assistant_chat" not in ccols:
+                conn.execute(text("ALTER TABLE clients ADD COLUMN assistant_chat JSON"))
             cols = [r[1] for r in conn.execute(text("PRAGMA table_info(cases)"))]
             if "screenshots" not in cols:
                 conn.execute(text("ALTER TABLE cases ADD COLUMN screenshots JSON"))
