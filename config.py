@@ -85,6 +85,13 @@ class Settings:
 
     # --- Portal AI travel assistant (Claude API) ---
     PORTAL_ASSISTANT_MODEL: str = os.getenv("PORTAL_ASSISTANT_MODEL", "claude-sonnet-4-6")
+    # Which model answers members: "anthropic" (Claude) or "openai" (ChatGPT).
+    PORTAL_ASSISTANT_PROVIDER: str = os.getenv("PORTAL_ASSISTANT_PROVIDER", "anthropic")
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_ASSISTANT_MODEL: str = os.getenv("OPENAI_ASSISTANT_MODEL", "gpt-5.5")
+    OPENAI_REASONING_EFFORT: str = os.getenv("OPENAI_REASONING_EFFORT", "low")
+    # Emails allowed on the blind Claude vs ChatGPT test page (comma-separated).
+    ASSISTANT_TESTERS: str = os.getenv("ASSISTANT_TESTERS", "")
     PORTAL_ASSISTANT_DAILY_MAX: int = int(os.getenv("PORTAL_ASSISTANT_DAILY_MAX", "40"))
     # Web search (Claude server tool, ~$10 / 1000 searches + result tokens).
     PORTAL_ASSISTANT_SEARCHES_PER_ANSWER: int = int(os.getenv("PORTAL_ASSISTANT_SEARCHES_PER_ANSWER", "3"))

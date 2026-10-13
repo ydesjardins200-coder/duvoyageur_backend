@@ -7,3 +7,4 @@ python-multipart>=0.0.9
 itsdangerous>=2.0
 boto3>=1.34
 Pillow>=10.0
+openai>=2.0

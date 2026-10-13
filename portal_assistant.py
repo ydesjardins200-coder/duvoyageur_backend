@@ -458,6 +458,8 @@ def assistant_panel(client) -> str:
     reset = ("<button type='button' class='areset' id='aReset'>Nouvelle conversation</button>"
              if thread else "")
     human = ("<button type='button' class='areset' id='aHuman'>💬 Parler à un conseiller</button>")
+    if is_tester(client):
+        human = "<a class='areset' href='/portail/assistant/comparer'>🧪 Test A/B</a>" + human
     messenger = json.dumps(settings.MESSENGER_URL)
     return f"""
 <a class='searchcta' href='{SEARCH_URL}'>
@@ -597,6 +599,234 @@ def _collect_sources(message) -> list:
     return out[:6]
 
 
+# --------------------------------------------------------------------------- #
+# Model providers — Claude (Anthropic) or ChatGPT (OpenAI), same event stream
+# --------------------------------------------------------------------------- #
+PROVIDERS = ("anthropic", "openai")
+_LABELS = {"anthropic": "Claude", "openai": "ChatGPT"}
+
+
+class SearchRefused(Exception):
+    """The model rejected the web-search tool: retry the same turn without it."""
+
+
+def provider_ready(provider: str) -> bool:
+    return bool(settings.ANTHROPIC_API_KEY if provider == "anthropic" else settings.OPENAI_API_KEY)
+
+
+def model_name(provider: str) -> str:
+    return settings.PORTAL_ASSISTANT_MODEL if provider == "anthropic" else settings.OPENAI_ASSISTANT_MODEL
+
+
+def _run_anthropic(search: bool, system: str, convo: list):
+    """Yields ("status"|"text", str) then ("meta", {"sources", "searches"})."""
+    api = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    sources, searches, wrote = [], 0, False
+    for _attempt in range(3):                     # pause_turn continuations
+        kw = dict(model=settings.PORTAL_ASSISTANT_MODEL, max_tokens=1500,
+                  system=system, messages=convo)
+        if search:
+            kw["tools"] = [_search_tool()]
+        try:
+            with api.messages.stream(**kw) as stream:
+                for event in stream:
+                    et = getattr(event, "type", "")
+                    if et == "content_block_start":
+                        cb = getattr(event, "content_block", None)
+                        if getattr(cb, "type", "") == "server_tool_use":
+                            yield ("status", "🔎 Je cherche des options en ligne…")
+                    elif et == "content_block_delta":
+                        d = getattr(event, "delta", None)
+                        if getattr(d, "type", "") == "text_delta" and d.text:
+                            wrote = True
+                            yield ("text", d.text)
+                final = stream.get_final_message()
+        except anthropic.BadRequestError as exc:
+            if search and not wrote:
+                raise SearchRefused(str(exc)) from exc
+            raise
+        searches += getattr(getattr(final.usage, "server_tool_use", None),
+                            "web_search_requests", 0) or 0
+        sources += [s for s in _collect_sources(final)
+                    if s["url"] not in {x["url"] for x in sources}]
+        if final.stop_reason == "pause_turn":
+            convo = convo + [{"role": "assistant", "content": final.content}]
+            continue
+        break
+    yield ("meta", {"sources": sources, "searches": searches})
+
+
+def _openai_tool() -> dict:
+    domains = [d.strip() for d in settings.PORTAL_ASSISTANT_SEARCH_DOMAINS.split(",") if d.strip()]
+    tool = {"type": "web_search",
+            "user_location": {"type": "approximate", "country": "CA", "city": "Montreal",
+                              "region": "Quebec", "timezone": "America/Toronto"}}
+    if domains:
+        tool["filters"] = {"allowed_domains": domains}
+    return tool
+
+
+def _run_openai(search: bool, system: str, convo: list):
+    """Same contract as _run_anthropic, on OpenAI's Responses API."""
+    import openai                                  # optional dependency
+    api = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+    kw = dict(model=settings.OPENAI_ASSISTANT_MODEL, instructions=system,
+              input=[{"role": m["role"], "content": m["content"]} for m in convo],
+              max_output_tokens=6000, stream=True)
+    if settings.OPENAI_REASONING_EFFORT:
+        kw["reasoning"] = {"effort": settings.OPENAI_REASONING_EFFORT}
+    if search:
+        kw["tools"] = [_openai_tool()]
+    wrote, said, final = False, False, None
+    try:
+        for event in api.responses.create(**kw):
+            et = getattr(event, "type", "")
+            if et == "response.output_text.delta" and event.delta:
+                wrote = True
+                yield ("text", event.delta)
+            elif et.startswith("response.web_search_call") and not said:
+                said = True
+                yield ("status", "🔎 Je cherche des options en ligne…")
+            elif et == "response.completed":
+                final = event.response
+            elif et in ("error", "response.failed"):
+                raise RuntimeError(getattr(event, "message", None) or et)
+    except openai.BadRequestError as exc:
+        if search and not wrote:
+            raise SearchRefused(str(exc)) from exc
+        raise
+    sources, searches = [], 0
+    for item in getattr(final, "output", None) or []:
+        if getattr(item, "type", "") == "web_search_call":
+            searches += 1
+        for part in getattr(item, "content", None) or []:
+            for a in getattr(part, "annotations", None) or []:
+                url = getattr(a, "url", None)
+                if getattr(a, "type", "") == "url_citation" and url \
+                        and url not in {s["url"] for s in sources}:
+                    sources.append({"url": url, "title": getattr(a, "title", None) or ""})
+    yield ("meta", {"sources": sources[:6], "searches": searches})
+
+
+_RUNNERS = {"anthropic": _run_anthropic, "openai": _run_openai}
+
+
+def _history_msgs(history: list, q: str) -> list:
+    msgs = [{"role": m["role"], "content": m["text"] + (
+                ("\n<pistes>" + json.dumps(m["cards"], ensure_ascii=False) + "</pistes>")
+                if m.get("cards") else "")}
+            for m in history[-_CONTEXT:] if m.get("text")]
+    while msgs and msgs[0]["role"] != "user":    # start with user, alternate
+        msgs.pop(0)
+    msgs.append({"role": "user", "content": q})
+    return msgs
+
+
+def answer_events(provider: str, cid: int, q: str, history: list, name: str,
+                  can_search: bool, persist, count_searches: bool = True):
+    """The whole answer pipeline as NDJSON lines, for either provider.
+    `persist(user_entry, assistant_entry)` stores the exchange at the end."""
+    convo_text = " ".join([m["text"] for m in history[-6:] if m.get("role") == "user"] + [q])
+    excerpts = kb.context_for(convo_text)
+    catalogue = kb.catalogue()
+
+    def system_for(search: bool) -> str:
+        s = SYSTEM_PROMPT.format(
+            today=_today(), search_rule=_SEARCH_ON if search else _SEARCH_OFF,
+            catalogue=catalogue,
+            excerpts=("\nExtraits de nos pages liés à la conversation :\n" + excerpts)
+            if excerpts else "")
+        return s + (f"\nLe membre s'appelle {name}." if name else "")
+
+    parts: list[str] = []          # everything the model wrote
+    shown = [0]                    # chars of `parts` already sent
+    meta = {"sources": [], "searches": 0}
+
+    def visible_cut(full: str) -> int:
+        cuts = [i for i in (full.find(t) for t in _TAGS) if i != -1]
+        if cuts:
+            return min(cuts)
+        for k in range(len("<suivis>") - 1, 0, -1):     # possible partial tag
+            if any(full.endswith(t[:k]) for t in _TAGS):
+                return len(full) - k
+        return len(full)
+
+    msgs = _history_msgs(history, q)
+    search = can_search
+    try:
+        for _try in range(2):
+            try:
+                for kind, val in _RUNNERS[provider](search, system_for(search), msgs):
+                    if kind == "text":
+                        parts.append(val)
+                        full = "".join(parts)
+                        cut = visible_cut(full)
+                        if cut > shown[0]:
+                            yield _ev("text", full[shown[0]:cut])
+                            shown[0] = cut
+                    elif kind == "meta":
+                        meta = val
+                    else:
+                        yield _ev(kind, val)
+                break
+            except SearchRefused as exc:
+                log.warning("assistant[%s]: web search refused, retrying without: %s", provider, exc)
+                search = False
+    except Exception as exc:  # noqa: BLE001 — never break the page
+        log.warning("assistant[%s] stream failed: %s", provider, exc)
+        if not parts:
+            yield _ev("text", "Oups, je n'ai pas pu répondre. Réessaie dans un instant.")
+        return
+    if count_searches and meta["searches"]:
+        _SEARCHES.setdefault(cid, []).extend([time.monotonic()] * meta["searches"])
+    sources = meta["sources"]
+    full = "".join(parts)
+    answer = strip_blocks(full)
+    cut = visible_cut(full)
+    if shown[0] < cut:                 # text held back while checking for a tag
+        yield _ev("text", full[shown[0]:cut])
+    m = _PISTES_RE.search(full)
+    cards = parse_pistes(m.group(1).strip(), sources) if m else []
+    if cards:
+        yield _ev("status", "📸 Je prépare les fiches…")
+        cards = add_images(cards)
+        yield _ev("cards", cards_html(cards))
+    guides = kb.related_links(" ".join([q, answer] + [c["hotel"] + " " + c.get("destination", "")
+                                                      for c in cards]))
+    if guides:
+        yield _ev("guides", guides_html(guides))
+    if sources:
+        yield _ev("sources", sources)
+    sm = _SUIVIS_RE.search(full)
+    suivis = parse_suivis(sm.group(1).strip()) if sm else []
+    if not answer:
+        return
+    mid = secrets.token_hex(8)
+    yield _ev("rate", rate_html(mid))
+    if suivis:
+        yield _ev("refine", suivis_html(suivis))
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    persist({"role": "user", "text": q, "at": now},
+            {"role": "assistant", "id": mid, "text": answer, "cards": cards,
+             "guides": guides, "suivis": suivis, "sources": sources,
+             "provider": provider, "model": model_name(provider), "at": now})
+
+
+def _stream(lines, ndjson: bool = True):
+    def plain():
+        for line in lines:
+            ev = json.loads(line)
+            if ev["t"] == "text":
+                yield ev["v"]
+            elif ev["t"] == "sources":
+                yield "\n\nSources : " + " · ".join(x["url"] for x in ev["v"])
+    headers = {"Cache-Control": "no-store", "X-Accel-Buffering": "no"}
+    if not ndjson:
+        return StreamingResponse(plain(), media_type="text/plain; charset=utf-8", headers=headers)
+    return StreamingResponse(lines, media_type="application/x-ndjson; charset=utf-8",
+                             headers=headers)
+
+
 @router.post("/portail/assistant")
 async def assistant_chat(request: Request):
     cid = current_portal_client_id(request)
@@ -610,9 +840,11 @@ async def assistant_chat(request: Request):
     # Pages loaded before the NDJSON format shipped read a plain-text stream;
     # keep serving them that so an open tab never shows raw JSON.
     ndjson = payload.get("fmt") == "ndjson"
+    provider = settings.PORTAL_ASSISTANT_PROVIDER if \
+        settings.PORTAL_ASSISTANT_PROVIDER in PROVIDERS else "anthropic"
     if not q:
         return HTMLResponse("Écris ta question 🙂", status_code=400)
-    if not settings.ANTHROPIC_API_KEY:
+    if not provider_ready(provider):
         return HTMLResponse("L'assistant n'est pas disponible pour le moment.", status_code=503)
     if not _rate_ok(cid):
         return HTMLResponse("Tu as atteint la limite de questions pour aujourd'hui. "
@@ -627,159 +859,170 @@ async def assistant_chat(request: Request):
         name = _first_name(client)
     _HITS.setdefault(cid, []).append(time.monotonic())
 
-    msgs = [{"role": m["role"], "content": m["text"] + (
-                ("\n<pistes>" + json.dumps(m["cards"], ensure_ascii=False) + "</pistes>")
-                if m.get("cards") else "")}
-            for m in history[-_CONTEXT:] if m.get("text")]
-    while msgs and msgs[0]["role"] != "user":   # API: start with user, alternate
-        msgs.pop(0)
-    msgs.append({"role": "user", "content": q})
-    can_search = _searches_left(cid) > 0
-    convo_text = " ".join([m["text"] for m in history[-6:] if m.get("role") == "user"] + [q])
-    excerpts = kb.context_for(convo_text)
-    catalogue = kb.catalogue()
-
-    def system_for(search: bool) -> str:
-        s = SYSTEM_PROMPT.format(
-            today=_today(), search_rule=_SEARCH_ON if search else _SEARCH_OFF,
-            catalogue=catalogue,
-            excerpts=("\nExtraits de nos pages liés à la conversation :\n" + excerpts)
-            if excerpts else "")
-        return s + (f"\nLe membre s'appelle {name}." if name else "")
-
-    def run(api, search: bool, convo: list):
-        """Stream one model call; yields NDJSON events, returns final message."""
-        kw = dict(model=settings.PORTAL_ASSISTANT_MODEL, max_tokens=1500,
-                  system=system_for(search), messages=convo)
-        if search:
-            kw["tools"] = [_search_tool()]
-        with api.messages.stream(**kw) as stream:
-            for event in stream:
-                et = getattr(event, "type", "")
-                if et == "content_block_start":
-                    cb = getattr(event, "content_block", None)
-                    if getattr(cb, "type", "") == "server_tool_use":
-                        yield ("status", "🔎 Je cherche des options en ligne…")
-                elif et == "content_block_delta":
-                    d = getattr(event, "delta", None)
-                    if getattr(d, "type", "") == "text_delta" and d.text:
-                        yield ("text", d.text)
-            yield ("final", stream.get_final_message())
-
-    def gen():
-        parts: list[str] = []          # everything the model wrote
-        shown = [0]                    # chars of `parts` already sent
-        sources: list = []
-        def visible_cut(full: str) -> int:
-            cuts = [i for i in (full.find(t) for t in _TAGS) if i != -1]
-            if cuts:
-                return min(cuts)
-            for k in range(len("<suivis>") - 1, 0, -1):     # possible partial tag
-                if any(full.endswith(t[:k]) for t in _TAGS):
-                    return len(full) - k
-            return len(full)
-
-        def visible_delta() -> str:
-            full = "".join(parts)
-            cut = visible_cut(full)
-            if cut > shown[0]:
-                d = full[shown[0]:cut]
-                shown[0] = cut
-                return d
-            return ""
-        api = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-        search = can_search
-        convo = list(msgs)
-        try:
-            for _attempt in range(3):            # pause_turn continuations
-                final = None
-                try:
-                    for kind, val in run(api, search, convo):
-                        if kind == "final":
-                            final = val
-                        else:
-                            if kind == "text":
-                                parts.append(val)
-                                d = visible_delta()
-                                if d:
-                                    yield _ev("text", d)
-                            else:
-                                yield _ev(kind, val)
-                except anthropic.BadRequestError as exc:
-                    if search and not parts:     # model/tool not supported -> no search
-                        log.warning("assistant: web search refused, retrying without: %s", exc)
-                        search = False
-                        continue
-                    raise
-                if final is None:
-                    break
-                used = getattr(getattr(final.usage, "server_tool_use", None),
-                               "web_search_requests", 0) or 0
-                if used:
-                    _SEARCHES.setdefault(cid, []).extend([time.monotonic()] * used)
-                sources += [s for s in _collect_sources(final)
-                            if s["url"] not in {x["url"] for x in sources}]
-                if final.stop_reason == "pause_turn":
-                    convo = convo + [{"role": "assistant", "content": final.content}]
-                    continue
-                break
-        except Exception as exc:  # noqa: BLE001 — never break the page
-            log.warning("assistant stream failed: %s", exc)
-            if not parts:
-                yield _ev("text", "Oups, je n'ai pas pu répondre. Réessaie dans un instant.")
-            return
-        full = "".join(parts)
-        answer = strip_blocks(full)
-        cut = visible_cut(full)
-        if shown[0] < cut:              # text held back while checking for a tag
-            yield _ev("text", full[shown[0]:cut])
-        m = _PISTES_RE.search(full)
-        cards = parse_pistes(m.group(1).strip(), sources) if m else []
-        if cards:
-            yield _ev("status", "📸 Je prépare les fiches…")
-            cards = add_images(cards)
-            yield _ev("cards", cards_html(cards))
-        guides = kb.related_links(" ".join([q, answer] + [c["hotel"] + " " + c.get("destination", "")
-                                                          for c in cards]))
-        if guides:
-            yield _ev("guides", guides_html(guides))
-        if sources:
-            yield _ev("sources", sources)
-        sm = _SUIVIS_RE.search(full)
-        suivis = parse_suivis(sm.group(1).strip()) if sm else []
-        if not answer:
-            return
-        mid = secrets.token_hex(8)
-        yield _ev("rate", rate_html(mid))
-        if suivis:
-            yield _ev("refine", suivis_html(suivis))
-        now = datetime.utcnow().isoformat(timespec="seconds")
+    def persist(user_entry, ai_entry):
         with SessionLocal() as db2:
             c = db2.get(Client, cid)
             if c:
-                c.assistant_chat = (list(c.assistant_chat or []) + [
-                    {"role": "user", "text": q, "at": now},
-                    {"role": "assistant", "id": mid, "text": answer, "cards": cards,
-                     "guides": guides, "suivis": suivis, "sources": sources,
-                     "model": settings.PORTAL_ASSISTANT_MODEL, "at": now},
-                ])[-_KEEP:]
+                c.assistant_chat = (list(c.assistant_chat or []) + [user_entry, ai_entry])[-_KEEP:]
                 db2.commit()
 
-    def plain():
-        for line in gen():
-            ev = json.loads(line)
-            if ev["t"] == "text":
-                yield ev["v"]
-            elif ev["t"] == "sources":
-                yield "\n\nSources : " + " · ".join(x["url"] for x in ev["v"])
+    return _stream(answer_events(provider, cid, q, history, name,
+                                 _searches_left(cid) > 0, persist), ndjson)
 
-    if not ndjson:
-        return StreamingResponse(plain(), media_type="text/plain; charset=utf-8",
-                                 headers={"Cache-Control": "no-store",
-                                          "X-Accel-Buffering": "no"})
-    return StreamingResponse(gen(), media_type="application/x-ndjson; charset=utf-8",
-                             headers={"Cache-Control": "no-store",
-                                      "X-Accel-Buffering": "no"})
+
+# --------------------------------------------------------------------------- #
+# Blind A/B test page: Claude vs ChatGPT, for the emails in ASSISTANT_TESTERS
+# --------------------------------------------------------------------------- #
+_CMP: dict = {}         # test id -> {"cid", "slots": {"A","B"}, "hist": {"A": [], "B": []}}
+_PENDING: dict = {}     # message id -> answer awaiting a rating (test page only)
+
+
+def is_tester(client) -> bool:
+    emails = {e.strip().lower() for e in settings.ASSISTANT_TESTERS.split(",") if e.strip()}
+    return bool(client and client.primary_email and client.primary_email.lower() in emails)
+
+
+def _new_test(cid: int) -> str:
+    order = list(PROVIDERS)
+    secrets.SystemRandom().shuffle(order)
+    tid = secrets.token_hex(8)
+    if len(_CMP) > 200:
+        _CMP.clear()
+    _CMP[tid] = {"cid": cid, "slots": {"A": order[0], "B": order[1]}, "hist": {"A": [], "B": []}}
+    return tid
+
+
+_CMP_JS = r"""
+(function(){
+ var tid=document.getElementById('cmp').getAttribute('data-tid'),f=document.getElementById('cForm'),
+     inp=document.getElementById('cIn'),send=document.getElementById('cSend'),busy=0;
+ function esc(s){return s.replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#x27;'}[c];});}
+ function md(s){return esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/gm,'')
+   .replace(/^\s*[-*]\s+/gm,'• ').replace(/^#{1,6}\s*/gm,'').replace(/\n{3,}/g,'\n\n');}
+ function run(slot,q){
+   var log=document.getElementById('log'+slot);
+   var me=document.createElement('div');me.className='msg me';me.textContent=q;log.appendChild(me);
+   var out=document.createElement('div');out.className='msg ai typing';log.appendChild(out);
+   var st=document.createElement('div');st.className='astatus';out.appendChild(st);
+   var body=document.createElement('div');out.appendChild(body);
+   var raw='',buf='',t0=Date.now(),first=0;busy++;
+   function handle(ev){
+     if(ev.t==='status'){st.textContent=ev.v;out.classList.remove('typing');}
+     else if(ev.t==='text'){if(!first)first=Date.now()-t0;out.classList.remove('typing');st.textContent='';raw+=ev.v;body.innerHTML=md(raw);}
+     else if(['cards','guides','rate','refine'].indexOf(ev.t)>=0&&ev.v){st.textContent='';var d=document.createElement('div');
+       d.innerHTML=ev.v;while(d.firstChild)out.appendChild(d.firstChild);}
+     else if(ev.t==='sources'&&ev.v&&ev.v.length){var s=document.createElement('div');s.className='srcs';s.innerHTML='<span>Sources</span>';
+       ev.v.forEach(function(x){if(!/^https:\/\//.test(x.url))return;var a=document.createElement('a');a.href=x.url;a.target='_blank';
+         a.rel='noopener nofollow';a.textContent=x.title||x.url;s.appendChild(a);});out.appendChild(s);}
+   }
+   fetch('/portail/assistant/comparer/ask',{method:'POST',headers:{'Content-Type':'application/json'},
+     body:JSON.stringify({test:tid,slot:slot,message:q})}).then(function(r){
+     if(!r.ok||!r.body)return r.text().then(function(t){throw new Error(t);});
+     var rd=r.body.getReader(),dec=new TextDecoder();
+     function pump(){return rd.read().then(function(x){
+       if(x.done){if(buf.trim())try{handle(JSON.parse(buf));}catch(e){}return;}
+       buf+=dec.decode(x.value,{stream:true});var l=buf.split('\n');buf=l.pop();
+       l.forEach(function(z){if(z.trim())try{handle(JSON.parse(z));}catch(e){}});return pump();});}
+     return pump();
+   }).catch(function(e){out.classList.remove('typing');body.textContent=(e&&e.message)||'Erreur';})
+   .finally(function(){st.textContent='';var tm=document.createElement('div');tm.className='ctime';
+     tm.textContent='1er mot : '+(first/1000).toFixed(1)+' s · total : '+((Date.now()-t0)/1000).toFixed(1)+' s';
+     out.appendChild(tm);if(--busy===0){send.disabled=false;inp.disabled=false;}});
+ }
+ function ask(q){q=(q||'').trim();if(!q||busy)return;inp.value='';send.disabled=true;inp.disabled=true;
+   document.querySelectorAll('#cmp .refine').forEach(function(x){x.remove();});run('A',q);run('B',q);}
+ f.addEventListener('submit',function(e){e.preventDefault();ask(inp.value);});
+ document.getElementById('cmp').addEventListener('click',function(e){
+   var r=e.target.closest('.rchip');if(r){ask(r.textContent);return;}
+   var c=e.target.closest('.pc-cmpbtn');if(c){var t=c.closest('.pcards').querySelector('.pc-cmp');t.hidden=!t.hidden;return;}
+   var b=e.target.closest('.rbtn');if(b){var w=b.closest('.rate');
+     w.querySelectorAll('.rbtn').forEach(function(x){x.classList.toggle('on',x===b);});
+     fetch('/portail/assistant/feedback',{method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({id:w.getAttribute('data-mid'),rating:+b.getAttribute('data-r')})});}
+ });
+ document.getElementById('cReveal').addEventListener('click',function(){
+   fetch('/portail/assistant/comparer/reveal?test='+tid).then(function(r){return r.json();}).then(function(j){
+     document.getElementById('nameA').textContent='A = '+j.A;document.getElementById('nameB').textContent='B = '+j.B;});
+ });
+})();
+"""
+
+
+@router.get("/portail/assistant/comparer", response_class=HTMLResponse)
+def compare_page(request: Request):
+    cid = current_portal_client_id(request)
+    if not cid:
+        return RedirectResponse("/portail/connexion", status_code=303)
+    with SessionLocal() as db:
+        client = db.get(Client, cid)
+        if not is_tester(client):
+            return RedirectResponse("/portail", status_code=303)
+    missing = [_LABELS[p] for p in PROVIDERS if not provider_ready(p)]
+    warn = (f"<div class='note err'>Clé API manquante pour : {', '.join(missing)}.</div>"
+            if missing else "")
+    tid = _new_test(cid)
+    col = lambda s: (f"<div class='assist cmpcol'><div class='a-head'><h3 id='name{s}'>Assistant {s}</h3></div>"
+                     f"<div class='a-log' id='log{s}' aria-live='polite'></div></div>")
+    body = (warn + "<div class='hello'><h2>Test à l'aveugle 🧪</h2>"
+            "<p class='lede'>Même question, même contenu et mêmes règles pour les deux. "
+            "L'ordre A/B est tiré au hasard à chaque test. Note chaque réponse avec 👍/👎 "
+            "<b>avant</b> de révéler qui est qui.</p></div>"
+            f"<div id='cmp' data-tid='{tid}'><div class='cmpgrid'>{col('A')}{col('B')}</div></div>"
+            "<form class='a-form' id='cForm' autocomplete='off'>"
+            f"<textarea id='cIn' rows='1' maxlength='{_MAX_LEN}' placeholder='Décris un voyage…'></textarea>"
+            "<button class='btn a-send' id='cSend' type='submit'>Envoyer aux deux</button></form>"
+            "<div class='actions' style='margin-top:14px'>"
+            "<button class='btn ghost' id='cReveal' type='button'>Révéler A / B</button>"
+            "<a class='btn ghost' href='/portail/assistant/comparer'>Nouveau test</a></div>"
+            "<style>.cmpgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}"
+            ".cmpcol .a-log{max-height:none;min-height:180px}.ctime{font-size:11.5px;color:var(--mist);margin-top:8px}"
+            "@media(max-width:900px){.cmpgrid{grid-template-columns:1fr}}</style>"
+            f"<script>{_CMP_JS}</script>")
+    resp = HTMLResponse(_shell("Test A/B", body, logged_in=True, nav=_nav("accueil")))
+    _set_session_cookie(resp, cid)
+    return resp
+
+
+@router.post("/portail/assistant/comparer/ask")
+async def compare_ask(request: Request):
+    cid = current_portal_client_id(request)
+    if not cid:
+        return JSONResponse({"error": "auth"}, status_code=401)
+    try:
+        payload = await request.json()
+    except (ValueError, json.JSONDecodeError):
+        payload = {}
+    test = _CMP.get(str(payload.get("test") or ""))
+    slot = payload.get("slot")
+    q = str(payload.get("message") or "").strip()[:_MAX_LEN]
+    with SessionLocal() as db:
+        client = db.get(Client, cid)
+        allowed = is_tester(client)
+        name = _first_name(client) if client else ""
+    if not allowed or not test or test["cid"] != cid or slot not in ("A", "B") or not q:
+        return HTMLResponse("Test introuvable — recharge la page.", status_code=400)
+    provider = test["slots"][slot]
+    if not provider_ready(provider):
+        return HTMLResponse(f"Clé API manquante pour l'assistant {slot}.", status_code=503)
+    hist = test["hist"][slot]
+
+    def persist(user_entry, ai_entry):
+        hist.extend([user_entry, ai_entry])
+        _PENDING[ai_entry["id"]] = {"cid": cid, "question": q, **ai_entry}
+        if len(_PENDING) > 2000:
+            _PENDING.pop(next(iter(_PENDING)))
+
+    return _stream(answer_events(provider, cid, q, list(hist), name, True, persist,
+                                 count_searches=False))
+
+
+@router.get("/portail/assistant/comparer/reveal")
+def compare_reveal(request: Request, test: str = ""):
+    cid = current_portal_client_id(request)
+    t = _CMP.get(test)
+    if not cid or not t or t["cid"] != cid:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse({s: f"{_LABELS[p]} ({model_name(p)})" for s, p in t["slots"].items()})
 
 
 @router.post("/portail/assistant/feedback")
@@ -799,18 +1042,24 @@ async def assistant_feedback(request: Request):
         c = db.get(Client, cid)
         chat = list((c.assistant_chat if c else None) or [])
         idx = next((i for i, m in enumerate(chat) if m.get("id") == mid), None)
-        if idx is None:                       # only the member's own answers
+        pending = _PENDING.get(mid)
+        if idx is not None:
+            chat[idx] = {**chat[idx], "rating": rating}
+            c.assistant_chat = chat
+            entry = chat[idx]
+            q = next((chat[j]["text"] for j in range(idx - 1, -1, -1)
+                      if chat[j].get("role") == "user"), None)
+        elif pending and pending["cid"] == cid:          # blind A/B test page
+            entry, q = pending, pending["question"]
+        else:                                            # only the member's own answers
             return JSONResponse({"error": "not found"}, status_code=404)
-        chat[idx] = {**chat[idx], "rating": rating}
-        c.assistant_chat = chat
-        q = next((chat[j]["text"] for j in range(idx - 1, -1, -1)
-                  if chat[j].get("role") == "user"), None)
         row = db.query(AssistantFeedback).filter_by(message_id=mid).first()
         if not row:
             row = AssistantFeedback(message_id=mid, client_id=cid)
             db.add(row)
-        row.rating, row.question, row.answer = rating, q, chat[idx].get("text")
-        row.cards, row.model = chat[idx].get("cards") or [], chat[idx].get("model")
+        row.rating, row.question, row.answer = rating, q, entry.get("text")
+        row.cards = entry.get("cards") or []
+        row.model = f"{entry.get('provider', 'anthropic')}:{entry.get('model')}"
         db.commit()
     return JSONResponse({"ok": True})
 
