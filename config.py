@@ -84,7 +84,7 @@ class Settings:
     FB_LOGIN_APP_SECRET: str = os.getenv("FB_LOGIN_APP_SECRET", "") or os.getenv("FB_APP_SECRET", "")
 
     # --- Portal AI travel assistant (Claude API) ---
-    PORTAL_ASSISTANT_MODEL: str = os.getenv("PORTAL_ASSISTANT_MODEL", "claude-sonnet-4-6")
+    PORTAL_ASSISTANT_MODEL: str = os.getenv("PORTAL_ASSISTANT_MODEL", "claude-sonnet-5-5")
     # Which model answers members: "anthropic" (Claude) or "openai" (ChatGPT).
     PORTAL_ASSISTANT_PROVIDER: str = os.getenv("PORTAL_ASSISTANT_PROVIDER", "anthropic")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
