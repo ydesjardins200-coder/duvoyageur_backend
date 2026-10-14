@@ -49,6 +49,7 @@ from db import AssistantChat, AssistantFeedback, Client, SessionLocal
 import places
 import site_knowledge as kb
 import trip_brief
+import wholesaler_photos
 import hotel_catalog as hc
 from portal import (_bell_panel, _logged_out, _nav, _set_session_cookie, _shell,
                     current_portal_client_id)
@@ -853,6 +854,13 @@ def add_images(cards: list, titles: dict | None = None) -> list:
     from their sites with attribution. Dead links (404/410) are dropped.
     Also builds each card's source list (for the source pill)."""
     titles = titles or {}
+    official = {}
+    for i, c in enumerate(cards):                 # official photos from Transat's public image sitemap
+        hit = wholesaler_photos.lookup(c["hotel"], c.get("destination", ""))
+        if hit:
+            official[i] = hit
+            if not c.get("fiche_url"):
+                c["fiche_url"] = hit["page"]
     urls = list({u for c in cards for u in _card_urls(c)})
     previews = {}
     if urls:
@@ -865,6 +873,12 @@ def add_images(cards: list, titles: dict | None = None) -> list:
                 c[key] = ""
         c["fiches"] = [f for f in c.get("fiches", []) if not previews.get(f, ("", False))[1]]
         gallery, seen = [], set()
+        hit = official.get(cards.index(c))
+        if hit:
+            for img in hit["images"][:8]:
+                src = img + ("&" if "?" in img else "?") + "width=900"
+                gallery.append({"src": src, "host": hit["host"], "page": hit["page"], "official": True})
+                seen.add(src)
         for u in _card_urls(c):
             if not _on(u, WHOLESALERS):
                 continue
@@ -879,8 +893,9 @@ def add_images(cards: list, titles: dict | None = None) -> list:
         for g in c["gallery"]:
             owners.setdefault(g["src"], set()).add(i)
     for c in cards:
-        c["gallery"] = [g for g in c["gallery"] if len(owners.get(g["src"], ())) < 2
-                        and len({_host(u) + "|" + u for u in _SITE_IMG.get(g["src"], ())}) < 2]
+        c["gallery"] = [g for g in c["gallery"] if g.get("official") or (
+            len(owners.get(g["src"], ())) < 2
+            and len({_host(u) + "|" + u for u in _SITE_IMG.get(g["src"], ())}) < 2)]
         c["image"] = c["gallery"][0]["src"] if c["gallery"] else ""
         c["image_from"] = c["gallery"][0]["host"] if c["gallery"] else ""
         c["sources"] = [{"url": u, "host": _host(u), "title": titles.get(u, ""),
@@ -1864,6 +1879,7 @@ def _run_openai(search: bool, system: list, convo: list):
 
 
 _RUNNERS = {"anthropic": _run_anthropic, "openai": _run_openai}
+wholesaler_photos.ensure_fresh()            # loads the photo index in the background
 
 _RESULT_KEYS = ("recherche", "destinations", "hotels", "prix_vus", "budget", "questions", "suivis")
 
@@ -2514,13 +2530,20 @@ def debug_photos(request: Request, url: str = "", hotel: str = "", area: str = "
     with SessionLocal() as db:
         if not is_tester(db.get(Client, cid) if cid else None):
             return HTMLResponse(status_code=404)
-    out = ""
+    st = wholesaler_photos.status()
+    out = (f"<p>Index Transat : <b>{st['hotels']}</b> hôtels"
+           + (f" · erreur : {escape(st['error'])}" if st["error"] else "") + "</p>")
+    if hotel and not url:
+        hit = wholesaler_photos.lookup(hotel, area)
+        out += (f"<p>Correspondance : <a href=\"{escape(hit['page'])}\">{escape(hit['slug'])}</a></p>"
+                + "".join(f"<img src=\"{escape(i)}?width=400\" style='height:110px;margin:4px;border-radius:8px'>"
+                          for i in hit["images"])) if hit else "<p>Aucune correspondance.</p>"
     if url.startswith("https://"):
         _OG_CACHE.pop(url, None)
         img, dead = page_preview(url)
         pics = page_gallery(url, hotel, area)
         d = _DIAG.get(url, {})
-        out = (f"<p>Statut HTTP : <b>{escape(str(d.get('status', '—')))}</b> · type : {escape(d.get('type', '—'))} · "
+        out += (f"<p>Statut HTTP : <b>{escape(str(d.get('status', '—')))}</b> · type : {escape(d.get('type', '—'))} · "
                f"taille : {d.get('bytes', 0):,} octets · &lt;img&gt; : {d.get('imgs', 0)} · "
                f"images dans les données : {d.get('raw_imgs', 0)}</p>"
                f"<p>Image de partage (og:image) : {escape(img or '—')}</p>"
