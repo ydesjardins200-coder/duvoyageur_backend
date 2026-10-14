@@ -84,6 +84,10 @@ class Settings:
     FB_LOGIN_APP_SECRET: str = os.getenv("FB_LOGIN_APP_SECRET", "") or os.getenv("FB_APP_SECRET", "")
 
     # --- Portal AI travel assistant (Claude API) ---
+    # AI travel agent in the portal: OFF (cancelled 2026-10 — too expensive).
+    # Off = portal home is the DMO engine and every assistant endpoint is closed
+    # (no Claude / Google / Pexels call). Code kept; set to 1 to revive.
+    PORTAL_ASSISTANT_ENABLED: bool = os.getenv("PORTAL_ASSISTANT_ENABLED", "0") not in ("0", "false", "False", "")
     PORTAL_ASSISTANT_MODEL: str = os.getenv("PORTAL_ASSISTANT_MODEL", "claude-sonnet-5-5")
     # Which model answers members: "anthropic" (Claude) or "openai" (ChatGPT).
     PORTAL_ASSISTANT_PROVIDER: str = os.getenv("PORTAL_ASSISTANT_PROVIDER", "anthropic")

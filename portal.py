@@ -514,8 +514,11 @@ def _accueil(client, cases, flash: str = "", chat: str = "") -> str:
     """Portal home = the AI travel agent, full screen (chatgpt.com layout).
     Trip/savings cards and the identity box were removed: bookings happen
     self-service in the Softvoyage engine and live in PC Voyages."""
-    from portal_assistant import assistant_panel     # lazy: avoids import cycle
     note = f"<div class='note ok'>{flash}</div>" if flash else ""
+    if not settings.PORTAL_ASSISTANT_ENABLED:      # AI agent cancelled: home = DMO engine
+        from portal_assistant import dmo_body          # lazy: avoids import cycle
+        return note + dmo_body({})
+    from portal_assistant import assistant_panel     # lazy: avoids import cycle
     return note + assistant_panel(client, chat)
 
 
@@ -893,8 +896,10 @@ def _nav(active: str, locked: bool = False) -> str:
     home = f"<a class='pill psite' href='{_SITE}'>← Site principal</a>"
     if locked:                       # KYC incomplete -> no tabs, but still a way out
         return f"<nav class='pnav'>{home}</nav>"
-    items = [("accueil", "/portail", "Accueil"),
-             ("recherche", "/portail/recherche", "Rechercher"),
+    items = ([("accueil", "/portail", "Accueil"),
+              ("recherche", "/portail/recherche", "Rechercher")]
+             if settings.PORTAL_ASSISTANT_ENABLED else
+             [("accueil", "/portail", "Rechercher un forfait")]) + [
              ("aide", "/portail/service", "Aide"),
              ("profil", "/portail/profil", "Mon profil")]
     links = "".join(
@@ -1026,8 +1031,8 @@ def portal_home(request: Request, new: int = 0, avis: int = 0, c: str = ""):
         cases = list(client.requests)
         body = _kyc_banner(client) + _accueil(client, cases, flash=flash, chat=c)
         bell = _bell_panel(client)
-    resp = HTMLResponse(_shell("Accueil", body, logged_in=True,
-                               nav=_nav("accueil"), bell=bell, full=True))
+    resp = HTMLResponse(_shell("Accueil", body, logged_in=True, nav=_nav("accueil"), bell=bell,
+                               full=settings.PORTAL_ASSISTANT_ENABLED))
     _set_session_cookie(resp, cid)          # sliding expiry on every visit
     return resp
 
@@ -1318,8 +1323,8 @@ def portal_service(request: Request, sent: int = 0):
             "L8.92 9.88a1.5 1.5 0 0 1 2.17-.4l2.34 1.75c.21.16.51.16.72 0l3.16-2.4c.42-.32.97.18.69.63z'/></svg>"
             "<div><b>Écrire sur Messenger</b><span>Ouvre une conversation avec notre équipe.</span></div>"
             "<span class='sc-go'>→</span></a>"
-            "<p class='muted' style='margin-top:14px'>Pour une question générale (destination, "
-            "saison, bagages), ton <a href='/portail'>assistant voyage</a> répond tout de suite.</p>"
+            "<p class='muted' style='margin-top:14px'>Pour trouver ton forfait avec ton rabais : "
+            "<a href='/portail/recherche'>notre moteur de recherche</a>.</p>"
             + (("<h3 class='acc-h' style='margin-top:26px'>Tes anciennes demandes</h3>" + old) if old else ""))
         bell = _bell_panel(client)
     resp = HTMLResponse(_shell("Aide", body, logged_in=True, nav=_nav("aide"), bell=bell))

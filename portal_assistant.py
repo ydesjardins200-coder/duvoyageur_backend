@@ -2023,7 +2023,8 @@ def _run_openai(search: bool, system: list, convo: list):
 
 
 _RUNNERS = {"anthropic": _run_anthropic, "openai": _run_openai}
-wholesaler_photos.ensure_fresh()            # loads the photo index in the background
+if settings.PORTAL_ASSISTANT_ENABLED:
+    wholesaler_photos.ensure_fresh()        # loads the photo index in the background
 
 _RESULT_KEYS = ("recherche", "destinations", "hotels", "prix_vus", "budget", "questions", "suivis")
 
@@ -2321,6 +2322,8 @@ def _stream(lines, ndjson: bool = True):
 
 @router.post("/portail/assistant")
 async def assistant_chat(request: Request):
+    if not settings.PORTAL_ASSISTANT_ENABLED:
+        return _assistant_off()
     cid = current_portal_client_id(request)
     if not cid:
         return JSONResponse({"error": "auth"}, status_code=401)
@@ -2452,6 +2455,8 @@ _CMP_JS = r"""
 
 @router.get("/portail/assistant/comparer", response_class=HTMLResponse)
 def compare_page(request: Request):
+    if not settings.PORTAL_ASSISTANT_ENABLED:
+        return RedirectResponse("/portail", status_code=303)
     cid = current_portal_client_id(request)
     if not cid:
         return RedirectResponse("/portail/connexion", status_code=303)
@@ -2487,6 +2492,8 @@ def compare_page(request: Request):
 
 @router.post("/portail/assistant/comparer/ask")
 async def compare_ask(request: Request):
+    if not settings.PORTAL_ASSISTANT_ENABLED:
+        return _assistant_off()
     cid = current_portal_client_id(request)
     if not cid:
         return JSONResponse({"error": "auth"}, status_code=401)
@@ -2604,6 +2611,8 @@ def restructure(entry: dict, before: list, q: str) -> dict:
 
 @router.post("/portail/assistant/fix")
 async def assistant_fix(request: Request):
+    if not settings.PORTAL_ASSISTANT_ENABLED:
+        return _assistant_off()
     """Lazy repair of a stored answer shown without its cards/table."""
     cid = current_portal_client_id(request)
     if not cid:
@@ -2714,6 +2723,27 @@ def _crit_chips(crit: dict) -> str:
             + "".join(f"<span class='crit-c'>{escape(x)}</span>" for x in lab) + "</div>")
 
 
+def dmo_body(crit: dict) -> str:
+    """The Softvoyage DMO engine (member rebate already applied), framed."""
+    note = "" if settings.SIRRVA_ALIAS else (
+        "<div class='note warn'>Moteur en cours de configuration avec Softvoyage"
+        + (" : tes critères ci-dessus lui seront transmis automatiquement dès son activation."
+           if crit else ". Il s'affichera ici dès son activation.") + "</div>")
+    back = ("<p class='muted'><a href='/portail'>← Retour à ton assistant voyage</a></p>"
+            if settings.PORTAL_ASSISTANT_ENABLED else
+            "<p class='muted'>Une question sur un forfait ou ta réservation ? "
+            f"<a href=\"{escape(settings.MESSENGER_URL)}\" target='_blank' rel='noopener'>Écris-nous sur Messenger</a>.</p>")
+    return ("<div class='hello'><h2>Rechercher un forfait</h2>"
+            "<p class='lede'>Ton Rabais Récompense est déjà appliqué aux prix affichés.</p></div>"
+            + _crit_chips(crit) + note
+            + f"<div class='engine'><iframe src=\"{escape(_engine_url(crit))}\" "
+              "title='Moteur de recherche de forfaits' loading='eager'></iframe></div>" + back)
+
+
+def _assistant_off():
+    return JSONResponse({"error": "assistant désactivé"}, status_code=410)
+
+
 @router.get("/portail/recherche", response_class=HTMLResponse)
 def portal_search(request: Request):
     cid = current_portal_client_id(request)
@@ -2725,17 +2755,10 @@ def portal_search(request: Request):
             return _logged_out()
         bell = _bell_panel(client)
     crit = _criteria(request)
-    note = "" if settings.SIRRVA_ALIAS else (
-        "<div class='note warn'>Moteur en cours de configuration avec Softvoyage : tes critères "
-        "ci-dessus lui seront transmis automatiquement dès son activation.</div>")
-    body = ("<div class='hello'><h2>Rechercher un forfait</h2>"
-            "<p class='lede'>Ton Rabais Récompense est déjà appliqué aux prix affichés.</p></div>"
-            + _crit_chips(crit) + note
-            + f"<div class='engine'><iframe src=\"{escape(_engine_url(crit))}\" "
-              "title='Moteur de recherche de forfaits' loading='eager'></iframe></div>"
-            + "<p class='muted'><a href='/portail'>← Retour à ton assistant voyage</a></p>")
+    body = dmo_body(crit)
     resp = HTMLResponse(_shell("Rechercher", body, logged_in=True,
-                               nav=_nav("recherche"), bell=bell))
+                               nav=_nav("recherche" if settings.PORTAL_ASSISTANT_ENABLED else "accueil"),
+                               bell=bell))
     _set_session_cookie(resp, cid)
     return resp
 
