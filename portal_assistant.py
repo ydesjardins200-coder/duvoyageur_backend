@@ -627,6 +627,9 @@ def _ld_images(chunks: list) -> list:
 
 _GALLERY: dict = {}             # page url -> [image urls] (process-wide)
 _IMGS: dict = {}                # page url -> [(img url, alt)] (process-wide)
+_RAW: dict = {}                 # page url -> image URLs found anywhere in the HTML (embedded JSON too)
+_DIAG: dict = {}                # page url -> what the server saw (status, sizes) — for the debug page
+_RAW_IMG = re.compile(r"""(?:https?:)?(?:\\?/){2}[^"'\s()<>]+?\.(?:jpe?g|webp|png)(?:\?[^"'\s()<>]*)?""", re.I)
 _SITE_IMG: dict = {}            # image url -> {page urls showing it as THEIR photo}
 _NOT_PHOTO = re.compile(r"(?i)(logo|icon|sprite|placeholder|default|favicon|badge|flag|"
                         r"avatar|banner-generic|\.svg(\?|$)|\.gif(\?|$)|1x1|pixel)")
@@ -678,10 +681,16 @@ def page_preview(url: str):
     try:
         req = urllib.request.Request(url, headers={"User-Agent": _UA,
                                                    "Accept-Language": "fr-CA,fr;q=0.9"})
-        with urllib.request.urlopen(req, timeout=3) as r:
+        with urllib.request.urlopen(req, timeout=4) as r:
+            _DIAG[url] = {"status": getattr(r, "status", 200), "type": r.headers.get("Content-Type") or ""}
             if "html" in (r.headers.get("Content-Type") or ""):
                 p = _OgParser()
-                p.feed(r.read(900_000).decode("utf-8", "ignore"))
+                raw = r.read(2_500_000).decode("utf-8", "ignore")
+                p.feed(raw)
+                # photos often live in the page's embedded data (JS frameworks), not in <img>
+                _RAW[url] = list(dict.fromkeys(
+                    urljoin(url, m.replace("\\/", "/")) for m in _RAW_IMG.findall(raw)))[:400]
+                _DIAG[url].update(bytes=len(raw), imgs=len(p.imgs), raw_imgs=len(_RAW[url]))
                 cand = urljoin(url, p.image) if p.image else ""
                 if cand.startswith("https://"):
                     img = cand
@@ -694,6 +703,7 @@ def page_preview(url: str):
                 _IMGS[url] = [(urljoin(url, s), alt) for s, alt in p.imgs
                               if urljoin(url, s).startswith("https://")]
     except urllib.error.HTTPError as exc:
+        _DIAG[url] = {"status": exc.code}
         dead = exc.code in (404, 410)
         if not dead:            # 403/5xx: site blocks bots or is down — link may still work
             log.info("preview unavailable (%s) for %s", exc.code, url)
@@ -703,6 +713,8 @@ def page_preview(url: str):
         _OG_CACHE.clear()
         _GALLERY.clear()
         _IMGS.clear()
+        _RAW.clear()
+        _DIAG.clear()
     _OG_CACHE[url] = (img, dead)
     return img, dead
 
@@ -733,6 +745,10 @@ def page_gallery(url: str, hotel: str = "", area: str = "") -> list:
         need = 1 if len(toks) == 1 else 2
         for src, alt in _IMGS.get(url, []):
             if src not in named and len(toks & set(hc_norm(alt + " " + src).split())) >= need:
+                named.append(src)
+        for src in _RAW.get(url, []):     # e.g. …/royalton-splash-punta-cana/pool-01.jpg
+            if src not in named and src.startswith("https://") and \
+                    len(toks & set(hc_norm(urlparse(src).path).split())) >= need:
                 named.append(src)
     out = []
     for p in named + base:
@@ -2489,3 +2505,34 @@ def portal_search(request: Request):
                                nav=_nav("recherche"), bell=bell))
     _set_session_cookie(resp, cid)
     return resp
+
+
+@router.get("/portail/assistant/debug-photos", response_class=HTMLResponse)
+def debug_photos(request: Request, url: str = "", hotel: str = "", area: str = ""):
+    """Testers only: what our server actually sees on a wholesaler hotel page."""
+    cid = current_portal_client_id(request)
+    with SessionLocal() as db:
+        if not is_tester(db.get(Client, cid) if cid else None):
+            return HTMLResponse(status_code=404)
+    out = ""
+    if url.startswith("https://"):
+        _OG_CACHE.pop(url, None)
+        img, dead = page_preview(url)
+        pics = page_gallery(url, hotel, area)
+        d = _DIAG.get(url, {})
+        out = (f"<p>Statut HTTP : <b>{escape(str(d.get('status', '—')))}</b> · type : {escape(d.get('type', '—'))} · "
+               f"taille : {d.get('bytes', 0):,} octets · &lt;img&gt; : {d.get('imgs', 0)} · "
+               f"images dans les données : {d.get('raw_imgs', 0)}</p>"
+               f"<p>Image de partage (og:image) : {escape(img or '—')}</p>"
+               f"<h3>Photos retenues pour « {escape(hotel)} » : {len(pics)}</h3>"
+               + "".join(f"<img src=\"{escape(p)}\" referrerpolicy='no-referrer' "
+                         "style='height:110px;margin:4px;border-radius:8px'>" for p in pics)
+               + "<h3>Toutes les images trouvées (40 premières)</h3><ol>"
+               + "".join(f"<li>{escape(u)}</li>" for u in (_RAW.get(url) or [])[:40]) + "</ol>")
+    return HTMLResponse(
+        "<!doctype html><meta charset='utf-8'><title>Debug photos</title>"
+        "<body style='font-family:system-ui;padding:20px;background:#03121b;color:#eafcff'>"
+        "<h2>Debug photos grossiste</h2><form>"
+        f"<input name='url' value=\"{escape(url)}\" placeholder='URL de la fiche (Transat, Sunwing…)' style='width:60%'> "
+        f"<input name='hotel' value=\"{escape(hotel)}\" placeholder=\"Nom de l'hôtel\"> "
+        f"<input name='area' value=\"{escape(area)}\" placeholder='Destination'> <button>Analyser</button></form>{out}")
