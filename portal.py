@@ -40,6 +40,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from config import settings
+from i18n_portal import L, is_en
 from db import (Case, Client, SessionLocal, add_identity, find_client_by_identity, log_activity,
                 normalize_email, normalize_phone, replace_primary_identity)
 from trip_schema import TripRequest
@@ -207,6 +208,11 @@ def _trip_travelers(t: dict):
 
 
 _SITE = "https://duvoyageur.netlify.app"
+
+
+def _site() -> str:
+    """Public site home in the visitor's language."""
+    return _SITE + ("/en/" if is_en() else "/")
 
 # Destination keyword -> (hub slug, label). Ordered: more specific first, first
 # substring match wins (matched against destination + hotel, accent-insensitive).
@@ -568,6 +574,12 @@ _KYC_FIELDS = [
     ("date_of_birth", "Date de naissance", "date", True, True),
 ]
 _IDENTITY_KEYS = ("legal_first_name", "legal_last_name", "email", "date_of_birth")
+_LBL_EN = {"Prénom": "First name", "Nom de famille": "Last name", "Courriel": "Email",
+           "Date de naissance": "Date of birth"}
+
+
+def _lbl(label: str) -> str:
+    return L(label, _LBL_EN.get(label, label))
 
 
 def _kyc_value(client, key):
@@ -596,20 +608,20 @@ def _dob_field(value: str = "") -> str:
         p = str(value).split("-")
         if len(p) == 3 and all(p):
             y, mm, dd = p[0], p[1].zfill(2), p[2].zfill(2)
-    days = "<option value=''>jj</option>" + "".join(
+    days = f"<option value=''>{L('jj', 'dd')}</option>" + "".join(
         f"<option value='{i:02d}'{' selected' if f'{i:02d}' == dd else ''}>{i:02d}</option>"
         for i in range(1, 32))
     months = "<option value=''>mm</option>" + "".join(
         f"<option value='{i:02d}'{' selected' if f'{i:02d}' == mm else ''}>{i:02d}</option>"
         for i in range(1, 13))
     cur = datetime.utcnow().year
-    years = "<option value=''>aaaa</option>" + "".join(
+    years = f"<option value=''>{L('aaaa', 'yyyy')}</option>" + "".join(
         f"<option value='{yy}'{' selected' if str(yy) == y else ''}>{yy}</option>"
         for yy in range(cur, cur - 101, -1))
     return ("<div class='dobgrid'>"
-            f"<select name='dob_d' aria-label='Jour' required>{days}</select>"
-            f"<select name='dob_m' aria-label='Mois' required>{months}</select>"
-            f"<select name='dob_y' aria-label='Année' required>{years}</select>"
+            f"<select name='dob_d' aria-label='{L('Jour', 'Day')}' required>{days}</select>"
+            f"<select name='dob_m' aria-label='{L('Mois', 'Month')}' required>{months}</select>"
+            f"<select name='dob_y' aria-label='{L('Année', 'Year')}' required>{years}</select>"
             "</div>")
 
 
@@ -627,13 +639,14 @@ def _kyc_banner(client) -> str:
     n = len(missing)
     return (
         "<a class='banner' href='/portail/profil'>"
-        "<div class='banner-txt'><b>Complète ton profil</b>"
-        f"<span>{n} champ{'s' if n > 1 else ''} à remplir ({escape(', '.join(missing).lower())}).</span></div>"
-        "<span class='banner-cta'>Compléter →</span></a>")
+        f"<div class='banner-txt'><b>{L('Complète ton profil', 'Complete your profile')}</b>"
+        + L(f"<span>{n} champ{'s' if n > 1 else ''} à remplir ({escape(', '.join(missing).lower())}).</span></div>",
+            f"<span>{n} field{'s' if n > 1 else ''} to fill in ({escape(', '.join(_lbl(m) for m in missing).lower())}).</span></div>")
+        + f"<span class='banner-cta'>{L('Compléter →', 'Complete →')}</span></a>")
 
 
 def _profile_form(client, saved: bool = False) -> str:
-    ok = "<div class='note ok'>Profil enregistré ✓</div>" if saved else ""
+    ok = f"<div class='note ok'>{L('Profil enregistré ✓', 'Profile saved ✓')}</div>" if saved else ""
 
     def field(k, label, typ, req, half):
         val = escape(str(_kyc_value(client, k) or ""))
@@ -643,9 +656,9 @@ def _profile_form(client, saved: bool = False) -> str:
         if miss:
             cls += " miss"
         if k == "date_of_birth":
-            return (f"<div class='{cls}'><label>{label}{star}</label>"
+            return (f"<div class='{cls}'><label>{_lbl(label)}{star}</label>"
                     f"{_dob_field(_kyc_value(client, k) or '')}</div>")
-        return (f"<div class='{cls}'><label>{label}{star}</label>"
+        return (f"<div class='{cls}'><label>{_lbl(label)}{star}</label>"
                 f"<input name='{k}' type='{typ}' value=\"{val}\" inputmode='"
                 f"{'email' if typ == 'email' else ('tel' if typ == 'tel' else 'text')}'"
                 f"{' required' if req else ''}></div>")
@@ -659,10 +672,10 @@ def _profile_form(client, saved: bool = False) -> str:
     return (
         ok
         + "<form class='form' method='post' action='/portail/profil'>"
-        + group("Identité", _IDENTITY_KEYS)
+        + group(L("Identité", "Identity"), _IDENTITY_KEYS)
         + "<div class='actions'>"
-          "<button class='btn block' type='submit'>Enregistrer mon profil</button>"
-          "<a class='btn ghost' href='/portail'>Retour</a></div></form>")
+          f"<button class='btn block' type='submit'>{L('Enregistrer mon profil', 'Save my profile')}</button>"
+          f"<a class='btn ghost' href='/portail'>{L('Retour', 'Back')}</a></div></form>")
 
 
 # --------------------------------------------------------------------------- #
@@ -893,15 +906,15 @@ def _service_threads(cases) -> str:
 # Shell + nav
 # --------------------------------------------------------------------------- #
 def _nav(active: str, locked: bool = False) -> str:
-    home = f"<a class='pill psite' href='{_SITE}'>← Site principal</a>"
+    home = f"<a class='pill psite' href='{_site()}'>{L('← Site principal', '← Main site')}</a>"
     if locked:                       # KYC incomplete -> no tabs, but still a way out
         return f"<nav class='pnav'>{home}</nav>"
     items = ([("accueil", "/portail", "Accueil"),
               ("recherche", "/portail/recherche", "Rechercher")]
              if settings.PORTAL_ASSISTANT_ENABLED else
-             [("accueil", "/portail", "Rechercher un forfait")]) + [
-             ("aide", "/portail/service", "Aide"),
-             ("profil", "/portail/profil", "Mon profil")]
+             [("accueil", "/portail", L("Rechercher un forfait", "Find a package"))]) + [
+             ("aide", "/portail/service", L("Aide", "Help")),
+             ("profil", "/portail/profil", L("Mon profil", "My profile"))]
     links = "".join(
         f"<a class='pill{' on' if k == active else ''}' href='{href}'>{label}</a>"
         for k, href, label in items)
@@ -913,13 +926,21 @@ def _nav(active: str, locked: bool = False) -> str:
 # --------------------------------------------------------------------------- #
 def _shell(title: str, body: str, logged_in: bool = False, nav: str = "",
            bell: str = "", full: bool = False) -> str:
-    logout = ("<a class='logout' href='/portail/logout'>Déconnexion</a>"
+    logout = (f"<a class='logout' href='/portail/logout'>{L('Déconnexion', 'Log out')}</a>"
               if logged_in else "")
+    other = L("en", "fr")
+    logout = (f"<a class='logout plang' href='?lang={other}' hreflang='{other}'>{L('English', 'Français')}</a>"
+              + logout)
     # The notification bell was retired with the admin queue (bookings and
     # support now live in PC Voyages / Messenger); `bell` is accepted and ignored.
-    actions = f"<div class='topact'>{logout}</div>" if logged_in else logout
-    return _PORTAL_PAGE.format(title=escape(title), body=body, logout=actions, nav=nav,
+    actions = f"<div class='topact'>{logout}</div>"
+    page = _PORTAL_PAGE.format(title=escape(title), body=body, logout=actions, nav=nav,
                                page=" chatpage" if full else "")
+    if is_en():
+        page = (page.replace('<html lang="fr">', '<html lang="en">')
+                    .replace("<span>Espace client</span>", "<span>Member area</span>")
+                    .replace("Permis d'agence 700495", "Québec travel agency licence 700495"))
+    return page
 
 
 def _info_page(title: str, message: str, logged_in: bool = False) -> str:
@@ -931,30 +952,32 @@ def _info_page(title: str, message: str, logged_in: bool = False) -> str:
 def _confirm_page(token: str, name) -> str:
     """Interstitial shown on the GET — a human clicks the button to POST and log
     in. Link-preview crawlers do GET only, so they never consume the token."""
-    hello = f"Bonjour {escape(name)} 👋" if name else "Bienvenue 👋"
+    hello = (L("Bonjour", "Hi") + f" {escape(name)} 👋") if name else L("Bienvenue 👋", "Welcome 👋")
     body = (
         "<div class='infobox'>"
         f"<h2>{hello}</h2>"
-        "<p>Clique ci-dessous pour ouvrir ton espace client en toute sécurité.</p>"
+        f"<p>{L('Clique ci-dessous pour ouvrir ton espace client en toute sécurité.', 'Click below to securely open your member area.')}</p>"
         "<form method='post' action='/portail/login' style='margin-top:18px'>"
         f"<input type='hidden' name='token' value=\"{escape(token)}\">"
-        "<button class='btn' type='submit'>Accéder à mon espace →</button>"
+        f"<button class='btn' type='submit'>{L('Accéder à mon espace →', 'Open my member area →')}</button>"
         "</form></div>")
-    return _shell("Connexion", body)
+    return _shell(L("Connexion", "Log in"), body)
 
 
 def _expired_page():
     return HTMLResponse(_info_page(
-        "Lien expiré",
-        "Ce lien n'est plus valide (il a peut-être expiré ou déjà été "
-        "utilisé). Écris-nous sur Messenger et on t'en renvoie un tout neuf. 🙂"))
+        L("Lien expiré", "Link expired"),
+        L("Ce lien n'est plus valide (il a peut-être expiré ou déjà été "
+          "utilisé). Écris-nous sur Messenger et on t'en renvoie un tout neuf. 🙂",
+          "This link is no longer valid (it may have expired or already been used). "
+          "Message us on Messenger and we'll send you a fresh one. 🙂")))
 
 
 def _invalid_page():
     return HTMLResponse(_info_page(
-        "Lien invalide",
-        "Ce lien n'est plus valide. Écris-nous sur Messenger pour en "
-        "recevoir un nouveau. 🙂"))
+        L("Lien invalide", "Invalid link"),
+        L("Ce lien n'est plus valide. Écris-nous sur Messenger pour en "
+          "recevoir un nouveau. 🙂", "This link is no longer valid. Message us on Messenger to get a new one. 🙂")))
 
 
 def _check_token(token: str):
@@ -1031,7 +1054,7 @@ def portal_home(request: Request, new: int = 0, avis: int = 0, c: str = ""):
         cases = list(client.requests)
         body = _kyc_banner(client) + _accueil(client, cases, flash=flash, chat=c)
         bell = _bell_panel(client)
-    resp = HTMLResponse(_shell("Accueil", body, logged_in=True, nav=_nav("accueil"), bell=bell,
+    resp = HTMLResponse(_shell(L("Accueil", "Home"), body, logged_in=True, nav=_nav("accueil"), bell=bell,
                                full=settings.PORTAL_ASSISTANT_ENABLED))
     _set_session_cookie(resp, cid)          # sliding expiry on every visit
     return resp
@@ -1071,11 +1094,12 @@ def portal_profile(request: Request, saved: int = 0):
         client = db.get(Client, cid)
         if not client:
             return _logged_out()
-        lede = "Ces infos nous servent à réserver tes voyages au bon nom."
-        body = (f"<div class='hello'><h2>Mon profil</h2><p class='lede'>{lede}</p></div>"
+        lede = L("Ces infos nous servent à réserver tes voyages au bon nom.",
+                 "We use this information to book your trips under the right name.")
+        body = (f"<div class='hello'><h2>{L('Mon profil', 'My profile')}</h2><p class='lede'>{lede}</p></div>"
                 + _profile_form(client, saved=bool(saved)))
         bell = _bell_panel(client)
-    resp = HTMLResponse(_shell("Mon profil", body, logged_in=True,
+    resp = HTMLResponse(_shell(L("Mon profil", "My profile"), body, logged_in=True,
                                nav=_nav("profil"), bell=bell))
     _set_session_cookie(resp, cid)
     return resp
@@ -1311,9 +1335,12 @@ def portal_service(request: Request, sent: int = 0):
         old = _service_threads(cases) if any(
             (c.kind or "trip") == "support" for c in cases) else ""
         body = (
-            "<div class='hello'><h2>Besoin d'aide ?</h2>"
-            "<p class='lede'>Une question sur ta réservation, un changement, un pépin ? "
-            "Écris-nous sur Messenger, un conseiller te répond.</p></div>"
+            L("<div class='hello'><h2>Besoin d'aide ?</h2>"
+                "<p class='lede'>Une question sur ta réservation, un changement, un pépin ? "
+                "Écris-nous sur Messenger, un conseiller te répond.</p></div>",
+                "<div class='hello'><h2>Need help?</h2>"
+                "<p class='lede'>A question about your booking, a change, a problem? "
+                "Message us on Messenger and a travel advisor will answer.</p></div>") +
             f"<a class='msgr' href=\"{escape(settings.MESSENGER_URL)}\" target='_blank' "
             "rel='noopener'>"
             "<svg width='26' height='26' viewBox='0 0 24 24' aria-hidden='true'><path fill='#fff' "
@@ -1321,13 +1348,16 @@ def portal_service(request: Request, sent: int = 0):
             "0 0 0 1.12.71l1.98-.87a.8.8 0 0 1 .53-.04c.91.25 1.87.38 2.91.38 5.64 0 10-4.13 10-9.7S17.64 "
             "2 12 2zm6 7.46-2.94 4.66a1.5 1.5 0 0 1-2.17.4l-2.34-1.75a.6.6 0 0 0-.72 0l-3.16 2.4c-.42.32-.97-.18-.69-.63"
             "L8.92 9.88a1.5 1.5 0 0 1 2.17-.4l2.34 1.75c.21.16.51.16.72 0l3.16-2.4c.42-.32.97.18.69.63z'/></svg>"
-            "<div><b>Écrire sur Messenger</b><span>Ouvre une conversation avec notre équipe.</span></div>"
-            "<span class='sc-go'>→</span></a>"
-            "<p class='muted' style='margin-top:14px'>Pour trouver ton forfait avec ton rabais : "
-            "<a href='/portail/recherche'>notre moteur de recherche</a>.</p>"
+            + L("<div><b>Écrire sur Messenger</b><span>Ouvre une conversation avec notre équipe.</span></div>",
+                "<div><b>Message us on Messenger</b><span>Start a conversation with our team.</span></div>")
+            + "<span class='sc-go'>→</span></a>"
+            + L("<p class='muted' style='margin-top:14px'>Pour trouver ton forfait avec ton rabais : "
+                "<a href='/portail/recherche'>notre moteur de recherche</a>.</p>",
+                "<p class='muted' style='margin-top:14px'>To find your package with your discount: "
+                "<a href='/portail/recherche'>our booking engine</a>.</p>")
             + (("<h3 class='acc-h' style='margin-top:26px'>Tes anciennes demandes</h3>" + old) if old else ""))
         bell = _bell_panel(client)
-    resp = HTMLResponse(_shell("Aide", body, logged_in=True, nav=_nav("aide"), bell=bell))
+    resp = HTMLResponse(_shell(L("Aide", "Help"), body, logged_in=True, nav=_nav("aide"), bell=bell))
     _set_session_cookie(resp, cid)
     return resp
 
@@ -1490,7 +1520,7 @@ async def portal_notifications_read(request: Request):
 def portal_logout():
     # Log out and send the visitor back to the public site home (Netlify), not to
     # a standalone confirmation page. Both portal cookies are cleared on the way.
-    return _clear_session_cookies(RedirectResponse(_SITE, status_code=303))
+    return _clear_session_cookies(RedirectResponse(_site(), status_code=303))
 
 
 def _is_logged_in(request: Request) -> bool:
@@ -1559,37 +1589,41 @@ def _login_form(error: str = "") -> str:
     err = f"<div class='note err'>{escape(error)}</div>" if error else ""
     return (
         err
-        + "<div class='hello'><h2>Connexion</h2>"
-        "<p class='lede'>Accède à ton espace en un clic.</p></div>"
+        + f"<div class='hello'><h2>{L('Connexion', 'Log in')}</h2>"
+        f"<p class='lede'>{L('Accède à ton espace en un clic.', 'Access your member area in one click.')}</p></div>"
         + _social_buttons()
         + "<form class='form' method='post' action='/portail/connexion'>"
         "<div class='fset'><div class='formgrid'>"
-        "<div class='field'><label>Courriel</label>"
+        f"<div class='field'><label>{L('Courriel', 'Email')}</label>"
         "<input name='email' type='email' inputmode='email' autocomplete='email' required></div>"
-        "<div class='field'><label>Date de naissance</label>"
+        f"<div class='field'><label>{L('Date de naissance', 'Date of birth')}</label>"
         f"{_dob_field()}</div>"
         "</div></div>"
-        "<div class='actions'><button class='btn block' type='submit'>Me connecter</button></div>"
+        f"<div class='actions'><button class='btn block' type='submit'>{L('Me connecter', 'Log in')}</button></div>"
         "</form>"
-        "<p class='muted' style='text-align:center;margin-top:16px'>Pas encore de compte ? "
-        "<a href='/portail/inscription'>Crée-le en 1 minute</a>.<br>Tu arrives de "
-        "Messenger ? Ouvre « 🔐 Mon espace client » dans le menu ☰ pour recevoir "
-        "ton lien.</p>")
+        + L("<p class='muted' style='text-align:center;margin-top:16px'>Pas encore de compte ? "
+            "<a href='/portail/inscription'>Crée-le en 1 minute</a>.<br>Tu arrives de "
+            "Messenger ? Ouvre « 🔐 Mon espace client » dans le menu ☰ pour recevoir "
+            "ton lien.</p>",
+            "<p class='muted' style='text-align:center;margin-top:16px'>No account yet? "
+            "<a href='/portail/inscription'>Create one in 1 minute</a>.<br>Coming from "
+            "Messenger? Open « 🔐 Mon espace client » in the ☰ menu to get your link.</p>"))
 
 
 @router.get("/portail/connexion", response_class=HTMLResponse)
 def portal_login_page(request: Request):
     if current_portal_client_id(request):
         return RedirectResponse("/portail", status_code=303)
-    return HTMLResponse(_shell("Connexion", _login_form(), logged_in=False))
+    return HTMLResponse(_shell(L("Connexion", "Log in"), _login_form(), logged_in=False))
 
 
 @router.post("/portail/connexion")
 async def portal_login_credentials(request: Request):
     ip = request.client.host if request.client else "?"
     if not _rate_ok(ip):
-        return HTMLResponse(_shell("Connexion", _login_form(
-            "Trop de tentatives. Réessaie dans quelques minutes."), logged_in=False))
+        return HTMLResponse(_shell(L("Connexion", "Log in"), _login_form(
+            L("Trop de tentatives. Réessaie dans quelques minutes.", "Too many attempts. Try again in a few minutes.")),
+            logged_in=False))
     form = await request.form()
     email = normalize_email((form.get("email") or "").strip())
     dob = _dob_from_form(form)
@@ -1602,8 +1636,8 @@ async def portal_login_credentials(request: Request):
                 cid = client.id
     if not cid:
         _rate_hit(ip)
-        return HTMLResponse(_shell("Connexion", _login_form(
-            "Courriel ou date de naissance invalide."), logged_in=False))
+        return HTMLResponse(_shell(L("Connexion", "Log in"), _login_form(
+            L("Courriel ou date de naissance invalide.", "Invalid email or date of birth.")), logged_in=False))
     resp = RedirectResponse("/portail", status_code=303)
     _set_session_cookie(resp, cid)
     return resp
@@ -1638,20 +1672,21 @@ _F_ICON = ("<svg width='18' height='18' viewBox='0 0 24 24' aria-hidden='true'>"
            "<path fill='#fff' d='M24 12.07C24 5.4 18.63 0 12 0S0 5.4 0 12.07C0 18.1 4.39 23.1 10.13 24v-8.44H7.08v-3.49h3.04V9.41c0-3.02 1.79-4.69 4.53-4.69 1.31 0 2.68.24 2.68.24v2.97h-1.51c-1.49 0-1.96.93-1.96 1.89v2.25h3.33l-.53 3.49h-2.8V24C19.61 23.1 24 18.1 24 12.07z'/></svg>")
 
 
-def _social_buttons(verb: str = "Continuer") -> str:
+def _social_buttons(verb: str = "") -> str:
     """Google / Facebook buttons — each one only appears once its OAuth keys
     are configured on Railway, so nothing breaks before setup."""
+    verb = verb or L("Continuer", "Continue")
     btns = []
     if settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET:
         btns.append("<a class='sbtn sg' href='/portail/auth/google'>"
-                    f"{_G_ICON}<span>{verb} avec Google</span></a>")
+                    f"{_G_ICON}<span>{verb} {L('avec', 'with')} Google</span></a>")
     if settings.FB_LOGIN_APP_ID and settings.FB_LOGIN_APP_SECRET:
         btns.append("<a class='sbtn sf' href='/portail/auth/facebook'>"
-                    f"{_F_ICON}<span>{verb} avec Facebook</span></a>")
+                    f"{_F_ICON}<span>{verb} {L('avec', 'with')} Facebook</span></a>")
     if not btns:
         return ""
     return ("<div class='social'>" + "".join(btns) + "</div>"
-            "<div class='orsep'><span>ou avec ton courriel</span></div>")
+            f"<div class='orsep'><span>{L('ou avec ton courriel', 'or with your email')}</span></div>")
 
 
 def _signup_form(values=None, error: str = "") -> str:
@@ -1662,29 +1697,34 @@ def _signup_form(values=None, error: str = "") -> str:
         val = escape(str(values.get(k) or ""))
         cls = "field half" if half else "field"
         if k == "date_of_birth":
-            return (f"<div class='{cls}'><label>{label}</label>"
+            return (f"<div class='{cls}'><label>{_lbl(label)}</label>"
                     f"{_dob_field(values.get(k) or '')}"
-                    "<small class='hint'>Elle te sert à te reconnecter avec ton courriel.</small></div>")
+                    f"<small class='hint'>{L('Elle te sert à te reconnecter avec ton courriel.', 'You use it to log back in with your email.')}</small></div>")
         auto = {"legal_first_name": "given-name", "legal_last_name": "family-name",
                 "email": "email"}.get(k, "on")
-        return (f"<div class='{cls}'><label>{label}</label>"
+        return (f"<div class='{cls}'><label>{_lbl(label)}</label>"
                 f"<input name='{k}' type='{typ}' value=\"{val}\" autocomplete='{auto}' "
                 f"inputmode='{'email' if typ == 'email' else 'text'}' required></div>")
 
     fields = "".join(field(*f) for f in _KYC_FIELDS)
     return (
         err
-        + "<div class='hello'><h2>Créer mon compte</h2>"
-        "<p class='lede'>30 secondes et ton espace est prêt : tu cherches et tu réserves "
-        "ton forfait toi-même, avec ton Rabais Récompense déjà appliqué.</p></div>"
+        + L("<div class='hello'><h2>Créer mon compte</h2>"
+            "<p class='lede'>30 secondes et ton espace est prêt : tu cherches et tu réserves "
+            "ton forfait toi-même, avec ton Rabais Récompense déjà appliqué.</p></div>",
+            "<div class='hello'><h2>Create my account</h2>"
+            "<p class='lede'>30 seconds and your member area is ready: you search and book "
+            "your package yourself, with your Reward Discount already applied.</p></div>")
         + _social_buttons()
         + "<form class='form' method='post' action='/portail/inscription'>"
         f"<div class='fset'><div class='formgrid'>{fields}</div></div>"
         "<div class='actions'>"
-        "<button class='btn block' type='submit'>Créer mon compte</button></div>"
+        f"<button class='btn block' type='submit'>{L('Créer mon compte', 'Create my account')}</button></div>"
         "</form>"
-        "<p class='muted' style='text-align:center;margin-top:16px'>Déjà un compte ? "
-        "<a href='/portail/connexion'>Connecte-toi</a></p>")
+        + L("<p class='muted' style='text-align:center;margin-top:16px'>Déjà un compte ? "
+            "<a href='/portail/connexion'>Connecte-toi</a></p>",
+            "<p class='muted' style='text-align:center;margin-top:16px'>Already have an account? "
+            "<a href='/portail/connexion'>Log in</a></p>"))
 
 
 def _claimable(db, client) -> bool:
@@ -1714,15 +1754,16 @@ def portal_signup_page(request: Request, email: str = "", name: str = "",
     values = {"email": email.strip(),
               "legal_first_name": prenom.strip(), "legal_last_name": nom.strip()}
     values = {k: v for k, v in values.items() if v}
-    return HTMLResponse(_shell("Inscription", _signup_form(values), logged_in=False))
+    return HTMLResponse(_shell(L("Inscription", "Sign up"), _signup_form(values), logged_in=False))
 
 
 @router.post("/portail/inscription")
 async def portal_signup_save(request: Request):
     ip = request.client.host if request.client else "?"
     if not _signup_ok(ip):
-        return HTMLResponse(_shell("Inscription", _signup_form(
-            error="Trop de créations de compte. Réessaie dans une heure."), logged_in=False))
+        return HTMLResponse(_shell(L("Inscription", "Sign up"), _signup_form(
+            error=L("Trop de créations de compte. Réessaie dans une heure.",
+                    "Too many accounts created. Try again in an hour.")), logged_in=False))
     form = await request.form()
     values = {k: (form.get(k) or "").strip() for k, *_ in _KYC_FIELDS}
     values["date_of_birth"] = _dob_from_form(form)
@@ -1730,15 +1771,16 @@ async def portal_signup_save(request: Request):
     values["email"] = email or ""
 
     if not all(values.get(k) for k in _IDENTITY_KEYS):
-        return HTMLResponse(_shell("Inscription", _signup_form(
-            values, "Remplis tous les champs."), logged_in=False))
+        return HTMLResponse(_shell(L("Inscription", "Sign up"), _signup_form(
+            values, L("Remplis tous les champs.", "Please fill in all fields.")), logged_in=False))
 
     with SessionLocal() as db:
         existing = (db.query(Client).filter(Client.primary_email == email).first()
                     or find_client_by_identity(db, "email", email))
         if existing and not _claimable(db, existing):
-            return HTMLResponse(_shell("Inscription", _signup_form(
-                values, "Ce courriel a déjà un compte. Connecte-toi plutôt."),
+            return HTMLResponse(_shell(L("Inscription", "Sign up"), _signup_form(
+                values, L("Ce courriel a déjà un compte. Connecte-toi plutôt.",
+                          "This email already has an account. Please log in instead.")),
                 logged_in=False))
 
         legal = " ".join(x for x in (values["legal_first_name"],

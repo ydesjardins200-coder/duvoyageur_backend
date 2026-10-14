@@ -105,6 +105,24 @@ app.add_middleware(
     https_only=settings.SECURE_COOKIES,
 )
 
+# Portal language (fr / en): ?lang= or the dv_lang cookie -> ContextVar for L().
+import i18n_portal  # noqa: E402
+
+
+@app.middleware("http")
+async def portal_language(request, call_next):
+    lang, explicit = i18n_portal.pick(request)
+    token = i18n_portal.LANG.set(lang)
+    try:
+        response = await call_next(request)
+    finally:
+        i18n_portal.LANG.reset(token)
+    if explicit:
+        response.set_cookie(i18n_portal.COOKIE, lang, max_age=365 * 86400, path="/",
+                            samesite="lax", secure=settings.SECURE_COOKIES)
+    return response
+
+
 # Client-facing portal (espace client) — passwordless magic links, separate auth.
 app.include_router(portal_router)
 app.include_router(portal_oauth_router)

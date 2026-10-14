@@ -45,6 +45,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 
 from config import settings
+from i18n_portal import L, lang as _lang
 from db import AssistantChat, AssistantFeedback, Client, SessionLocal
 import pexels
 import places
@@ -2691,7 +2692,7 @@ def _engine_url(crit: dict | None = None) -> str:
     """DMO engine URL; trip criteria mapped to the engine's parameter names
     (SIRRVA_PARAM_MAP — to confirm with Softvoyage)."""
     q = {"code_ag": settings.SIRRVA_CODE_AG, "alias": settings.SIRRVA_ALIAS or "duvoyageur",
-         "language": "fr"}
+         "language": _lang()}
     mapping = dict(x.split("=", 1) for x in settings.SIRRVA_PARAM_MAP.split(",") if "=" in x)
     for k, v in (crit or {}).items():
         if mapping.get(k):
@@ -2726,25 +2727,32 @@ def _crit_chips(crit: dict) -> str:
 def dmo_body(crit: dict) -> str:
     """The Softvoyage DMO engine (member rebate already applied), framed."""
     note = "" if settings.SIRRVA_ALIAS else (
-        "<div class='note warn'>Moteur en cours de configuration avec Softvoyage"
-        + (" : tes critères ci-dessus lui seront transmis automatiquement dès son activation."
-           if crit else ". Il s'affichera ici dès son activation.") + "</div>")
+        "<div class='note warn'>" + L("Moteur en cours de configuration avec Softvoyage",
+                                      "Booking engine being set up with Softvoyage")
+        + (L(" : tes critères ci-dessus lui seront transmis automatiquement dès son activation.",
+             ": your criteria above will be passed to it automatically once it is live.")
+           if crit else L(". Il s'affichera ici dès son activation.", ". It will appear here once it is live.")) + "</div>")
     back = ("<p class='muted'><a href='/portail'>← Retour à ton assistant voyage</a></p>"
             if settings.PORTAL_ASSISTANT_ENABLED else
-            "<p class='muted'>Une question sur un forfait ou ta réservation ? "
-            f"<a href=\"{escape(settings.MESSENGER_URL)}\" target='_blank' rel='noopener'>Écris-nous sur Messenger</a>.</p>")
-    head = ("<div class='hello'><h2>Rechercher un forfait</h2>"
-            "<p class='lede'>Ton Rabais Récompense est déjà appliqué aux prix affichés.</p></div>")
+            L("<p class='muted'>Une question sur un forfait ou ta réservation ? ",
+                "<p class='muted'>A question about a package or your booking? ")
+            + f"<a href=\"{escape(settings.MESSENGER_URL)}\" target='_blank' rel='noopener'>"
+            + L("Écris-nous sur Messenger", "Message us on Messenger") + "</a>.</p>")
+    head = (f"<div class='hello'><h2>{L('Rechercher un forfait', 'Find a package')}</h2>"
+            f"<p class='lede'>{L('Ton Rabais Récompense est déjà appliqué aux prix affichés.', 'Your Reward Discount is already applied to the prices shown.')}</p></div>")
     if not settings.SIRRVA_ALIAS:                  # engine not activated yet: no empty frame
         return (head + _crit_chips(crit)
                 + "<div class='soon'><div class='soon-ic'><svg viewBox='0 0 24 24' fill='none' stroke='currentColor' "
                   "stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>"
                   "<circle cx='11' cy='11' r='7'/><path d='m20.5 20.5-4.4-4.4'/></svg></div>"
-                  "<h3>Ton moteur de recherche arrive bientôt</h3>"
-                  "<p>On termine son activation avec Softvoyage. En attendant, écris-nous l'hôtel ou la "
-                  "destination qui te tente : un conseiller te trouve ton forfait, avec ton Rabais Récompense.</p>"
-                  f"<a class='btn' href=\"{escape(settings.MESSENGER_URL)}\" target='_blank' rel='noopener'>"
-                  "Écrire à un conseiller →</a></div>")
+                  + L("<h3>Ton moteur de recherche arrive bientôt</h3>"
+                      "<p>On termine son activation avec Softvoyage. En attendant, écris-nous l'hôtel ou la "
+                      "destination qui te tente : un conseiller te trouve ton forfait, avec ton Rabais Récompense.</p>",
+                      "<h3>Your booking engine is coming soon</h3>"
+                      "<p>We're finishing its activation with Softvoyage. In the meantime, send us the hotel or "
+                      "destination you have in mind: a travel advisor will find your package, with your Reward Discount.</p>")
+                  + f"<a class='btn' href=\"{escape(settings.MESSENGER_URL)}\" target='_blank' rel='noopener'>"
+                  + L("Écrire à un conseiller →", "Message a travel advisor →") + "</a></div>")
     return (head + _crit_chips(crit) + note
             + f"<div class='engine'><iframe src=\"{escape(_engine_url(crit))}\" "
               "title='Moteur de recherche de forfaits' loading='eager'></iframe></div>" + back)
@@ -2766,7 +2774,7 @@ def portal_search(request: Request):
         bell = _bell_panel(client)
     crit = _criteria(request)
     body = dmo_body(crit)
-    resp = HTMLResponse(_shell("Rechercher", body, logged_in=True,
+    resp = HTMLResponse(_shell(L("Rechercher", "Search"), body, logged_in=True,
                                nav=_nav("recherche" if settings.PORTAL_ASSISTANT_ENABLED else "accueil"),
                                bell=bell))
     _set_session_cookie(resp, cid)
