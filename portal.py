@@ -2282,6 +2282,8 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .hc-pic:hover img{{transform:scale(1.04)}}
  .hc-nopic{{display:flex;align-items:center;justify-content:center;font-size:34px;
    background:linear-gradient(135deg,rgba(25,211,230,.18),rgba(61,240,197,.08))}}
+ .hc-amb{{position:absolute;left:6px;bottom:6px;font-size:10.5px;font-weight:600;color:#fff;background:rgba(3,18,27,.72);
+   padding:2px 7px;border-radius:999px;letter-spacing:.01em}}
  .hc-n{{position:absolute;right:6px;bottom:6px;font-size:11px;font-weight:600;color:#fff;background:rgba(3,18,27,.72);
    padding:2px 7px;border-radius:999px}}
  .hc-body{{min-width:0;flex:1;display:flex;flex-direction:column;gap:4px}}

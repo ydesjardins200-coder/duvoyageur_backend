@@ -983,6 +983,29 @@ def add_images(cards: list, titles: dict | None = None) -> list:
     return cards
 
 
+def ambiance_fallback(cards: list) -> list:
+    """Last resort for a hotel card with no real photo at all: a generic,
+    clearly labelled « Photo d'ambiance » of its destination from Pexels.
+    Hotels of the same destination get different photos."""
+    missing = [c for c in cards if not c.get("image")]
+    if not missing or not pexels.enabled():
+        return cards
+    used: dict = {}
+    for c in missing:
+        dest = c.get("destination") or ""
+        photos = pexels.resort_photos(dest)
+        k = used.get(dest.lower(), 0)
+        if k >= len(photos):
+            continue
+        ph = photos[k]
+        used[dest.lower()] = k + 1
+        c["gallery"] = [{"src": ph["src"], "host": pexels.credit(ph), "page": ph["page"], "ambiance": True}]
+        c["image"] = ph["src"]
+        c["image_from"] = pexels.credit(ph)
+        c["ambiance"] = {"credit": pexels.credit(ph), "page": ph["page"]}
+    return cards
+
+
 def _price_line(c: dict) -> str:
     pp, tot = _money(c.get("prix_personne")), _money(c.get("total"))
     if not (pp or tot):
@@ -1030,7 +1053,9 @@ def hotel_detail_html(c: dict) -> str:
     pics = "".join(
         f"<figure class='hd-shot'><img {'src' if i == 0 else 'data-src'}=\"{escape(g['src'])}\" alt='' "
         "referrerpolicy='no-referrer' onerror=\"this.parentNode.remove()\">"
-        f"<figcaption>Photo : {escape(g['host'])}</figcaption></figure>"
+        + (f"<figcaption><a href=\"{escape(g['page'])}\" target='_blank' rel='noopener nofollow'>"
+           f"{escape(g['host'])}</a> · pas une photo de l'hôtel</figcaption></figure>" if g.get("ambiance")
+           else f"<figcaption>Photo : {escape(g['host'])}</figcaption></figure>")
         for i, g in enumerate(c.get("gallery") or []))
     gal = (f"<div class='hd-gal'>{pics}</div>" if pics
            else "<div class='hd-gal hd-nogal'>Photos sur la fiche du grossiste</div>")
@@ -1103,6 +1128,7 @@ def cards_html(cards) -> str:
                f"<img src=\"{escape(img)}\" alt='' loading='lazy' referrerpolicy='no-referrer' "
                "onerror=\"this.parentNode.classList.add('hc-nopic');this.remove()\">"
                + (f"<span class='hc-n'>+{len(c['gallery']) - 1}</span>" if len(c.get("gallery") or []) > 1 else "")
+               + ("<span class='hc-amb'>Photo d'ambiance</span>" if c.get("ambiance") else "")
                + "</button>") if img else \
               "<button type='button' class='hc-pic hc-nopic hc-open' aria-label='Voir'>🏝️</button>"
         sub = escape(c.get("titre") or c.get("type") or c.get("destination") or "")
@@ -2245,6 +2271,7 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
         cards = add_images(cards, {x["url"]: x.get("title", "") for x in known})
         if place_details is not None:
             cards = place_details(cards)
+        cards = ambiance_fallback(cards)
         yield _ev("cards", cards_html(cards))
     prix = parse_prix(data.get("prix_vus"), known) or prix_from_cards(cards)
     if prix:
@@ -2562,6 +2589,7 @@ def restructure(entry: dict, before: list, q: str) -> dict:
             cards = add_images(cards, {x["url"]: x.get("title", "") for x in known})
             if place_details is not None:
                 cards = place_details(cards)
+            cards = ambiance_fallback(cards)
         out["cards"] = cards
     if not entry.get("prix"):
         out["prix"] = parse_prix(data.get("prix_vus"), known) or prix_from_cards(out.get("cards"))
