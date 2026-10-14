@@ -237,3 +237,37 @@ def place_photo(request: Request, n: str = "", f: str = ""):
     if not uri:
         return Response(status_code=404)
     return RedirectResponse(uri, status_code=302, headers={"Cache-Control": "private, max-age=2400"})
+
+
+@router.get("/portail/google-usage")
+def google_usage(request: Request):
+    """Testers only: this month's Google Places usage against our hard caps."""
+    from portal import current_portal_client_id
+    from db import Client, SessionLocal
+    from portal_assistant import is_tester
+    from fastapi.responses import HTMLResponse
+    cid = current_portal_client_id(request)
+    with SessionLocal() as db:
+        client = db.get(Client, cid) if cid else None
+        if not is_tester(client):
+            return Response(status_code=404)
+    u = usage()
+    today = date.today().isoformat()
+    from db import ApiUsage
+    with SessionLocal() as db:
+        day = {r.kind: r.count for r in db.query(ApiUsage).filter(ApiUsage.day == today).all()}
+    rows = "".join(
+        f"<tr><td>{label}</td><td>{day.get(k, 0)} / {u[k]['caps'][0] or '∞'}</td>"
+        f"<td>{u[k]['month']} / {u[k]['caps'][1]}</td><td>{free}</td></tr>"
+        for k, label, free in (("search", "Recherches d'hôtels", "5 000 (Pro) / 1 000 (full)"),
+                               ("photo", "Photos", "1 000")))
+    html = ("<!doctype html><meta charset='utf-8'><title>Google Places — usage</title>"
+            "<body style='font-family:system-ui;padding:24px;background:#03121b;color:#eafcff'>"
+            "<h2>Google Places — consommation</h2>"
+            f"<p>Clé configurée : <b>{'oui' if enabled() else 'non'}</b> · mode : "
+            f"<b>{getattr(settings, 'GOOGLE_PLACES_FIELDS', 'free')}</b></p>"
+            "<table cellpadding='8' style='border-collapse:collapse' border='1'>"
+            "<tr><th>Usage</th><th>Aujourd'hui / plafond</th><th>Ce mois / plafond</th>"
+            f"<th>Gratuit Google / mois</th></tr>{rows}</table>"
+            "<p>Au-delà d'un plafond, aucun appel n'est fait à Google (photos des grossistes à la place).</p>")
+    return HTMLResponse(html)
