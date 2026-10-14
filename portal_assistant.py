@@ -27,6 +27,7 @@ import json
 import logging
 import re
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -569,10 +570,16 @@ class _OgParser(HTMLParser):
         super().__init__()
         self.image = ""
         self.ld: list = []
+        self.imgs: list = []          # (src, alt) of the page's <img> tags
         self._in_ld = False
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
+        if tag in ("img", "source") and len(self.imgs) < 120:
+            src = a.get("data-src") or a.get("src") or (a.get("srcset") or a.get("data-srcset") or "").split(" ")[0]
+            if src and not src.startswith("data:"):
+                self.imgs.append((src.strip(), (a.get("alt") or a.get("title") or "").strip()))
+            return
         if tag == "script" and (a.get("type") or "").lower() == "application/ld+json":
             self._in_ld = True
             self.ld.append("")
@@ -618,6 +625,12 @@ def _ld_images(chunks: list) -> list:
 
 
 _GALLERY: dict = {}             # page url -> [image urls] (process-wide)
+_IMGS: dict = {}                # page url -> [(img url, alt)] (process-wide)
+_SITE_IMG: dict = {}            # image url -> {page urls showing it as THEIR photo}
+_NOT_PHOTO = re.compile(r"(?i)(logo|icon|sprite|placeholder|default|favicon|badge|flag|"
+                        r"avatar|banner-generic|\.svg(\?|$)|\.gif(\?|$)|1x1|pixel)")
+_NAME_STOP = {"hotel", "hôtel", "resort", "resorts", "spa", "and", "the", "club", "all",
+              "inclusive", "suites", "beach", "playa", "by", "de", "del", "la", "le", "les", "&"}
 
 
 def _allowed_domain(url: str) -> bool:
@@ -677,6 +690,8 @@ def page_preview(url: str):
                     if u.startswith("https://") and u not in pics:
                         pics.append(u)
                 _GALLERY[url] = pics[:8]
+                _IMGS[url] = [(urljoin(url, s), alt) for s, alt in p.imgs
+                              if urljoin(url, s).startswith("https://")]
     except urllib.error.HTTPError as exc:
         dead = exc.code in (404, 410)
         if not dead:            # 403/5xx: site blocks bots or is down — link may still work
@@ -686,18 +701,47 @@ def page_preview(url: str):
     if len(_OG_CACHE) > 500:
         _OG_CACHE.clear()
         _GALLERY.clear()
+        _IMGS.clear()
     _OG_CACHE[url] = (img, dead)
     return img, dead
 
 
-def page_gallery(url: str) -> list:
-    """Photos a page shows of itself (share image + JSON-LD images), live URLs."""
+def _name_tokens(hotel: str, area: str = "") -> set:
+    drop = {t for t in hc_norm(area).split() if len(t) > 2}
+    return {t for t in hc_norm(hotel).split() if len(t) > 2 and t not in _NAME_STOP and t not in drop}
+
+
+def hc_norm(s: str) -> str:
+    s = unicodedata.normalize("NFKD", (s or "").lower())
+    return re.sub(r"[^a-z0-9]+", " ", "".join(c for c in s if not unicodedata.combining(c))).strip()
+
+
+def page_gallery(url: str, hotel: str = "", area: str = "") -> list:
+    """Photos of THIS hotel on a page, live URLs: images whose alt text names
+    the hotel first, then the page's JSON-LD photos, then its share image.
+    Site-wide share images (same photo on many pages) are left out."""
     if url not in _OG_CACHE:
         page_preview(url)
-    if url in _GALLERY:
-        return _GALLERY[url]
-    img = _OG_CACHE.get(url, ("", False))[0]
-    return [img] if img else []
+    base = _GALLERY.get(url)
+    if base is None:
+        img = _OG_CACHE.get(url, ("", False))[0]
+        base = [img] if img else []
+    named = []
+    toks = _name_tokens(hotel, area)
+    if toks:
+        need = 1 if len(toks) == 1 else 2
+        for src, alt in _IMGS.get(url, []):
+            if src not in named and len(toks & set(hc_norm(alt + " " + src).split())) >= need:
+                named.append(src)
+    out = []
+    for p in named + base:
+        if p in out or _NOT_PHOTO.search(p):
+            continue
+        _SITE_IMG.setdefault(p, set()).add(url)
+        if len(_SITE_IMG[p]) >= 2 and p not in named:
+            continue                       # same share image on several hotel pages: generic
+        out.append(p)
+    return out[:8]
 
 
 def _money(v) -> str:
@@ -807,14 +851,21 @@ def add_images(cards: list, titles: dict | None = None) -> list:
         for u in _card_urls(c):
             if not _on(u, WHOLESALERS):
                 continue
-            pics = page_gallery(u) or ([previews[u][0]] if previews.get(u, ("", False))[0] else [])
-            for p in pics:
+            for p in page_gallery(u, c["hotel"], c.get("destination", "")):
                 if p not in seen:
                     seen.add(p)
                     gallery.append({"src": p, "host": _host(u), "page": u})
         c["gallery"] = gallery[:10]
-        c["image"] = gallery[0]["src"] if gallery else ""
-        c["image_from"] = gallery[0]["host"] if gallery else ""
+    # a photo shown for two different hotels is a site image, not a hotel photo
+    owners: dict = {}
+    for i, c in enumerate(cards):
+        for g in c["gallery"]:
+            owners.setdefault(g["src"], set()).add(i)
+    for c in cards:
+        c["gallery"] = [g for g in c["gallery"] if len(owners.get(g["src"], ())) < 2
+                        and len({_host(u) + "|" + u for u in _SITE_IMG.get(g["src"], ())}) < 2]
+        c["image"] = c["gallery"][0]["src"] if c["gallery"] else ""
+        c["image_from"] = c["gallery"][0]["host"] if c["gallery"] else ""
         c["sources"] = [{"url": u, "host": _host(u), "title": titles.get(u, ""),
                          "image": previews.get(u, ("", False))[0], "snippet": ""}
                         for u in _card_urls(c)]

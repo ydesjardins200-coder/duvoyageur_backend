@@ -102,9 +102,7 @@ def _apply(card: dict, p: dict) -> dict:
     }
     google = [{"src": "/portail/lieu-photo?n=" + urllib.parse.quote(ph["name"], safe=""),
                "host": _attribution(ph), "page": card["place"]["maps"]} for ph in photos]
-    first = photo_uri(photos[0]["name"], 800) if photos else ""
-    if first:                                  # card thumbnail: resolved now (no flash)
-        google[0] = dict(google[0], src=first)
+    # every photo goes through our proxy: Google's photo URLs expire, ours don't
     card["gallery"] = google + (card.get("gallery") or [])
     if card["gallery"]:
         card["image"] = card["gallery"][0]["src"]
