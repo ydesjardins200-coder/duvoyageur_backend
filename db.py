@@ -182,6 +182,17 @@ TEMPLATE_CATEGORY_LABELS = {
 }
 
 
+class ApiUsage(Base):
+    """Paid-API calls counted per day (Google Places), so hard caps survive
+    restarts and redeploys: beyond the cap the call is simply not made."""
+    __tablename__ = "api_usage"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    day: Mapped[str] = mapped_column(String(10), index=True)        # YYYY-MM-DD
+    kind: Mapped[str] = mapped_column(String(20), index=True)       # search | photo
+    count: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class AssistantFeedback(Base):
     """👍/👎 on a portal assistant answer, with the exchange it rates — the raw
     material for measuring answer quality and building an eval set."""

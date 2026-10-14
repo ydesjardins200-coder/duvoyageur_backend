@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import time
 from datetime import date
 import urllib.error
@@ -48,22 +49,56 @@ def _fields() -> str:
     return ",".join("places." + f for f in (_FULL if full else _BASIC))
 
 
-# Safety caps per day (on top of the quotas set in Google Cloud): beyond them
-# we simply fall back to the wholesaler photos, so the bill stays at 0 $.
-_DAY = {"d": None, "search": 0, "photo": 0}
+# HARD caps so the bill stays at 0 $: counted in the database (survives
+# restarts/redeploys), per day AND per calendar month, below Google's monthly
+# free usage. Beyond a cap the call is not made and the wholesaler photo is used.
 _URI_CACHE: dict = {}          # photo name -> (photoUri, expiry) — Google URLs are short-lived
+_LOCK = threading.Lock()
+
+
+def _caps(kind: str) -> tuple:
+    full = (getattr(settings, "GOOGLE_PLACES_FIELDS", "free") or "free").lower() == "full"
+    if kind == "search":
+        return (int(settings.GOOGLE_PLACES_DAILY_SEARCHES or 0),
+                int(settings.GOOGLE_PLACES_MONTHLY_SEARCHES or (900 if full else 4500)))
+    return int(settings.GOOGLE_PLACES_DAILY_PHOTOS or 0), int(settings.GOOGLE_PLACES_MONTHLY_PHOTOS or 900)
 
 
 def _allow(kind: str) -> bool:
+    """Reserve one call if under both caps (atomic per process, durable in DB)."""
+    from db import ApiUsage, SessionLocal                # lazy: avoids import cycle
+    day_cap, month_cap = _caps(kind)
     today = date.today().isoformat()
-    if _DAY["d"] != today:
-        _DAY.update(d=today, search=0, photo=0)
-    cap = int(getattr(settings, "GOOGLE_PLACES_DAILY_SEARCHES" if kind == "search"
-                      else "GOOGLE_PLACES_DAILY_PHOTOS", 0) or 0)
-    if cap and _DAY[kind] >= cap:
+    try:
+        with _LOCK, SessionLocal() as db:
+            rows = db.query(ApiUsage).filter(ApiUsage.kind == kind,
+                                             ApiUsage.day.like(today[:7] + "-%")).all()
+            used_month = sum(r.count for r in rows)
+            row = next((r for r in rows if r.day == today), None)
+            used_day = row.count if row else 0
+            if (day_cap and used_day >= day_cap) or (month_cap and used_month >= month_cap):
+                return False
+            if row:
+                row.count += 1
+            else:
+                db.add(ApiUsage(day=today, kind=kind, count=1))
+            db.commit()
+            return True
+    except Exception as exc:  # noqa: BLE001 — if we cannot count, we do not call
+        log.warning("places: usage counter unavailable, call skipped: %s", exc)
         return False
-    _DAY[kind] += 1
-    return True
+
+
+def usage() -> dict:
+    """This month's counts and caps (for the logs / admin)."""
+    from db import ApiUsage, SessionLocal
+    month = date.today().isoformat()[:7]
+    with SessionLocal() as db:
+        rows = db.query(ApiUsage).filter(ApiUsage.day.like(month + "-%")).all()
+    return {k: {"month": sum(r.count for r in rows if r.kind == k), "caps": _caps(k)}
+            for k in ("search", "photo")}
+
+
 _PHOTO_RE = re.compile(r"^places/[A-Za-z0-9_-]+/photos/[A-Za-z0-9_-]+$")
 MAX_PHOTOS = 6
 
@@ -169,6 +204,8 @@ def enrich(cards: list) -> list:
 def static_map(cards: list) -> str:
     """URL of a static map with numbered markers, or "" (needs the browser key)."""
     key = getattr(settings, "GOOGLE_MAPS_EMBED_KEY", "")
+    if not getattr(settings, "GOOGLE_MAPS_STATIC", False):
+        return ""                      # billed per view beyond the free tier: off unless asked
     pts = [(i, c["place"]["lat"], c["place"]["lng"]) for i, c in enumerate(cards, 1)
            if (c.get("place") or {}).get("lat") is not None]
     if not key or not pts:

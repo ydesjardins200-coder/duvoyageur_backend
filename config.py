@@ -118,12 +118,19 @@ class Settings:
     GOOGLE_PLACES_API_KEY: str = os.getenv("GOOGLE_PLACES_API_KEY", "")
     # Browser key (HTTP-referrer restricted; Maps Embed + Maps Static APIs) for maps.
     GOOGLE_MAPS_EMBED_KEY: str = os.getenv("GOOGLE_MAPS_EMBED_KEY", "")
+    # The « Où sont les hôtels ? » static map is billed per view past the free
+    # tier, so it is off unless set to 1 (the panel's embedded map is always free).
+    GOOGLE_MAPS_STATIC: bool = os.getenv("GOOGLE_MAPS_STATIC", "0") in ("1", "true", "True")
     # "free" (photos, address, map: largest free quota) or "full" (+ rating, phone, website).
     GOOGLE_PLACES_FIELDS: str = os.getenv("GOOGLE_PLACES_FIELDS", "free")
     # Daily safety caps (0 = none); beyond them, wholesaler photos are used.
     # Free tier ≈ 1 000 photos and 5 000 basic searches per month.
     GOOGLE_PLACES_DAILY_PHOTOS: int = int(os.getenv("GOOGLE_PLACES_DAILY_PHOTOS", "30"))
     GOOGLE_PLACES_DAILY_SEARCHES: int = int(os.getenv("GOOGLE_PLACES_DAILY_SEARCHES", "150"))
+    # Monthly hard caps (0 = automatic: 4 500 searches in "free" mode, 900 in
+    # "full" mode; 900 photos) — kept under Google's monthly free usage.
+    GOOGLE_PLACES_MONTHLY_SEARCHES: int = int(os.getenv("GOOGLE_PLACES_MONTHLY_SEARCHES", "0"))
+    GOOGLE_PLACES_MONTHLY_PHOTOS: int = int(os.getenv("GOOGLE_PLACES_MONTHLY_PHOTOS", "0"))
 
     # --- Support: the portal's "Aide" tab sends clients to the Facebook page's
     # Messenger (the admin ticket queue is no longer used).
