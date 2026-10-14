@@ -100,7 +100,7 @@ def usage() -> dict:
 
 
 _PHOTO_RE = re.compile(r"^places/[A-Za-z0-9_-]+/photos/[A-Za-z0-9_-]+$")
-MAX_PHOTOS = 6
+MAX_PHOTOS = 4
 
 
 def enabled() -> bool:
@@ -181,8 +181,11 @@ def _apply(card: dict, p: dict) -> dict:
     google = [{"src": "/portail/lieu-photo?" + urllib.parse.urlencode(
                    {"n": ph["name"], **({"f": fallback} if fallback else {})}),
                "host": _attribution(ph), "page": card["place"]["maps"]} for ph in photos]
-    # every photo goes through our proxy: Google's photo URLs expire, ours don't
-    card["gallery"] = google + (card.get("gallery") or [])
+    # every photo goes through our proxy: Google's photo URLs expire, ours don't.
+    # A real wholesaler photo of the hotel stays first (free); Google photos come
+    # first only when the wholesaler had none — fewer billed photos per answer.
+    own = card.get("gallery") or []
+    card["gallery"] = (own + google) if own else google
     if card["gallery"]:
         card["image"] = card["gallery"][0]["src"]
         card["image_from"] = card["gallery"][0]["host"]

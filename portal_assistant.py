@@ -915,11 +915,13 @@ def _rating(c: dict) -> str:
 
 def hotel_detail_html(c: dict) -> str:
     """Side panel (desktop) / sheet (mobile) for one hotel, chatgpt.com style."""
+    # only the first photo loads with the panel; the others load when the member
+    # browses the gallery (each Google photo shown is a billed request)
     pics = "".join(
-        f"<figure class='hd-shot'><img src=\"{escape(g['src'])}\" alt='' loading='lazy' "
+        f"<figure class='hd-shot'><img {'src' if i == 0 else 'data-src'}=\"{escape(g['src'])}\" alt='' "
         "referrerpolicy='no-referrer' onerror=\"this.parentNode.remove()\">"
         f"<figcaption>Photo : {escape(g['host'])}</figcaption></figure>"
-        for g in c.get("gallery") or [])
+        for i, g in enumerate(c.get("gallery") or []))
     gal = (f"<div class='hd-gal'>{pics}</div>" if pics
            else "<div class='hd-gal hd-nogal'>Photos sur la fiche du grossiste</div>")
     meta = " · ".join(escape(x) for x in (_rating(c), c.get("type")) if x)
@@ -1497,8 +1499,10 @@ def _panel_main(client, thread: list, cur_id) -> str:
    if(g&&g.querySelectorAll('.hd-shot').length>1){{
      ['‹','›'].forEach(function(ch,i){{var b=document.createElement('button');b.type='button';
        b.className='hd-arr '+(i?'nx':'pv');b.textContent=ch;b.setAttribute('aria-label',i?'Photo suivante':'Photo précédente');
-       b.onclick=function(){{g.scrollBy({{left:(i?1:-1)*g.clientWidth,behavior:'smooth'}});}};
-       g.parentNode.insertBefore(b,g.nextSibling);}});}}
+       b.onclick=function(){{more();g.scrollBy({{left:(i?1:-1)*g.clientWidth,behavior:'smooth'}});}};
+       g.parentNode.insertBefore(b,g.nextSibling);}});
+     var more=function(){{g.querySelectorAll('img[data-src]').forEach(function(im){{im.src=im.getAttribute('data-src');im.removeAttribute('data-src');}});}};
+     g.addEventListener('scroll',more,{{once:true,passive:true}});}}
    document.getElementById('hpX').focus();}}
  document.getElementById('hpX').addEventListener('click',closeHotel);
  hov.addEventListener('click',closeHotel);
