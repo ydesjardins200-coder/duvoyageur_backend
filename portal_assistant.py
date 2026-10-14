@@ -46,6 +46,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 
 from config import settings
 from db import AssistantChat, AssistantFeedback, Client, SessionLocal
+import pexels
 import places
 import site_knowledge as kb
 import trip_brief
@@ -479,8 +480,8 @@ def parse_destinations(raw: str) -> list:
 
 
 def add_destination_images(dests: list, known: set) -> list:
-    """Destination photo = share image of the destination's page at a
-    Canadian wholesaler, shown live (never copied)."""
+    """Destination photo = a generic ambiance photo from Pexels (credited),
+    else the share image of the destination's page at a Canadian wholesaler."""
     for d in dests:
         d["page_url"] = _clean_url(d.get("page_url"), known, WHOLESALERS)
     urls = list({d["page_url"] for d in dests if d.get("page_url")})
@@ -488,12 +489,19 @@ def add_destination_images(dests: list, known: set) -> list:
     if urls:
         with ThreadPoolExecutor(max_workers=4) as ex:
             previews = dict(zip(urls, ex.map(page_preview, urls)))
-    for d in dests:
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        ambiance = list(ex.map(lambda d: pexels.photo_for(d["nom"]), dests))
+    for d, amb in zip(dests, ambiance):
         img, dead = previews.get(d.get("page_url"), ("", False))
         if dead:
             d["page_url"] = ""
-        d["photo"] = img
-        d["photo_from"] = (urlparse(d["page_url"]).hostname or "").removeprefix("www.") if img else ""
+        if amb:
+            d["photo"] = amb["src"]
+            d["photo_from"] = "Photo d'ambiance · " + (amb["photographer"] + " / " if amb["photographer"] else "") + "Pexels"
+            d["photo_link"] = amb["page"]
+        else:
+            d["photo"] = img
+            d["photo_from"] = (urlparse(d["page_url"]).hostname or "").removeprefix("www.") if img else ""
     return dests
 
 
@@ -518,7 +526,9 @@ def destinations_html(dests) -> str:
     for i, d in enumerate(dests, 1):
         pic = (f"<figure class='dc-pic'><img src=\"{escape(d['photo'])}\" alt='' loading='lazy' "
                f"referrerpolicy='no-referrer' onerror=\"this.parentNode.remove()\">"
-               f"<figcaption>{escape(d.get('photo_from') or '')}</figcaption></figure>"
+               + (f"<figcaption><a href=\"{escape(d['photo_link'])}\" target='_blank' rel='noopener nofollow'>"
+                  f"{escape(d.get('photo_from') or '')}</a></figcaption></figure>" if d.get("photo_link") else
+                  f"<figcaption>{escape(d.get('photo_from') or '')}</figcaption></figure>")
                ) if d.get("photo") else "<div class='dc-pic dc-nopic'>🌴</div>"
         rows = "".join(f"<div class='dc-row'><span>{k}</span>{escape(v)}</div>" for k, v in (
             ("Idéal pour", d.get("ideal_pour")), ("À tes dates", d.get("moment")),

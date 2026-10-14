@@ -2478,6 +2478,7 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .bf-ages .bf-age{{max-width:150px}}
  .bf-go{{align-self:flex-start;min-height:42px;padding:10px 20px;font-size:14px}}
  .bf-skip{{align-self:flex-start;background:none;border:0;color:var(--mist);font-size:12.5px;cursor:pointer;text-decoration:underline;padding:0}}
+ .dc-pic figcaption a{{color:#fff;text-decoration:none}}
 </style></head><body class="pg{page}">
  <div class="top">
    <div class="brand"><img src="/static/logo.png" alt="Du Voyageur">

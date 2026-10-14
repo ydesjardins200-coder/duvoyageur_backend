@@ -120,6 +120,9 @@ class Settings:
     # Google Places API (New): licensed hotel photos, rating, address, phone,
     # website, map link — displayed live with Google attribution. Off if empty.
     GOOGLE_PLACES_API_KEY: str = os.getenv("GOOGLE_PLACES_API_KEY", "")
+    # Pexels API: generic « ambiance » photos for the assistant's DESTINATION
+    # cards only (never hotels). Free: 200 req/h, 20 000/month. Off if empty.
+    PEXELS_API_KEY: str = os.getenv("PEXELS_API_KEY", "")
     # Browser key (HTTP-referrer restricted; Maps Embed + Maps Static APIs) for maps.
     GOOGLE_MAPS_EMBED_KEY: str = os.getenv("GOOGLE_MAPS_EMBED_KEY", "")
     # The « Où sont les hôtels ? » static map is billed per view past the free
