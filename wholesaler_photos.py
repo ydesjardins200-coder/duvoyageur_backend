@@ -104,8 +104,18 @@ def ensure_fresh(background: bool = True) -> None:
         refresh()
 
 
+# Words that describe a property without naming a different one
+_DESCR = {"waves", "selection", "select", "explore", "escape", "luxury", "soul", "golf", "surf",
+          "mgallery", "autograph", "trademark", "great", "moments", "mexican", "charm", "complex",
+          "boutique", "affiliated", "family", "club", "palace", "royal", "grand", "and", "lopesan",
+          "melia", "wyndham", "ihg", "hilton", "marriott", "hyatt", "ocean", "hotels", "bay"}
+
+
 def lookup(hotel: str, area: str = ""):
-    """Best index entry for a hotel name, or None (strict: no wrong hotel)."""
+    """Index entry for a hotel name, or None. Strict, so a card never shows
+    another hotel: every word of the name must be in the Transat page name,
+    and the page name may not add a word that names something else
+    (« Royalton Punta Cana » must not get « Royalton SPLASH Punta Cana »)."""
     ensure_fresh()
     q = _toks(hotel)
     if not q or not _IDX["entries"]:
@@ -115,18 +125,17 @@ def lookup(hotel: str, area: str = ""):
     for t in q:
         for i in _IDX["by_tok"].get(t, ()):
             cands[i] = cands.get(i, 0) + 1
-    best, best_score = None, 0.0
+    best, best_extra = None, 99
     for i, hits in cands.items():
         e = _IDX["entries"][i]
-        name_t = q - area_t or q                     # the distinctive part of the name
-        core = len(name_t & e["toks"]) / len(name_t)
-        cover = hits / len(q)
-        if core < 1.0 and (core < 0.75 or len(name_t) < 3):
-            continue                                  # every distinctive word must match (or 3/4 of many)
-        extra = len(e["toks"] - q)                    # prefer the closest slug
-        score = cover + core - 0.02 * extra
-        if score > best_score:
-            best, best_score = e, score
+        if not q <= e["toks"]:
+            continue
+        extra = e["toks"] - q - area_t - _DESCR
+        if extra:
+            continue
+        n_extra = len(e["toks"] - q)
+        if n_extra < best_extra:
+            best, best_extra = e, n_extra
     return best
 
 
