@@ -2412,6 +2412,12 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .rt-btn.on{{color:#03121b;background:linear-gradient(120deg,var(--pacific),var(--lagoon));border-color:transparent}}
  .rt-pane{{white-space:pre-wrap;padding-top:6px}}
  .rt-pane[hidden]{{display:none}}
+ ul.rb{{list-style:none;margin:4px 0 8px;padding:0;white-space:normal;display:flex;flex-direction:column;gap:6px}}
+ ul.rb li{{position:relative;padding-left:18px;line-height:1.45}}
+ ul.rb li::before{{content:"";position:absolute;left:3px;top:.62em;width:6px;height:6px;border-radius:50%;
+   background:var(--pacific)}}
+ .rsub{{white-space:normal;font-weight:700;color:var(--foam);margin:10px 0 2px;font-size:14.5px}}
+ .afix{{white-space:normal;font-size:13px;color:var(--mist);margin:0 0 8px;animation:blink 1.2s infinite}}
  .rt-pane .slot,.rt-pane .pcards,.rt-pane .ptab,.rt-pane .btab,.rt-pane .dcards{{white-space:normal}}
  @media(max-width:760px){{.rt-nav{{top:118px}}}}
 

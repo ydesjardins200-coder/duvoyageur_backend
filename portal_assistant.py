@@ -141,8 +141,9 @@ ensuite les bonnes questions. Pas de réponse générique.
      (saison, budget, dates) ; pour une demande large, [[DESTINATIONS]]
      seul sur sa ligne puis 1 puce par destination ;
    [[TAB:hotels]] Hôtels retenus : 1 puce d'intro, [[HOTELS]] seul sur sa
-     ligne (les fiches s'y affichent : ne les recopie pas), puis
-     **Mon choix pour toi** en 2 ou 3 puces (lequel, pourquoi, quelle formule) ;
+     ligne (OBLIGATOIRE : les fiches s'y affichent ; ne décris PAS les hôtels
+     dans le texte), puis **Mon choix pour toi** seul sur sa ligne et 2 ou 3
+     puces (lequel, pourquoi, quelle formule) ;
    [[TAB:prix]] Comparaison des prix : [[PRIX]] seul sur sa ligne si tu as
      trouvé des prix, 2 ou 3 puces de lecture (dates, ville de départ,
      estimation ou prix vu), [[BUDGET]] seul sur sa ligne si le budget est
@@ -154,7 +155,9 @@ ensuite les bonnes questions. Pas de réponse générique.
    Omet un onglet s'il n'a rien d'utile. Question générale (saison,
    bagages, documents) ou court suivi : PAS d'onglets, juste des puces.
    CONCIS : des puces courtes (une idée, 20 mots max), pas de paragraphes,
-   pas de répétition entre onglets. Chaque fait important vient de tes
+   pas de répétition entre onglets. Chaque puce commence par un mot clé en
+   gras suivi de « : » (ex. « - **Saison** : haute saison, prix au sommet »).
+   Les prix vont dans [[PRIX]] (tableau), jamais en phrases. Chaque fait important vient de tes
    recherches et est cité (la source s'affiche en lien).
 
 7. À LA FIN, appelle l'outil afficher_resultats UNE fois avec les données
@@ -412,6 +415,71 @@ def mark_citations(visible: str, cites: list) -> tuple:
     return "".join(out), sources
 
 
+_NUM_RE = re.compile(r"^\d{1,2}[.)]\s+")
+_MARK_ONLY = re.compile(r"^\[\[(?:TAB:\w+|DESTINATIONS|HOTELS|PRIX|BUDGET)\]\]$")
+_MARK_LEAD = re.compile(r"^(\[\[(?:TAB:\w+|DESTINATIONS|HOTELS|PRIX|BUDGET)\]\])\s*(.+)$")
+_SENT_END = re.compile(r"[.!?](?:\s?\[\[c:[\d,]+\]\])*(?=\s+[A-ZÀ-ÖØ-Ý«*\d])")
+_LABEL_RE = re.compile(r"^([^:*\[\]\n]{2,32}?)\s?:\s+(\S.*)$")
+
+
+def _sentences(s: str) -> list:
+    out, start = [], 0
+    for m in _SENT_END.finditer(s):
+        out.append(s[start:m.end()].strip())
+        start = m.end()
+    out.append(s[start:].strip())
+    return [x for x in out if x]
+
+
+def _lead(s: str) -> str:
+    """« Saison : haute… » -> « **Saison** : haute… » (scannable bullets)."""
+    if s.startswith("**"):
+        return s
+    m = _LABEL_RE.match(s)
+    if m and re.search(r"[A-Za-zÀ-ÿ]", m.group(1)) and "http" not in m.group(1):
+        return f"**{m.group(1).strip()}** : {m.group(2)}"
+    return s
+
+
+def tidy_text(text: str) -> str:
+    """Normalize an answer into short bullets, whatever the model wrote:
+    numbered lists and long paragraphs become one bullet per sentence, a
+    tab marker followed by text goes on its own line, labels get bolded.
+    Applied when rendering, so stored answers are fixed too."""
+    out = []
+    for line in (text or "").split("\n"):
+        s = line.strip()
+        if not s or _MARK_ONLY.match(s):
+            out.append(s)
+            continue
+        m = _MARK_LEAD.match(s)
+        if m:
+            out.append(m.group(1))
+            s = m.group(2).strip()
+        s = _NUM_RE.sub("- ", s)
+        bullet = s[:2] in ("- ", "* ", "• ")
+        body = s[2:].strip() if bullet else s
+        if re.fullmatch(r"\*\*[^*]+\*\*\s*:?", body):          # sub-heading line
+            out.append(body)
+            continue
+        if len(body) > 120:
+            parts = _sentences(body)
+            if len(parts) > 1:
+                out += ["- " + _lead(p) for p in parts]
+                continue
+        out.append("- " + _lead(body) if bullet or len(body) > 110 else body)
+    return "\n".join(out)
+
+
+def _lists(html: str) -> str:
+    """Runs of « • » lines -> <ul>, bold-only lines -> sub-headings."""
+    html = re.sub(r"(?m)(?:^• .*(?:\n|$))+",
+                  lambda m: "<ul class='rb'>" + "".join(
+                      f"<li>{x[2:]}</li>" for x in m.group(0).rstrip("\n").split("\n")) + "</ul>",
+                  html)
+    return re.sub(r"(?m)(^|</ul>|</div>)<b>([^<]{1,60})</b>\s*:?\s*$\n?", r"\1<div class='rsub'>\2</div>", html)
+
+
 def render_md(text: str, sources=None) -> str:
     """Tiny, safe markdown: escape everything, then **bold** and '- ' bullets.
     Mirrors the JS renderer in the panel so stored and live replies match.
@@ -427,6 +495,7 @@ def render_md(text: str, sources=None) -> str:
     out = re.sub(r"(?m)^\s*\[\[TAB:(info|hotels|prix|sejour|vols)\]\]\s*$",
                  lambda m: f"<div class='tabmark' data-tab='{m.group(1)}'></div>", out)
     out = re.sub(r"\[\[TAB:\w+\]\]", "", out)
+    out = _lists(out)
     out = _CITE_RE.sub(lambda m: (" " + cite_html([int(i) for i in m.group(1).split(",") if i],
                                                   sources or [])) if sources else "", out)
     return out
@@ -1107,6 +1176,20 @@ def parse_prix(rows, sources: list) -> list:
     return out[:6]
 
 
+def prix_from_cards(cards) -> list:
+    """No price table from the model: build it from the hotel cards whose
+    price was seen at a Canadian wholesaler (parse_pistes keeps only those)."""
+    out = []
+    for c in cards or []:
+        if not _money(c.get("total")):
+            continue
+        out.append({"hotel": c["hotel"], "dates": c.get("prix_note") or "",
+                    "depart": c.get("depart") or "", "voyageurs": c.get("voyageurs") or "",
+                    "total": c["total"], "taxes": c.get("taxes"),
+                    "statut": "vu" if c.get("source_url") else "estimation", "url": c.get("source_url") or ""})
+    return out[:6]
+
+
 def prix_html(rows) -> str:
     if not rows:
         return ""
@@ -1268,6 +1351,17 @@ def steps_html(steps, live: bool = False) -> str:
             f"<ol>{items}</ol></details>")
 
 
+def needs_structure(m: dict) -> bool:
+    """A stored answer whose hotel cards / price table never arrived."""
+    if m.get("role") != "assistant" or m.get("brief") or m.get("fixed"):
+        return False
+    t = m.get("text") or ""
+    want_hotels = "[[HOTELS]]" in t or "[[TAB:hotels]]" in t
+    want_prix = "[[PRIX]]" in t or "[[TAB:prix]]" in t
+    return (want_hotels and not m.get("cards")) or \
+        (want_prix and not m.get("prix") and not prix_from_cards(m.get("cards")))
+
+
 def _bubble(m: dict, last: bool = False) -> str:
     if m.get("role") == "user":
         return f"<div class='msg me'>{escape(m.get('text', ''))}</div>"
@@ -1277,10 +1371,15 @@ def _bubble(m: dict, last: bool = False) -> str:
                  else f"<div class='bf-known'>{trip_brief.known_chips(b.get('p') or {})}</div>")
         return f"<div class='msg ai'><div>{render_md(m.get('text', ''))}</div>{extra}</div>"
     content = compose_answer(
-        render_md(m.get("marked") or m.get("text", ""), m.get("sources")),
+        render_md(tidy_text(m.get("marked") or m.get("text", "")), m.get("sources")),
         {"destinations": destinations_html(m.get("destinations")), "hotels": cards_html(m.get("cards")),
-         "prix": prix_html(m.get("prix")), "budget": budget_html(m.get("budget"))})
-    return (f"<div class='msg ai'>{content}"
+         "prix": prix_html(m.get("prix") or prix_from_cards(m.get("cards"))),
+         "budget": budget_html(m.get("budget"))})
+    fix = ""
+    if needs_structure(m) and m.get("id"):
+        fix = f" data-fix=\"{escape(m['id'])}\""
+        content = "<div class='afix'>📸 Je prépare les fiches et le tableau…</div>" + content
+    return (f"<div class='msg ai'{fix}>{content}"
             f"{_sources_html(m.get('sources'))}{rate_html(m.get('id', ''), m.get('rating', 0))}"
             f"{questions_html(m.get('questions')) if last else ''}</div>")
 
@@ -1634,6 +1733,15 @@ def _panel_main(client, thread: list, cur_id) -> str:
    if(navigator.clipboard)navigator.clipboard.writeText(txt).then(function(){{
      say('Résumé copié 📋 — colle-le dans Messenger pour que le conseiller parte de là.');}},function(){{}});
    if(!w)location.href=MSGR;
+ }});
+ [].slice.call(log.querySelectorAll('.msg.ai[data-fix]')).slice(-3).forEach(function(el){{
+   fetch('/portail/assistant/fix',{{method:'POST',headers:{{'Content-Type':'application/json'}},
+     body:JSON.stringify({{chat:box.getAttribute('data-chat'),id:el.getAttribute('data-fix')}})}})
+   .then(function(r){{return r.json();}}).then(function(j){{
+     if(j&&j.html){{var t=document.createElement('div');t.innerHTML=j.html;
+       var n=t.firstElementChild;if(n){{n.removeAttribute('data-fix');el.replaceWith(n);}}}}
+     else{{var f=el.querySelector('.afix');if(f)f.remove();}}}})
+   .catch(function(){{var f=el.querySelector('.afix');if(f)f.remove();}});
  }});
  var side=document.getElementById('aSide'),stog=document.getElementById('aSideTog');
  if(stog&&side)stog.addEventListener('click',function(e){{e.stopPropagation();side.classList.toggle('open');}});
@@ -2094,17 +2202,23 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
             rest = [x for x in sources if _clean_src_url(x["url"]) not in got]
             sources = cited + rest[:max(0, 8 - len(cited))]
             marked = marked.strip()
-            yield _ev("marked", render_md(marked, sources))
+            yield _ev("marked", render_md(tidy_text(marked), sources))
         else:
             marked = ""
     data = coerce_results(meta.get("data"))
-    if "[[HOTELS]]" in answer and not _valid_hotels(data) and not _PISTES_RE.search(full):
+    repaired = False
+    want_hotels = "[[HOTELS]]" in answer or "[[TAB:hotels]]" in answer
+    want_prix = "[[PRIX]]" in answer or "[[TAB:prix]]" in answer
+    no_prix = not (data.get("prix_vus") or any(
+        isinstance(h, dict) and h.get("total") for h in data.get("hotels") or [] if isinstance(data.get("hotels"), list)))
+    if ((want_hotels and not _valid_hotels(data)) or (want_prix and no_prix)) and not _PISTES_RE.search(full):
         log.warning("assistant[%s]: hotels missing from results (cut=%s, keys=%s, hotels=%s)",
                     provider, meta.get("cut"), sorted(data), type(data.get("hotels")).__name__)
+        repaired = True
         yield _ev("status", "📸 Je prépare les fiches…")
         fixed = coerce_results(repair_results(provider, system_for(search), msgs, answer))
-        if _valid_hotels(fixed):
-            data = {**data, **{k: v for k, v in fixed.items() if v}}
+        if _valid_hotels(fixed) or fixed.get("prix_vus"):
+            data = {**data, **{k: v for k, v in fixed.items() if v and (k != "hotels" or _valid_hotels(fixed))}}
         log.info("assistant[%s]: results repaired=%s", provider, _valid_hotels(fixed))
     u = meta.get("usage") or {}
     log.info("assistant[%s] %s: %.1fs, %s searches, tokens in=%s (cache %s) out=%s, hotels=%s",
@@ -2132,7 +2246,7 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
         if place_details is not None:
             cards = place_details(cards)
         yield _ev("cards", cards_html(cards))
-    prix = parse_prix(data.get("prix_vus"), known)
+    prix = parse_prix(data.get("prix_vus"), known) or prix_from_cards(cards)
     if prix:
         yield _ev("prix", prix_html(prix))
     budget = parse_budget(data.get("budget"))
@@ -2157,6 +2271,8 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
              "destinations": dests, "questions": questions, "prix": prix, "budget": budget,
              "suivis": suivis, "sources": sources, "steps": steps[:12], "recherche": rech,
              "provider": provider, "model": model_name(provider), "at": now}
+    if repaired:
+        entry["fixed"] = True              # already had its second chance
     info = persist({"role": "user", "text": q, "at": now}, entry) or {}
     yield _ev("final", {"html": _bubble(entry, last=True), "refine": suivis_html(suivis), **info})
 
@@ -2424,6 +2540,69 @@ async def assistant_feedback(request: Request):
         row.model = f"{entry.get('provider', 'anthropic')}:{entry.get('model')}"
         db.commit()
     return JSONResponse({"ok": True})
+
+
+def restructure(entry: dict, before: list, q: str) -> dict:
+    """Rebuild the hotel cards / price table of a stored answer from its own
+    text (one forced-tool call, no web search). Returns the updated entry."""
+    provider = entry.get("provider") if entry.get("provider") in PROVIDERS else "anthropic"
+    if not provider_ready(provider):
+        return entry
+    system = [SYSTEM_PROMPT.format(today=_today(), search_rule=_SEARCH_OFF,
+                                   catalogue=kb.catalogue(), excerpts=""), ""]
+    data = coerce_results(repair_results(provider, system, _history_msgs(before, q), entry.get("text", "")))
+    known = list(entry.get("sources") or [])
+    out = dict(entry, fixed=True)
+    rech = parse_recherche(data.get("recherche")) or entry.get("recherche") or {}
+    if not entry.get("cards") and _valid_hotels(data):
+        cards = parse_pistes(json.dumps(data["hotels"], ensure_ascii=False), known)
+        for c in cards:
+            c["search_url"] = search_link(rech, c["hotel"])
+        if cards:
+            cards = add_images(cards, {x["url"]: x.get("title", "") for x in known})
+            if place_details is not None:
+                cards = place_details(cards)
+        out["cards"] = cards
+    if not entry.get("prix"):
+        out["prix"] = parse_prix(data.get("prix_vus"), known) or prix_from_cards(out.get("cards"))
+    if not entry.get("budget"):
+        out["budget"] = parse_budget(data.get("budget"))
+    if rech and not entry.get("recherche"):
+        out["recherche"] = rech
+    log.info("assistant: restructured %s (hotels=%s, prix=%s)", entry.get("id"),
+             len(out.get("cards") or []), len(out.get("prix") or []))
+    return out
+
+
+@router.post("/portail/assistant/fix")
+async def assistant_fix(request: Request):
+    """Lazy repair of a stored answer shown without its cards/table."""
+    cid = current_portal_client_id(request)
+    if not cid:
+        return JSONResponse({"error": "auth"}, status_code=401)
+    try:
+        payload = await request.json()
+    except (ValueError, json.JSONDecodeError):
+        payload = {}
+    mid = str(payload.get("id") or "")
+    with SessionLocal() as db:
+        ch = get_chat(db, cid, payload.get("chat"))
+        msgs = list(ch.messages or []) if ch else []
+    i = next((k for k, m in enumerate(msgs) if m.get("id") == mid and m.get("role") == "assistant"), -1)
+    if i < 1 or not needs_structure(msgs[i]):
+        return JSONResponse({"html": _bubble(msgs[i], last=(i == len(msgs) - 1)) if i >= 0 else ""})
+    q = msgs[i - 1].get("text", "") if msgs[i - 1].get("role") == "user" else ""
+    new = restructure(msgs[i], msgs[:i - 1], q)
+    with SessionLocal() as db:
+        ch = get_chat(db, cid, payload.get("chat"))
+        if ch:
+            cur = list(ch.messages or [])
+            for k, m in enumerate(cur):
+                if m.get("id") == mid:
+                    cur[k] = new
+            ch.messages = cur
+            db.commit()
+    return JSONResponse({"html": _bubble(dict(new, fixed=True), last=(i == len(msgs) - 1))})
 
 
 @router.post("/portail/assistant/chat/{chat_id}/delete")
