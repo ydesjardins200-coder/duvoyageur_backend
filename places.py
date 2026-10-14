@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
+from datetime import date
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -33,9 +35,35 @@ log = logging.getLogger("duvoyageur.places")
 router = APIRouter()
 
 _API = "https://places.googleapis.com/v1"
-_FIELDS = ",".join("places." + f for f in (
-    "id", "displayName", "formattedAddress", "location", "rating", "userRatingCount",
-    "websiteUri", "nationalPhoneNumber", "internationalPhoneNumber", "googleMapsUri", "photos"))
+# "free" = Text Search Pro fields only (photos, address, map link): the
+# larger monthly free quota. "full" adds Google rating, phone and website
+# (Enterprise fields: smaller free quota).
+_BASIC = ("id", "displayName", "formattedAddress", "location", "googleMapsUri", "photos")
+_FULL = _BASIC + ("rating", "userRatingCount", "websiteUri", "nationalPhoneNumber",
+                  "internationalPhoneNumber")
+
+
+def _fields() -> str:
+    full = (getattr(settings, "GOOGLE_PLACES_FIELDS", "free") or "free").lower() == "full"
+    return ",".join("places." + f for f in (_FULL if full else _BASIC))
+
+
+# Safety caps per day (on top of the quotas set in Google Cloud): beyond them
+# we simply fall back to the wholesaler photos, so the bill stays at 0 $.
+_DAY = {"d": None, "search": 0, "photo": 0}
+_URI_CACHE: dict = {}          # photo name -> (photoUri, expiry) — Google URLs are short-lived
+
+
+def _allow(kind: str) -> bool:
+    today = date.today().isoformat()
+    if _DAY["d"] != today:
+        _DAY.update(d=today, search=0, photo=0)
+    cap = int(getattr(settings, "GOOGLE_PLACES_DAILY_SEARCHES" if kind == "search"
+                      else "GOOGLE_PLACES_DAILY_PHOTOS", 0) or 0)
+    if cap and _DAY[kind] >= cap:
+        return False
+    _DAY[kind] += 1
+    return True
 _PHOTO_RE = re.compile(r"^places/[A-Za-z0-9_-]+/photos/[A-Za-z0-9_-]+$")
 MAX_PHOTOS = 6
 
@@ -56,11 +84,14 @@ def _post(path: str, body: dict, fields: str) -> dict:
 
 def find_hotel(name: str, area: str = "") -> dict | None:
     """Best Places match for a hotel name (+ destination), or None."""
+    if not _allow("search"):
+        log.info("places: daily search cap reached")
+        return None
     try:
         data = _post("places:searchText",
                      {"textQuery": f"{name} {area}".strip(), "languageCode": "fr",
                       "regionCode": "CA", "maxResultCount": 1, "includedType": "lodging"},
-                     _FIELDS)
+                     _fields())
     except Exception as exc:  # noqa: BLE001 — a missing fiche is fine
         log.info("places: lookup failed for %s: %s", name, exc)
         return None
@@ -72,11 +103,22 @@ def photo_uri(photo_name: str, width: int = 1200) -> str:
     """Short-lived Google-hosted URL of a place photo (one billed request)."""
     if not _PHOTO_RE.match(photo_name or ""):
         return ""
+    hit = _URI_CACHE.get(photo_name)
+    if hit and hit[1] > time.time():
+        return hit[0]
+    if not _allow("photo"):
+        log.info("places: daily photo cap reached")
+        return ""
     q = urllib.parse.urlencode({"maxWidthPx": width, "skipHttpRedirect": "true",
                                 "key": settings.GOOGLE_PLACES_API_KEY})
     try:
         with urllib.request.urlopen(f"{_API}/{photo_name}/media?{q}", timeout=6) as r:
-            return json.loads(r.read().decode("utf-8")).get("photoUri", "")
+            uri = json.loads(r.read().decode("utf-8")).get("photoUri", "")
+            if uri:
+                if len(_URI_CACHE) > 2000:
+                    _URI_CACHE.clear()
+                _URI_CACHE[photo_name] = (uri, time.time() + 45 * 60)
+            return uri
     except Exception as exc:  # noqa: BLE001
         log.info("places: photo failed: %s", exc)
         return ""
@@ -100,7 +142,9 @@ def _apply(card: dict, p: dict) -> dict:
         "rating": p.get("rating"), "count": p.get("userRatingCount"),
         "lat": loc.get("latitude"), "lng": loc.get("longitude"),
     }
-    google = [{"src": "/portail/lieu-photo?n=" + urllib.parse.quote(ph["name"], safe=""),
+    fallback = next((g["src"] for g in card.get("gallery") or [] if g["src"].startswith("https://")), "")
+    google = [{"src": "/portail/lieu-photo?" + urllib.parse.urlencode(
+                   {"n": ph["name"], **({"f": fallback} if fallback else {})}),
                "host": _attribution(ph), "page": card["place"]["maps"]} for ph in photos]
     # every photo goes through our proxy: Google's photo URLs expire, ours don't
     card["gallery"] = google + (card.get("gallery") or [])
@@ -144,12 +188,15 @@ def embed_url(card: dict) -> str:
 
 
 @router.get("/portail/lieu-photo")
-def place_photo(request: Request, n: str = ""):
-    """Panel photos: resolve the Google photo only when the member views it."""
+def place_photo(request: Request, n: str = "", f: str = ""):
+    """Hotel photos: resolve the Google photo only when the member views it;
+    over the daily cap (or on error) fall back to the wholesaler photo."""
     from portal import current_portal_client_id      # lazy: avoids import cycle
-    if not current_portal_client_id(request) or not enabled() or not _PHOTO_RE.match(n):
+    if not current_portal_client_id(request) or not _PHOTO_RE.match(n):
         return Response(status_code=404)
-    uri = photo_uri(n)
+    uri = photo_uri(n) if enabled() else ""
+    if not uri and f.startswith("https://"):
+        uri = f
     if not uri:
         return Response(status_code=404)
-    return RedirectResponse(uri, status_code=302, headers={"Cache-Control": "private, max-age=600"})
+    return RedirectResponse(uri, status_code=302, headers={"Cache-Control": "private, max-age=2400"})

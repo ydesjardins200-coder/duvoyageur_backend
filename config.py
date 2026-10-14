@@ -118,6 +118,12 @@ class Settings:
     GOOGLE_PLACES_API_KEY: str = os.getenv("GOOGLE_PLACES_API_KEY", "")
     # Browser key (HTTP-referrer restricted; Maps Embed + Maps Static APIs) for maps.
     GOOGLE_MAPS_EMBED_KEY: str = os.getenv("GOOGLE_MAPS_EMBED_KEY", "")
+    # "free" (photos, address, map: largest free quota) or "full" (+ rating, phone, website).
+    GOOGLE_PLACES_FIELDS: str = os.getenv("GOOGLE_PLACES_FIELDS", "free")
+    # Daily safety caps (0 = none); beyond them, wholesaler photos are used.
+    # Free tier ≈ 1 000 photos and 5 000 basic searches per month.
+    GOOGLE_PLACES_DAILY_PHOTOS: int = int(os.getenv("GOOGLE_PLACES_DAILY_PHOTOS", "30"))
+    GOOGLE_PLACES_DAILY_SEARCHES: int = int(os.getenv("GOOGLE_PLACES_DAILY_SEARCHES", "150"))
 
     # --- Support: the portal's "Aide" tab sends clients to the Facebook page's
     # Messenger (the admin ticket queue is no longer used).
