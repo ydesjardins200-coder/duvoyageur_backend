@@ -1705,6 +1705,40 @@ def _run_openai(search: bool, system: list, convo: list):
 
 _RUNNERS = {"anthropic": _run_anthropic, "openai": _run_openai}
 
+_RESULT_KEYS = ("recherche", "destinations", "hotels", "prix_vus", "budget", "questions", "suivis")
+
+
+def coerce_results(data) -> dict:
+    """The tool input as clean Python data: models sometimes send nested
+    arrays as JSON strings, or wrap everything in one key."""
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except ValueError:
+            return {}
+    if not isinstance(data, dict):
+        return {}
+    if len(data) == 1 and isinstance(next(iter(data.values())), dict) and \
+            not any(k in data for k in _RESULT_KEYS):
+        data = next(iter(data.values()))          # {"resultats": {...}}
+    out = dict(data)
+    for k in _RESULT_KEYS:
+        v = out.get(k)
+        if isinstance(v, str):
+            try:
+                out[k] = json.loads(v)
+            except ValueError:
+                out[k] = [] if k != "recherche" else {}
+    if isinstance(out.get("hotels"), dict):          # one hotel sent as an object
+        out["hotels"] = [out["hotels"]]
+    return out
+
+
+def _valid_hotels(data: dict) -> bool:
+    h = (data or {}).get("hotels")
+    return isinstance(h, list) and any(isinstance(x, dict) and str(x.get("hotel") or "").strip() for x in h)
+
+
 _REPAIR_ASK = ("Appelle maintenant l'outil afficher_resultats avec les données structurées qui "
                "correspondent exactement à ta réponse ci-dessus (hôtels, prix vus, budget, "
                "questions, suivis). N'écris rien d'autre.")
@@ -1863,12 +1897,15 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
             yield _ev("marked", render_md(marked, sources))
         else:
             marked = ""
-    data = meta.get("data") or {}
-    wants = "[[HOTELS]]" in answer or "[[PRIX]]" in answer or "[[DESTINATIONS]]" in answer
-    if not data and answer and wants and not _PISTES_RE.search(full):
+    data = coerce_results(meta.get("data"))
+    if "[[HOTELS]]" in answer and not _valid_hotels(data) and not _PISTES_RE.search(full):
+        log.warning("assistant[%s]: hotels missing from results (cut=%s, keys=%s, hotels=%s)",
+                    provider, meta.get("cut"), sorted(data), type(data.get("hotels")).__name__)
         yield _ev("status", "📸 Je prépare les fiches…")
-        data = repair_results(provider, system_for(search), msgs, answer) or {}
-        log.info("assistant[%s]: results repaired=%s (cut=%s)", provider, bool(data), meta.get("cut"))
+        fixed = coerce_results(repair_results(provider, system_for(search), msgs, answer))
+        if _valid_hotels(fixed):
+            data = {**data, **{k: v for k, v in fixed.items() if v}}
+        log.info("assistant[%s]: results repaired=%s", provider, _valid_hotels(fixed))
     u = meta.get("usage") or {}
     log.info("assistant[%s] %s: %.1fs, %s searches, tokens in=%s (cache %s) out=%s, hotels=%s",
              provider, model_name(provider), time.monotonic() - t0, meta.get("searches", 0),
