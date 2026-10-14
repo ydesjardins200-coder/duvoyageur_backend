@@ -2733,9 +2733,19 @@ def dmo_body(crit: dict) -> str:
             if settings.PORTAL_ASSISTANT_ENABLED else
             "<p class='muted'>Une question sur un forfait ou ta réservation ? "
             f"<a href=\"{escape(settings.MESSENGER_URL)}\" target='_blank' rel='noopener'>Écris-nous sur Messenger</a>.</p>")
-    return ("<div class='hello'><h2>Rechercher un forfait</h2>"
-            "<p class='lede'>Ton Rabais Récompense est déjà appliqué aux prix affichés.</p></div>"
-            + _crit_chips(crit) + note
+    head = ("<div class='hello'><h2>Rechercher un forfait</h2>"
+            "<p class='lede'>Ton Rabais Récompense est déjà appliqué aux prix affichés.</p></div>")
+    if not settings.SIRRVA_ALIAS:                  # engine not activated yet: no empty frame
+        return (head + _crit_chips(crit)
+                + "<div class='soon'><div class='soon-ic'><svg viewBox='0 0 24 24' fill='none' stroke='currentColor' "
+                  "stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>"
+                  "<circle cx='11' cy='11' r='7'/><path d='m20.5 20.5-4.4-4.4'/></svg></div>"
+                  "<h3>Ton moteur de recherche arrive bientôt</h3>"
+                  "<p>On termine son activation avec Softvoyage. En attendant, écris-nous l'hôtel ou la "
+                  "destination qui te tente : un conseiller te trouve ton forfait, avec ton Rabais Récompense.</p>"
+                  f"<a class='btn' href=\"{escape(settings.MESSENGER_URL)}\" target='_blank' rel='noopener'>"
+                  "Écrire à un conseiller →</a></div>")
+    return (head + _crit_chips(crit) + note
             + f"<div class='engine'><iframe src=\"{escape(_engine_url(crit))}\" "
               "title='Moteur de recherche de forfaits' loading='eager'></iframe></div>" + back)
 

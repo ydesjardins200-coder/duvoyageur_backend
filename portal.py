@@ -1675,8 +1675,8 @@ def _signup_form(values=None, error: str = "") -> str:
     return (
         err
         + "<div class='hello'><h2>Créer mon compte</h2>"
-        "<p class='lede'>30 secondes et ton espace est prêt — tu pourras suivre "
-        "tes voyages, tes soumissions et tes économies.</p></div>"
+        "<p class='lede'>30 secondes et ton espace est prêt : tu cherches et tu réserves "
+        "ton forfait toi-même, avec ton Rabais Récompense déjà appliqué.</p></div>"
         + _social_buttons()
         + "<form class='form' method='post' action='/portail/inscription'>"
         f"<div class='fset'><div class='formgrid'>{fields}</div></div>"
@@ -1774,41 +1774,40 @@ async def portal_signup_save(request: Request):
 
 _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#03121b">
+<meta name="theme-color" content="#0F2A47">
 <title>Du Voyageur — {title}</title>
-<link rel="icon" type="image/png" href="/static/logo.png">
+<link rel="icon" type="image/png" href="/static/favicon-64.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,600;0,700;0,800;0,900;1,800&family=Kaushan+Script&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
  :root{{
-   --abyss:#03121b;--deep:#0a3346;--pacific:#19d3e6;--lagoon:#3df0c5;
-   --surf:#9bf6ec;--gold:#ffd23f;--foam:#eafcff;--mist:#94b8c6;
-   --line:rgba(155,246,236,.16);--glow:rgba(25,211,230,.55);
-   --field:rgba(3,18,27,.55);
+   /* Brand v2 (brandbook du CEO) — anciens noms conservés */
+   --abyss:#FFFFFF;--deep:#0F2A47;--pacific:#0F2A47;--lagoon:#F4C543;
+   --surf:#23466E;--gold:#F4C543;--foam:#0F2A47;--mist:#5B6B7D;
+   --line:rgba(15,42,71,.12);--glow:rgba(244,197,67,.45);
+   --field:#FFFFFF;--navy:#0F2A47;--navy-deep:#001E3B;--gold-ink:#8A6400;--warm:#F7F6F2;
+   --shadow:0 10px 30px -14px rgba(15,42,71,.28);
  }}
  *{{box-sizing:border-box}}
  html{{-webkit-text-size-adjust:100%}}
  body{{margin:0;min-height:100vh;font-family:"Inter",system-ui,sans-serif;color:var(--foam);
    font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased;
-   background:
-     radial-gradient(90% 60% at 85% -8%, rgba(25,211,230,.18), transparent 60%),
-     linear-gradient(180deg, rgba(3,18,27,.93), rgba(3,18,27,.98)),
-     url("/static/login-bg.webp") center/cover fixed no-repeat;}}
+   background:var(--warm);}}
  a{{color:var(--pacific)}}
- h1,h2,h3{{font-family:"Bricolage Grotesque",sans-serif;letter-spacing:-.02em}}
+ h1,h2,h3{{font-family:"Montserrat",sans-serif;letter-spacing:-.02em}}
  :focus-visible{{outline:2px solid var(--pacific);outline-offset:2px;border-radius:6px}}
  /* Header */
  .top{{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
    padding:14px 18px;padding-top:max(14px,env(safe-area-inset-top));
    border-bottom:1px solid var(--line);
-   background:linear-gradient(180deg, rgba(8,33,47,.72), rgba(8,33,47,.35));
+   background:linear-gradient(180deg, rgba(15,42,71,0.09), rgba(15,42,71,0.04));
    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
    position:sticky;top:0;z-index:5}}
  .brand{{display:flex;align-items:center;gap:11px;min-width:0;flex:none}}
  .brand img{{width:40px;height:40px;border-radius:50%;box-shadow:0 0 0 1px var(--line);flex:none}}
- .brand b{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:17px;display:block;line-height:1.1}}
- .brand span{{font-family:"Space Grotesk",monospace;text-transform:uppercase;letter-spacing:.2em;
+ .brand b{{font-family:"Montserrat",sans-serif;font-weight:800;font-size:17px;display:block;line-height:1.1}}
+ .brand span{{font-family:"Montserrat",monospace;text-transform:uppercase;letter-spacing:.2em;
    font-size:10px;color:var(--pacific);display:block;margin-top:2px}}
  .logout{{font-size:13px;color:var(--mist);text-decoration:none;white-space:nowrap;
    padding:8px 10px;border-radius:10px}}
@@ -1820,10 +1819,10 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
    padding:8px 8px;border-radius:10px;display:inline-flex}}
  .bdot{{position:absolute;top:1px;right:0;min-width:17px;height:17px;padding:0 4px;
    border-radius:999px;background:#ff5a6e;color:#fff;font-size:10px;font-weight:700;
-   font-family:"Space Grotesk",monospace;display:flex;align-items:center;justify-content:center;
-   box-shadow:0 0 0 2px rgba(8,33,47,.9)}}
+   font-family:"Montserrat",monospace;display:flex;align-items:center;justify-content:center;
+   box-shadow:0 0 0 2px rgba(15,42,71,0.11)}}
  /* Accueil */
- .idcard{{background:linear-gradient(180deg, rgba(20,62,82,.5), rgba(8,33,47,.6));
+ .idcard{{background:#fff;
    border:1px solid var(--line);border-radius:18px;padding:18px 20px;margin-bottom:22px}}
  .idcard .idtop{{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}}
  .idcard h3{{font-size:18px;margin:0}}
@@ -1831,10 +1830,10 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .idrow{{display:flex;gap:8px;font-size:14px;padding:5px 0;color:var(--foam)}}
  .idrow .ik{{color:var(--mist);min-width:88px;flex:none}}
  .savings{{display:flex;align-items:center;justify-content:space-between;gap:14px;
-   background:linear-gradient(120deg, rgba(61,240,197,.14), rgba(25,211,230,.06));
-   border:1px solid rgba(61,240,197,.4);border-radius:18px;padding:18px 22px;margin-bottom:22px}}
- .savings .sv-l{{color:var(--surf);font-size:13px;text-transform:uppercase;letter-spacing:.12em;font-family:"Space Grotesk",monospace}}
- .savings .sv-n{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:26px;color:var(--lagoon)}}
+   background:linear-gradient(120deg, rgba(244,197,67,.14), rgba(244,197,67,.06));
+   border:1px solid rgba(244,197,67,.4);border-radius:18px;padding:18px 22px;margin-bottom:22px}}
+ .savings .sv-l{{color:var(--surf);font-size:13px;text-transform:uppercase;letter-spacing:.12em;font-family:"Montserrat",monospace}}
+ .savings .sv-n{{font-family:"Montserrat",sans-serif;font-weight:800;font-size:26px;color:var(--gold-ink)}}
  .toprow{{display:flex;gap:14px;align-items:stretch;margin-bottom:22px}}
  .toprow .idcard{{flex:1 1 60%;margin-bottom:0}}
  .toprow .savings{{flex:1 1 40%;margin-bottom:0}}
@@ -1845,10 +1844,10 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
    background:linear-gradient(120deg,var(--pacific),var(--lagoon));
    box-shadow:0 14px 34px -14px var(--glow);transition:transform .15s}}
  .searchcta:hover{{transform:translateY(-1px)}}
- .searchcta b{{display:block;font-family:"Bricolage Grotesque",sans-serif;font-size:18px}}
+ .searchcta b{{display:block;font-family:"Montserrat",sans-serif;font-size:18px}}
  .searchcta span{{font-size:13px;opacity:.85}}
  .searchcta .sc-go{{font-size:24px;font-weight:800;opacity:1}}
- .assist{{background:linear-gradient(180deg, rgba(20,62,82,.5), rgba(8,33,47,.6));
+ .assist{{background:#fff;
    border:1px solid var(--line);border-radius:18px;padding:18px;margin-bottom:22px}}
  .a-head{{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}}
  .a-head h3{{margin:0;font-size:18px}}
@@ -1860,24 +1859,24 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
    padding:4px 2px 8px;scroll-behavior:smooth}}
  .msg{{max-width:85%;padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.5;
    white-space:pre-wrap;word-wrap:break-word}}
- .msg.ai{{align-self:flex-start;background:rgba(6,33,47,.7);border:1px solid var(--line);
+ .msg.ai{{align-self:flex-start;background:#fff;border:1px solid var(--line);
    border-bottom-left-radius:5px}}
- .msg.me{{align-self:flex-end;background:rgba(25,211,230,.18);border:1px solid rgba(25,211,230,.35);
+ .msg.me{{align-self:flex-end;background:rgba(244,197,67,.18);border:1px solid rgba(244,197,67,.35);
    border-bottom-right-radius:5px}}
  .msg.typing::after{{content:"● ● ●";letter-spacing:2px;color:var(--mist);
    animation:blink 1.2s infinite}}
  @keyframes blink{{50%{{opacity:.3}}}}
  .msg.ai b{{color:var(--surf)}}
  .pcards{{margin:12px 0 2px;white-space:normal}}
- .pc-head{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:15px;margin-bottom:8px}}
- .pcard{{display:flex;gap:14px;padding:12px;border-radius:14px;background:rgba(3,18,27,.55);
+ .pc-head{{font-family:"Montserrat",sans-serif;font-weight:700;font-size:15px;margin-bottom:8px}}
+ .pcard{{display:flex;gap:14px;padding:12px;border-radius:14px;background:#fff;
    border:1px solid var(--line);margin-bottom:10px}}
- .pc-img{{width:132px;height:132px;flex:none;object-fit:cover;border-radius:11px;background:rgba(155,246,236,.06)}}
+ .pc-img{{width:132px;height:132px;flex:none;object-fit:cover;border-radius:11px;background:rgba(15,42,71,0.05)}}
  .pc-body{{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px}}
  .pc-name{{font-weight:700;font-size:16px;color:var(--foam);text-decoration:underline;
-   text-decoration-color:rgba(155,246,236,.35);text-underline-offset:3px}}
+   text-decoration-color:rgba(15,42,71,0.28);text-underline-offset:3px}}
  .pc-sub{{font-size:12.5px;color:var(--mist)}}
- .pc-price{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:21px;margin-top:4px}}
+ .pc-price{{font-family:"Montserrat",sans-serif;font-weight:800;font-size:21px;margin-top:4px}}
  .pc-price span{{font-size:14px;font-weight:600;color:var(--mist);margin-left:2px}}
  .pc-total{{font-size:14px}}
  .pc-total b{{color:var(--foam)}}
@@ -1887,22 +1886,22 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .pc-go{{font-size:13px;font-weight:600;color:#03121b;text-decoration:none;border-radius:999px;
    padding:5px 12px;background:linear-gradient(120deg,var(--pacific),var(--lagoon))}}
  .pc-head{{display:flex;align-items:center;justify-content:space-between;gap:10px}}
- .pc-cmpbtn{{background:none;border:1px solid rgba(25,211,230,.45);color:var(--pacific);border-radius:999px;
+ .pc-cmpbtn{{background:none;border:1px solid rgba(244,197,67,.45);color:var(--pacific);border-radius:999px;
    padding:4px 12px;font:600 12px Inter,sans-serif;cursor:pointer}}
  .pc-cmpbtn:hover{{border-color:var(--pacific)}}
- .pc-cmp{{overflow-x:auto;margin:0 0 10px;border:1px solid var(--line);border-radius:12px;background:rgba(3,18,27,.55)}}
+ .pc-cmp{{overflow-x:auto;margin:0 0 10px;border:1px solid var(--line);border-radius:12px;background:#fff}}
  .pc-cmp table{{border-collapse:collapse;width:100%;font-size:13px;min-width:420px}}
  .pc-cmp th,.pc-cmp td{{padding:7px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}}
- .pc-cmp thead th{{font-family:"Bricolage Grotesque",sans-serif;font-size:13.5px;color:var(--foam)}}
+ .pc-cmp thead th{{font-family:"Montserrat",sans-serif;font-size:13.5px;color:var(--foam)}}
  .pc-cmp tbody th{{color:var(--mist);font-weight:500;white-space:nowrap}}
  .pc-cmp tr:last-child th,.pc-cmp tr:last-child td{{border-bottom:0}}
- .pc-ours{{font-size:11.5px;color:var(--gold);text-decoration:none;border:1px solid rgba(255,210,63,.4);
+ .pc-ours{{font-size:11.5px;color:var(--gold-ink);text-decoration:none;border:1px solid rgba(255,210,63,.4);
    border-radius:999px;padding:2px 9px}}
  .guides{{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px;white-space:normal}}
  .guides span{{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--mist);
-   font-family:"Space Grotesk",monospace;margin-right:2px}}
+   font-family:"Montserrat",monospace;margin-right:2px}}
  .guides a{{font-size:12.5px;color:var(--foam);text-decoration:none;border-radius:999px;padding:4px 11px;
-   background:rgba(61,240,197,.12);border:1px solid rgba(61,240,197,.35)}}
+   background:rgba(244,197,67,.12);border:1px solid rgba(244,197,67,.35)}}
  .guides a:hover{{border-color:var(--lagoon)}}
  .rate{{display:flex;gap:6px;margin-top:10px}}
  .rbtn{{background:none;border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:14px;
@@ -1912,21 +1911,21 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .a-acts{{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}}
  @media(max-width:560px){{.a-head{{flex-direction:column;align-items:stretch}}.a-acts{{justify-content:flex-start}}}}
  .a-toast{{margin:-4px 0 10px;padding:9px 12px;border-radius:11px;font-size:13.5px;
-   background:rgba(61,240,197,.12);border:1px solid rgba(61,240,197,.4);color:var(--lagoon)}}
+   background:rgba(244,197,67,.12);border:1px solid rgba(244,197,67,.4);color:var(--gold-ink)}}
  .slot:empty{{display:none}}
  .slot{{white-space:normal;margin:6px 0 10px}}
  .dcards{{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin:8px 0;white-space:normal}}
- .dcard{{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:rgba(3,18,27,.55);display:flex;flex-direction:column}}
- .dc-pic{{margin:0;position:relative;height:130px;background:rgba(155,246,236,.06)}}
+ .dcard{{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fff;display:flex;flex-direction:column}}
+ .dc-pic{{margin:0;position:relative;height:130px;background:rgba(15,42,71,0.05)}}
  .dc-pic img{{width:100%;height:100%;object-fit:cover;display:block}}
- .dc-pic figcaption{{position:absolute;left:6px;bottom:6px;font-size:10.5px;color:#fff;background:rgba(3,18,27,.7);
+ .dc-pic figcaption{{position:absolute;left:6px;bottom:6px;font-size:10.5px;color:#fff;background:#fff;
    padding:2px 7px;border-radius:999px}}
  .dc-nopic{{display:flex;align-items:center;justify-content:center;font-size:34px;
-   background:linear-gradient(135deg,rgba(25,211,230,.18),rgba(61,240,197,.08))}}
+   background:linear-gradient(135deg,rgba(244,197,67,.18),rgba(244,197,67,.08))}}
  .dc-body{{padding:10px 12px 12px;position:relative;display:flex;flex-direction:column;gap:4px;flex:1}}
  .dc-rank{{position:absolute;top:-14px;right:10px;width:26px;height:26px;border-radius:50%;
    background:var(--pacific);color:#03121b;font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center}}
- .dc-name{{font-family:"Bricolage Grotesque",sans-serif;font-weight:800;font-size:17px}}
+ .dc-name{{font-family:"Montserrat",sans-serif;font-weight:800;font-size:17px}}
  .dc-hook{{font-size:13px;color:var(--surf);font-weight:600}}
  .dc-row{{font-size:12.5px;line-height:1.4}}
  .dc-row span{{color:var(--mist);margin-right:4px}}
@@ -1940,33 +1939,33 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
      scroll-snap-type:x mandatory;padding-bottom:6px;-webkit-overflow-scrolling:touch}}
    .dcard{{scroll-snap-align:start}}
    .dc-pic{{height:110px}}}}
- .qset{{margin-top:12px;padding:12px;border-radius:14px;border:1px solid rgba(25,211,230,.35);
-   background:rgba(25,211,230,.06);white-space:normal}}
- .qhead{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:14px;margin-bottom:6px}}
+ .qset{{margin-top:12px;padding:12px;border-radius:14px;border:1px solid rgba(244,197,67,.35);
+   background:rgba(244,197,67,.06);white-space:normal}}
+ .qhead{{font-family:"Montserrat",sans-serif;font-weight:700;font-size:14px;margin-bottom:6px}}
  .qgrp{{margin:8px 0}}
  .qq{{font-size:13.5px;margin-bottom:6px}}
  .qopts{{display:flex;flex-wrap:wrap;gap:6px}}
- .qopt{{background:rgba(3,18,27,.6);border:1px solid var(--line);color:var(--foam);border-radius:999px;
+ .qopt{{background:#fff;border:1px solid var(--line);color:var(--foam);border-radius:999px;
    padding:7px 12px;font:500 13px Inter,sans-serif;cursor:pointer}}
  .qopt:hover{{border-color:var(--pacific)}}
  .qopt.on{{background:var(--pacific);color:#03121b;border-color:var(--pacific)}}
  .qsend{{margin-top:6px;font-size:13px;padding:8px 14px}}
  .qsend:disabled{{opacity:.5}}
- .pc-rate{{font-size:12.5px;color:var(--gold);margin-top:2px}}
+ .pc-rate{{font-size:12.5px;color:var(--gold-ink);margin-top:2px}}
  a.pc-cmpbtn{{text-decoration:none;display:inline-block;margin-left:6px}}
- .pc-conf{{font-size:12px;color:var(--gold);margin-top:2px}}
+ .pc-conf{{font-size:12px;color:var(--gold-ink);margin-top:2px}}
  @media(max-width:520px){{.pcard{{flex-direction:column}}.pc-img{{width:100%;height:170px}}}}
  .astatus{{font-size:13px;color:var(--mist);font-style:italic}}
  .astatus:empty{{display:none}}
  .srcs{{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px;padding-top:9px;
    border-top:1px solid var(--line);white-space:normal}}
  .srcs span{{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--mist);
-   font-family:"Space Grotesk",monospace;margin-right:2px}}
+   font-family:"Montserrat",monospace;margin-right:2px}}
  .srcs a{{font-size:12px;color:var(--pacific);text-decoration:none;max-width:220px;overflow:hidden;
    text-overflow:ellipsis;white-space:nowrap;border:1px solid var(--line);border-radius:999px;padding:3px 9px}}
  .srcs a:hover{{border-color:var(--pacific)}}
  .chips{{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 4px}}
- .chip{{background:rgba(6,33,47,.6);border:1px solid rgba(25,211,230,.35);color:var(--foam);
+ .chip{{background:#fff;border:1px solid rgba(244,197,67,.35);color:var(--foam);
    border-radius:999px;padding:8px 13px;font-size:13px;cursor:pointer;font-family:inherit}}
  .chip:hover{{border-color:var(--pacific)}}
  .a-form{{display:flex;gap:8px;align-items:flex-end;margin-top:12px}}
@@ -1979,25 +1978,25 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .engine{{border-radius:18px;overflow:hidden;background:#fff;border:1px solid var(--line)}}
  .engine iframe{{display:block;width:100%;height:max(1100px,85vh);border:0}}
  .msgr{{display:flex;align-items:center;gap:14px;padding:18px 20px;border-radius:18px;
-   text-decoration:none;color:#fff;background:linear-gradient(120deg,#0a7cff,#a334fa);
-   box-shadow:0 14px 34px -14px rgba(10,124,255,.6);transition:transform .15s}}
+   text-decoration:none;color:#fff;background:var(--navy);border-bottom:3px solid var(--gold);
+   box-shadow:0 14px 30px -16px rgba(15,42,71,.6);transition:transform .15s}}
  .msgr:hover{{transform:translateY(-1px)}}
- .msgr b{{display:block;font-family:"Bricolage Grotesque",sans-serif;font-size:18px}}
+ .msgr b{{display:block;font-family:"Montserrat",sans-serif;font-size:18px}}
  .msgr span{{font-size:13px;opacity:.9}}
  .msgr .sc-go{{margin-left:auto;font-size:24px;font-weight:800;opacity:1}}
- .acc-h{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:15px;
+ .acc-h{{font-family:"Montserrat",sans-serif;font-weight:700;font-size:15px;
    margin:24px 0 12px;color:var(--surf);letter-spacing:-.01em}}
  .acc-h:first-of-type{{margin-top:8px}}
  /* Notifications */
  .nflist{{display:grid;gap:10px}}
  .nf{{display:block;text-decoration:none;color:var(--foam);
-   background:linear-gradient(180deg, rgba(20,62,82,.5), rgba(8,33,47,.6));
+   background:#fff;
    border:1px solid var(--line);border-radius:14px;padding:14px 16px}}
- .nf.unread{{border-color:rgba(25,211,230,.5);background:linear-gradient(120deg, rgba(25,211,230,.1), rgba(8,33,47,.6))}}
+ .nf.unread{{border-color:rgba(244,197,67,.5);background:linear-gradient(120deg, rgba(244,197,67,.1), rgba(15,42,71,0.07))}}
  .nf-t{{font-size:14px;line-height:1.45}}
- .nf-at{{font-size:12px;color:var(--mist);margin-top:5px;font-family:"Space Grotesk",monospace}}
+ .nf-at{{font-size:12px;color:var(--mist);margin-top:5px;font-family:"Montserrat",monospace}}
  /* Service threads (toggle) */
- .thread{{background:linear-gradient(180deg, rgba(20,62,82,.5), rgba(8,33,47,.6));
+ .thread{{background:#fff;
    border:1px solid var(--line);border-radius:14px;margin-bottom:10px;overflow:hidden}}
  .thread>summary{{list-style:none;cursor:pointer;display:flex;align-items:center;
    justify-content:space-between;gap:12px;padding:15px 17px;font-size:14px}}
@@ -2008,16 +2007,16 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .thread>summary .badge{{flex:none}}
  .msgs{{padding:4px 14px 16px;display:flex;flex-direction:column;gap:10px}}
  .msg{{max-width:88%;padding:10px 13px;border-radius:14px;font-size:14px;line-height:1.45}}
- .msg.in{{align-self:flex-start;background:rgba(155,246,236,.1);border:1px solid var(--line);border-bottom-left-radius:5px}}
- .msg.out{{align-self:flex-end;background:linear-gradient(120deg, rgba(25,211,230,.18), rgba(61,240,197,.12));
-   border:1px solid rgba(61,240,197,.3);border-bottom-right-radius:5px}}
- .msg-who{{font-size:11px;color:var(--mist);margin-bottom:4px;font-family:"Space Grotesk",monospace}}
+ .msg.in{{align-self:flex-start;background:rgba(15,42,71,0.08);border:1px solid var(--line);border-bottom-left-radius:5px}}
+ .msg.out{{align-self:flex-end;background:linear-gradient(120deg, rgba(244,197,67,.18), rgba(244,197,67,.12));
+   border:1px solid rgba(244,197,67,.3);border-bottom-right-radius:5px}}
+ .msg-who{{font-size:11px;color:var(--mist);margin-bottom:4px;font-family:"Montserrat",monospace}}
  .msg-b{{white-space:pre-wrap;word-break:break-word}}
  .svc-reply{{padding:0 14px 6px;display:flex;flex-direction:column;gap:8px}}
  .svc-reply textarea{{width:100%;font:inherit;font-size:16px;color:var(--foam);min-height:54px;
    padding:10px 12px;border-radius:12px;border:1px solid var(--line);
-   background:rgba(8,33,47,.55);resize:vertical}}
- .svc-reply textarea:focus{{outline:none;border-color:var(--pacific);box-shadow:0 0 0 3px rgba(25,211,230,.18)}}
+   background:#fff;resize:vertical}}
+ .svc-reply textarea:focus{{outline:none;border-color:var(--pacific);box-shadow:0 0 0 3px rgba(244,197,67,.18)}}
  .svc-reply .btn{{align-self:flex-start}}
  .svc-resolve{{padding:0 14px 14px}}
  /* Pill nav */
@@ -2026,9 +2025,9 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .pnav::-webkit-scrollbar{{display:none}}
  .pill{{flex:none;font-size:14px;font-weight:600;text-decoration:none;color:var(--mist);
    padding:9px 16px;border-radius:999px;border:1px solid var(--line);
-   background:rgba(8,33,47,.4)}}
+   background:#fff}}
  .pill.on{{color:#02161c;background:linear-gradient(120deg,var(--pacific),var(--lagoon));border-color:transparent}}
- .psite{{margin-left:auto;color:var(--pacific);border-color:rgba(25,211,230,.4);background:rgba(25,211,230,.08)}}
+ .psite{{margin-left:auto;color:var(--pacific);border-color:rgba(244,197,67,.4);background:rgba(244,197,67,.08)}}
  .psite:hover,.psite:active{{color:#02161c;background:var(--pacific);border-color:transparent}}
  /* Layout */
  .wrap{{max-width:980px;margin:0 auto;padding:22px 18px 64px;
@@ -2040,22 +2039,22 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
    text-decoration:none;color:var(--foam);margin:0 0 18px;
    background:linear-gradient(120deg, rgba(255,210,63,.14), rgba(255,210,63,.06));
    border:1px solid rgba(255,210,63,.42);border-radius:16px;padding:15px 18px}}
- .banner-txt b{{display:block;font-family:"Bricolage Grotesque",sans-serif;font-weight:700;margin-bottom:2px}}
+ .banner-txt b{{display:block;font-family:"Montserrat",sans-serif;font-weight:700;margin-bottom:2px}}
  .banner-txt span{{color:var(--mist);font-size:13px}}
- .banner-cta{{color:var(--gold);font-weight:600;white-space:nowrap;flex:none}}
+ .banner-cta{{color:var(--gold-ink);font-weight:600;white-space:nowrap;flex:none}}
  /* Trip cards */
  .tgrid{{display:grid;gap:16px}}
- .tcard{{background:linear-gradient(180deg, rgba(20,62,82,.5), rgba(8,33,47,.6));
+ .tcard{{background:#fff;
    border:1px solid var(--line);border-radius:18px;padding:20px 22px;
-   box-shadow:0 24px 60px -28px rgba(0,0,0,.8)}}
+   box-shadow:0 24px 60px -28px rgba(0,30,59,0.32)}}
  .tcard.empty{{color:var(--mist);text-align:center}}
  .tchdr{{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;flex-wrap:wrap}}
  .tchdr h3{{font-weight:700;font-size:19px;margin:0}}
- .badge{{font-family:"Space Grotesk",monospace;text-transform:uppercase;letter-spacing:.08em;
+ .badge{{font-family:"Montserrat",monospace;text-transform:uppercase;letter-spacing:.08em;
    font-size:11px;padding:5px 11px;border-radius:999px;white-space:nowrap}}
  .badge.prep{{background:rgba(148,184,198,.16);color:var(--surf)}}
- .badge.quote{{background:rgba(255,210,63,.16);color:var(--gold)}}
- .badge.booked{{background:rgba(61,240,197,.16);color:var(--lagoon)}}
+ .badge.quote{{background:rgba(255,210,63,.16);color:var(--gold-ink)}}
+ .badge.booked{{background:rgba(244,197,67,.16);color:var(--gold-ink)}}
  .badge.done{{background:rgba(148,184,198,.12);color:var(--mist)}}
  .row{{display:flex;justify-content:space-between;gap:14px;padding:8px 0;border-top:1px solid var(--line);font-size:14px}}
  .row .k{{color:var(--mist);flex:none}}
@@ -2064,7 +2063,7 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .muted{{color:var(--mist);font-size:13px;margin-top:10px;font-weight:400}}
  /* Buttons */
  .btn{{display:inline-flex;align-items:center;justify-content:center;gap:6px;
-   font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:15px;
+   font-family:"Montserrat",sans-serif;font-weight:700;font-size:15px;
    min-height:48px;padding:12px 22px;border-radius:999px;text-decoration:none;cursor:pointer;
    color:#02161c;border:0;background:linear-gradient(120deg,var(--pacific),var(--lagoon));
    box-shadow:0 12px 30px -12px var(--glow);transition:transform .15s,box-shadow .15s}}
@@ -2075,7 +2074,7 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .actions .btn{{flex:1;min-width:160px}}
  /* Forms */
  .form{{margin-top:6px}}
- .fset{{background:linear-gradient(180deg, rgba(20,62,82,.4), rgba(8,33,47,.5));
+ .fset{{background:#fff;
    border:1px solid var(--line);border-radius:18px;padding:18px 18px 20px;margin-bottom:16px}}
  .fset>h3{{font-size:15px;margin:0 0 14px;font-weight:700}}
  .fset>h3 .muted{{font-size:12px;margin:0}}
@@ -2084,7 +2083,7 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .field.half{{grid-column:span 1}}
  .field:not(.half){{grid-column:1 / -1}}
  .field label{{font-size:12px;color:var(--mist);margin:0 0 6px;font-weight:500}}
- .field .req{{color:var(--gold)}}
+ .field .req{{color:var(--gold-ink)}}
  .field input,.field select,.field textarea{{width:100%;font:inherit;font-size:16px;color:var(--foam);
    min-height:48px;padding:12px 13px;border-radius:12px;
    border:1px solid var(--line);background:var(--field);appearance:none;-webkit-appearance:none}}
@@ -2092,7 +2091,7 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .field select{{background-image:linear-gradient(45deg,transparent 50%,var(--mist) 50%),linear-gradient(135deg,var(--mist) 50%,transparent 50%);
    background-position:calc(100% - 18px) 21px,calc(100% - 13px) 21px;background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:36px}}
  .field input::placeholder,.field textarea::placeholder{{color:#6f93a3}}
- .field input:focus,.field select:focus,.field textarea:focus{{outline:none;border-color:var(--pacific);box-shadow:0 0 0 3px rgba(25,211,230,.18)}}
+ .field input:focus,.field select:focus,.field textarea:focus{{outline:none;border-color:var(--pacific);box-shadow:0 0 0 3px rgba(244,197,67,.18)}}
  .field.miss input,.field.miss select{{border-color:rgba(255,210,63,.55)}}
  .dobgrid{{display:grid;grid-template-columns:1fr 1fr 1.35fr;gap:8px}}
  .dobgrid select{{padding:12px 26px 12px 11px;
@@ -2101,20 +2100,20 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  /* Screenshot upload */
  .upload{{margin-bottom:8px}}
  .upbtn{{display:flex;flex-direction:column;gap:5px;cursor:pointer;text-align:center;
-   border:1.5px dashed rgba(155,246,236,.35);border-radius:16px;padding:24px 18px;
-   background:rgba(8,33,47,.45);font-family:"Bricolage Grotesque",sans-serif;font-weight:700;
+   border:1.5px dashed rgba(15,42,71,0.28);border-radius:16px;padding:24px 18px;
+   background:#fff;font-family:"Montserrat",sans-serif;font-weight:700;
    font-size:15px;color:var(--foam);transition:border-color .15s,background .15s}}
  .upbtn span{{font-family:"Inter",sans-serif;font-weight:400;font-size:12px;color:var(--mist);line-height:1.45}}
- .upbtn:hover{{border-color:var(--pacific);background:rgba(25,211,230,.06)}}
+ .upbtn:hover{{border-color:var(--pacific);background:rgba(244,197,67,.06)}}
  .upbtn.busy{{opacity:.65;border-style:solid}}
- .upprog{{height:8px;border-radius:999px;background:rgba(8,33,47,.8);overflow:hidden;margin:10px 0 0}}
+ .upprog{{height:8px;border-radius:999px;background:#fff;overflow:hidden;margin:10px 0 0}}
  .upbar{{height:100%;width:0;border-radius:999px;
    background:linear-gradient(90deg,var(--pacific),var(--lagoon));transition:width .2s ease}}
  .upstatus{{font-size:12px;color:var(--surf);margin-top:8px;text-align:center;min-height:14px}}
  .ordiv{{display:flex;align-items:center;gap:12px;color:var(--mist);font-size:12px;margin:16px 0}}
  .ordiv::before,.ordiv::after{{content:'';flex:1;height:1px;background:var(--line)}}
  /* Progress */
- .prog{{height:8px;border-radius:999px;background:rgba(8,33,47,.7);overflow:hidden;margin:2px 0 6px}}
+ .prog{{height:8px;border-radius:999px;background:#fff;overflow:hidden;margin:2px 0 6px}}
  .prog span{{display:block;height:100%;border-radius:999px;
    background:linear-gradient(90deg,var(--pacific),var(--lagoon));transition:width .4s ease}}
  .social{{display:flex;flex-direction:column;gap:10px;margin:0 0 6px}}
@@ -2128,28 +2127,28 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .orsep::before,.orsep::after{{content:"";flex:1;height:1px;background:var(--line)}}
  .hint{{display:block;color:var(--mist);font-size:12px;margin-top:6px}}
  .note{{border-radius:12px;padding:11px 14px;font-size:14px;margin:0 0 16px}}
- .note.ok{{background:rgba(61,240,197,.12);border:1px solid rgba(61,240,197,.4);color:var(--lagoon)}}
+ .note.ok{{background:rgba(244,197,67,.12);border:1px solid rgba(244,197,67,.4);color:var(--gold-ink)}}
  .note.err{{background:rgba(255,90,110,.12);border:1px solid rgba(255,90,110,.45);color:#ff9aa6}}
  /* Reviews */
  .btn.small{{min-height:42px;padding:10px 18px;font-size:14px;margin-top:12px;width:auto}}
  .rv{{margin-top:12px;border-top:1px solid var(--line);padding-top:13px}}
  .rv-head{{font-size:13px;color:var(--mist);margin-bottom:8px}}
- .rv-stars.on{{color:var(--gold);letter-spacing:3px;font-size:15px}}
+ .rv-stars.on{{color:var(--gold-ink);letter-spacing:3px;font-size:15px}}
  .rv-txt{{margin:6px 0 0;font-size:14px;line-height:1.5}}
  .rvform textarea{{width:100%;font:inherit;font-size:16px;color:var(--foam);min-height:64px;
    padding:11px 12px;border-radius:12px;border:1px solid var(--line);background:var(--field);resize:vertical}}
- .rvform textarea:focus{{outline:none;border-color:var(--pacific);box-shadow:0 0 0 3px rgba(25,211,230,.18)}}
+ .rvform textarea:focus{{outline:none;border-color:var(--pacific);box-shadow:0 0 0 3px rgba(244,197,67,.18)}}
  .stars{{display:inline-flex;flex-direction:row-reverse;justify-content:flex-end;margin-bottom:10px}}
  .stars input{{position:absolute;width:1px;height:1px;opacity:0}}
- .stars label{{font-size:32px;line-height:1;color:rgba(155,246,236,.22);cursor:pointer;padding:2px 3px;transition:color .12s}}
- .stars label:hover,.stars label:hover ~ label,.stars input:checked ~ label{{color:var(--gold)}}
+ .stars label{{font-size:32px;line-height:1;color:rgba(15,42,71,0.18);cursor:pointer;padding:2px 3px;transition:color .12s}}
+ .stars label:hover,.stars label:hover ~ label,.stars input:checked ~ label{{color:var(--gold-ink)}}
  .stars input:focus-visible + label{{outline:2px solid var(--pacific);outline-offset:2px;border-radius:5px}}
  .consent{{display:flex;gap:9px;align-items:flex-start;margin:12px 0 2px;font-size:13px;color:var(--mist);cursor:pointer}}
  .consent input{{width:20px;height:20px;margin:0;flex:none;accent-color:var(--lagoon)}}
  .consent span{{line-height:1.4}}
  /* Info / confirm pages */
  .infobox{{max-width:460px;margin:56px auto;text-align:center;
-   background:linear-gradient(180deg, rgba(20,62,82,.5), rgba(8,33,47,.6));
+   background:#fff;
    border:1px solid var(--line);border-radius:20px;padding:34px 26px}}
  .infobox h2{{font-weight:800;margin:0 0 10px}}
  .infobox p{{color:var(--mist);font-size:15px;line-height:1.55;margin:0}}
@@ -2170,15 +2169,15 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  }}
  .bell-btn{{background:none;border:0;cursor:pointer;font-size:20px;line-height:1;position:relative;padding:4px;color:inherit}}
  .bell-panel{{position:absolute;right:0;top:44px;width:330px;max-width:88vw;max-height:72vh;overflow:auto;
-   background:var(--abyss,#04141d);border:1px solid var(--line);border-radius:16px;
-   box-shadow:0 24px 60px -18px rgba(0,0,0,.6);padding:6px;display:none;z-index:60}}
+   background:var(--abyss,#fff);border:1px solid var(--line);border-radius:16px;
+   box-shadow:0 24px 60px -18px rgba(0,30,59,0.24);padding:6px;display:none;z-index:60}}
  .bell-panel.open{{display:block}}
- .nf-head{{font-family:"Space Grotesk",monospace;font-size:12px;text-transform:uppercase;
+ .nf-head{{font-family:"Montserrat",monospace;font-size:12px;text-transform:uppercase;
    letter-spacing:.08em;color:var(--mist);padding:8px 10px 6px}}
  .nf{{display:block;width:100%;text-align:left;background:none;border:0;border-radius:11px;
    padding:10px 11px;cursor:pointer;color:var(--foam);text-decoration:none;font:inherit}}
- .nf:hover{{background:rgba(25,211,230,.08)}}
- .nf.un{{background:rgba(25,211,230,.06)}}
+ .nf:hover{{background:rgba(244,197,67,.08)}}
+ .nf.un{{background:rgba(244,197,67,.06)}}
  .nf.un .nf-t::before{{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;
    background:var(--pacific);margin-right:7px;vertical-align:middle}}
  .nf-t{{font-size:14px;line-height:1.35}}
@@ -2187,7 +2186,7 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .pm-ov{{position:fixed;inset:0;background:rgba(2,12,18,.62);backdrop-filter:blur(4px);
    -webkit-backdrop-filter:blur(4px);display:none;align-items:flex-end;justify-content:center;z-index:80}}
  .pm-ov.open{{display:flex}}
- .pm{{background:var(--abyss,#04141d);border:1px solid var(--line);border-radius:20px 20px 0 0;
+ .pm{{background:var(--abyss,#fff);border:1px solid var(--line);border-radius:20px 20px 0 0;
    width:100%;max-width:620px;max-height:86vh;overflow:auto;padding:18px 16px 24px;position:relative}}
  @media(min-width:620px){{.pm-ov{{align-items:center}}.pm{{border-radius:20px}}}}
  .pm-x{{position:absolute;top:12px;right:14px;background:none;border:0;color:var(--mist);
@@ -2196,19 +2195,19 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .pm-title{{font-weight:700;font-size:16px;flex:1;min-width:0}}
  .pm-load{{color:var(--mist);padding:24px;text-align:center}}
  .cdown{{display:flex;flex-direction:column;align-items:center;text-align:center;
-   background:linear-gradient(135deg,rgba(255,210,63,.16),rgba(61,240,197,.10));
+   background:linear-gradient(135deg,rgba(255,210,63,.16),rgba(244,197,67,.10));
    border:1px solid rgba(255,210,63,.3);border-radius:14px;padding:16px;margin:12px 0}}
- .cdown-n{{font-family:"Space Grotesk",monospace;font-size:34px;font-weight:800;
-   color:var(--gold);line-height:1}}
+ .cdown-n{{font-family:"Montserrat",monospace;font-size:34px;font-weight:800;
+   color:var(--gold-ink);line-height:1}}
  .cdown-l{{font-size:13px;color:var(--foam);margin-top:6px}}
- .cdown.live{{background:rgba(61,240,197,.1);border-color:rgba(61,240,197,.3)}}
- .cdown.live .cdown-n{{font-size:30px;color:var(--lagoon)}}
+ .cdown.live{{background:rgba(244,197,67,.1);border-color:rgba(244,197,67,.3)}}
+ .cdown.live .cdown-n{{font-size:30px;color:var(--gold-ink)}}
  .res{{margin:14px 0 2px}}
  .res-h{{font-size:13px;font-weight:700;color:var(--mist);margin-bottom:8px}}
  .res-i{{display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:11px;
-   background:rgba(6,33,47,.5);border:1px solid var(--line);text-decoration:none;
+   background:#fff;border:1px solid var(--line);text-decoration:none;
    color:var(--foam);margin-bottom:7px;font-size:14px}}
- .res-i:hover{{border-color:rgba(25,211,230,.4)}}
+ .res-i:hover{{border-color:rgba(244,197,67,.4)}}
  .res-ic{{font-size:18px}}
  .res-go{{margin-left:auto;color:var(--surf)}}
 
@@ -2218,13 +2217,13 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .chatpage .foot{{display:none}}
  .chat{{display:flex;flex-direction:column;flex:1;background:none;border:0;padding:0;margin:0}}
  .c-bar{{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 6px}}
- .c-bar .c-title{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:15px;color:var(--surf);margin-right:auto}}
+ .c-bar .c-title{{font-family:"Montserrat",sans-serif;font-weight:700;font-size:15px;color:var(--surf);margin-right:auto}}
  .c-search{{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:#03121b;text-decoration:none;
    border-radius:999px;padding:7px 14px;background:linear-gradient(120deg,var(--pacific),var(--lagoon))}}
  .chat .a-log{{max-height:none;overflow:visible;gap:22px;padding:14px 0 24px;flex:1}}
  .chat .msg{{font-size:15.5px;line-height:1.62;max-width:100%}}
  .chat .msg.ai{{background:none;border:0;border-radius:0;padding:0;align-self:stretch}}
- .chat .msg.me{{max-width:78%;background:rgba(155,246,236,.1);border:0;border-radius:20px;padding:10px 16px}}
+ .chat .msg.me{{max-width:78%;background:rgba(15,42,71,0.08);border:0;border-radius:20px;padding:10px 16px}}
  .chat .msg.ai b{{color:var(--foam)}}
  .c-empty{{flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;
    padding:6vh 0 2vh}}
@@ -2235,11 +2234,11 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .chat .chips{{justify-content:center;margin:12px 0 0}}
  .chat:not(.empty) .chips{{justify-content:flex-start;margin:0 0 10px}}
  .c-dock{{position:sticky;bottom:0;z-index:4;padding:10px 0 max(12px,env(safe-area-inset-bottom));
-   background:linear-gradient(180deg,rgba(3,18,27,0),rgba(3,18,27,.97) 22px)}}
+   background:linear-gradient(180deg,rgba(15,42,71,0),rgba(15,42,71,0.12) 22px)}}
  .chat.empty .c-dock{{position:static;background:none;width:100%}}
  .chat .a-form{{margin:0;align-items:flex-end;background:rgba(10,40,55,.9);border:1px solid var(--line);
-   border-radius:26px;padding:6px 6px 6px 16px;box-shadow:0 10px 40px -16px rgba(0,0,0,.8)}}
- .chat .a-form:focus-within{{border-color:rgba(25,211,230,.55)}}
+   border-radius:26px;padding:6px 6px 6px 16px;box-shadow:0 10px 40px -16px rgba(0,30,59,0.32)}}
+ .chat .a-form:focus-within{{border-color:rgba(244,197,67,.55)}}
  .chat .a-form textarea{{border:0;background:none;padding:10px 0;min-height:44px}}
  .chat .a-send{{min-height:40px;width:40px;padding:0;border-radius:50%;font-size:18px}}
  .c-note{{font-size:11.5px;color:var(--mist);text-align:center;margin-top:7px}}
@@ -2252,13 +2251,13 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  /* Inline source pills + preview card */
  .cite{{position:relative;display:inline-block;vertical-align:baseline;white-space:nowrap;outline:none}}
  .cite-a{{display:inline-flex;align-items:center;gap:3px;font-size:11.5px;font-weight:500;line-height:1;
-   color:var(--mist);text-decoration:none;background:rgba(155,246,236,.1);border-radius:999px;padding:4px 8px;
+   color:var(--mist);text-decoration:none;background:rgba(15,42,71,0.08);border-radius:999px;padding:4px 8px;
    position:relative;top:-1px}}
  .cite-a:hover,.cite:focus-within .cite-a,.cite.open .cite-a{{background:var(--foam);color:#03121b}}
  .cite-n{{opacity:.75}}
  .cpop{{display:none;position:absolute;z-index:20;left:0;bottom:calc(100% + 6px);width:300px;max-width:82vw;
-   white-space:normal;background:#0b2a3a;border:1px solid rgba(155,246,236,.25);border-radius:14px;
-   box-shadow:0 18px 50px -12px rgba(0,0,0,.85);padding:6px;max-height:340px;overflow:auto}}
+   white-space:normal;background:#0b2a3a;border:1px solid rgba(15,42,71,0.2);border-radius:14px;
+   box-shadow:0 18px 50px -12px rgba(0,30,59,0.34);padding:6px;max-height:340px;overflow:auto}}
  .cite:hover .cpop,.cite:focus-within .cpop,.cite.open .cpop{{display:block}}
  .cite.down .cpop{{bottom:auto;top:calc(100% + 6px)}}
  .cite.right .cpop{{left:auto;right:0}}
@@ -2268,9 +2267,9 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
    .cite:hover .cpop{{display:none}}
    .cite.open .cpop{{display:block}}}}
  .cp-item{{display:flex;flex-direction:column;gap:3px;padding:8px;border-radius:10px;text-decoration:none;color:var(--foam)}}
- .cp-item:hover{{background:rgba(155,246,236,.08)}}
+ .cp-item:hover{{background:rgba(15,42,71,0.06)}}
  .cp-item+.cp-item{{border-top:1px solid var(--line)}}
- .cp-img{{width:100%;height:120px;object-fit:cover;border-radius:8px;margin-bottom:4px;background:rgba(155,246,236,.06)}}
+ .cp-img{{width:100%;height:120px;object-fit:cover;border-radius:8px;margin-bottom:4px;background:rgba(15,42,71,0.05)}}
  .cp-host{{font-size:11.5px;color:var(--mist)}}
  .cp-title{{font-size:13.5px;line-height:1.3;color:var(--foam);font-weight:600}}
  .cp-snip{{font-size:12.5px;line-height:1.4;color:var(--mist);display:-webkit-box;-webkit-line-clamp:3;
@@ -2282,45 +2281,45 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .hcard:last-child{{border-bottom:0}}
  .hcard.on .hc-name{{color:var(--pacific)}}
  .hc-pic{{flex:none;width:168px;height:128px;border-radius:14px;overflow:hidden;padding:0;border:0;cursor:pointer;
-   position:relative;background:rgba(155,246,236,.06)}}
+   position:relative;background:rgba(15,42,71,0.05)}}
  .hc-pic img{{width:100%;height:100%;object-fit:cover;display:block;transition:transform .25s}}
  .hc-pic:hover img{{transform:scale(1.04)}}
  .hc-nopic{{display:flex;align-items:center;justify-content:center;font-size:34px;
-   background:linear-gradient(135deg,rgba(25,211,230,.18),rgba(61,240,197,.08))}}
- .hc-amb{{position:absolute;left:6px;bottom:6px;font-size:10.5px;font-weight:600;color:#fff;background:rgba(3,18,27,.72);
+   background:linear-gradient(135deg,rgba(244,197,67,.18),rgba(244,197,67,.08))}}
+ .hc-amb{{position:absolute;left:6px;bottom:6px;font-size:10.5px;font-weight:600;color:#fff;background:#fff;
    padding:2px 7px;border-radius:999px;letter-spacing:.01em}}
- .hc-n{{position:absolute;right:6px;bottom:6px;font-size:11px;font-weight:600;color:#fff;background:rgba(3,18,27,.72);
+ .hc-n{{position:absolute;right:6px;bottom:6px;font-size:11px;font-weight:600;color:#fff;background:#fff;
    padding:2px 7px;border-radius:999px}}
  .hc-body{{min-width:0;flex:1;display:flex;flex-direction:column;gap:4px}}
- .hc-name{{all:unset;cursor:pointer;font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:18px;
-   color:var(--foam);text-decoration:underline;text-decoration-color:rgba(155,246,236,.3);text-underline-offset:4px}}
+ .hc-name{{all:unset;cursor:pointer;font-family:"Montserrat",sans-serif;font-weight:700;font-size:18px;
+   color:var(--foam);text-decoration:underline;text-decoration-color:rgba(15,42,71,0.24);text-underline-offset:4px}}
  .hc-name:hover{{text-decoration-color:var(--pacific)}}
  .hc-name:focus-visible{{outline:2px solid var(--pacific);border-radius:4px}}
  .hc-sub{{font-size:13px;font-weight:600;color:var(--surf)}}
  .hc-loc{{font-size:12.5px;color:var(--mist)}}
  .hc-desc{{font-size:14.5px;line-height:1.55;color:var(--foam);margin-top:2px}}
  .hc-price{{font-size:14px;line-height:1.5;margin-top:2px}}
- .hc-price b{{color:var(--lagoon)}}
- .hc-conf{{font-size:12.5px;color:var(--gold)}}
+ .hc-price b{{color:var(--gold-ink)}}
+ .hc-conf{{font-size:12.5px;color:var(--gold-ink)}}
  .hc-foot{{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px}}
  .hc-go{{font-size:12.5px;font-weight:600;color:var(--pacific);text-decoration:none}}
  @media(max-width:560px){{.hcard{{flex-direction:column;gap:10px}}.hc-pic{{width:100%;height:190px}}}}
  /* Hotel detail panel */
  .hpanel{{position:fixed;top:0;right:0;bottom:0;width:min(440px,100vw);z-index:40;overflow-y:auto;
-   background:#071e2a;border-left:1px solid var(--line);box-shadow:-24px 0 60px -20px rgba(0,0,0,.8);white-space:normal}}
+   background:#071e2a;border-left:1px solid var(--line);box-shadow:-24px 0 60px -20px rgba(0,30,59,0.32);white-space:normal}}
  .hpanel[hidden],.hp-ov[hidden]{{display:none}}
  .hp-top{{position:sticky;top:0;z-index:3;height:0}}
  .hp-x{{position:absolute;top:12px;right:12px;width:36px;height:36px;border-radius:50%;border:0;cursor:pointer;
-   background:rgba(3,18,27,.75);color:#fff;font-size:15px}}
+   background:#fff;color:#fff;font-size:15px}}
  .hp-ov{{position:fixed;inset:0;z-index:39;background:rgba(2,12,18,.55)}}
  @media(min-width:1180px){{.hp-ov{{display:none}}body.has-panel.chatpage .wrap{{margin-right:460px;margin-left:max(20px,calc((100vw - 460px - 820px)/2))}}}}
  .hd{{position:relative}}
- .hd-gal{{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;height:280px;scrollbar-width:none;background:rgba(155,246,236,.05)}}
+ .hd-gal{{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;height:280px;scrollbar-width:none;background:rgba(15,42,71,0.04)}}
  .hd-gal::-webkit-scrollbar{{display:none}}
  .hd-nogal{{align-items:center;justify-content:center;color:var(--mist);font-size:13px;height:120px}}
  .hd-shot{{flex:none;width:100%;height:100%;margin:0;scroll-snap-align:start;position:relative}}
  .hd-shot img{{width:100%;height:100%;object-fit:cover;display:block}}
- .hd-shot figcaption{{position:absolute;left:10px;bottom:10px;font-size:11px;color:#fff;background:rgba(3,18,27,.72);
+ .hd-shot figcaption{{position:absolute;left:10px;bottom:10px;font-size:11px;color:#fff;background:#fff;
    padding:3px 8px;border-radius:999px}}
  .hd-arr{{position:absolute;top:122px;width:34px;height:34px;border-radius:50%;border:0;cursor:pointer;
    background:rgba(255,255,255,.88);color:#03121b;font-size:22px;line-height:1}}
@@ -2337,10 +2336,10 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .hd-row+.hd-row{{margin-top:-12px}}
  .hd-desc{{font-size:15px;line-height:1.6;border-top:1px solid var(--line);padding-top:12px}}
  .hd-desc p{{margin:0 0 10px}}.hd-desc ul{{margin:0 0 10px;padding-left:20px}}
- .hd-bemol b{{color:var(--gold)}}
- .hd-conf{{color:var(--gold);font-size:13px}}
+ .hd-bemol b{{color:var(--gold-ink)}}
+ .hd-conf{{color:var(--gold-ink);font-size:13px}}
  .hd-srcs{{display:flex;flex-wrap:wrap;gap:6px;align-items:center}}
- .hd-srcs span{{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--mist);font-family:"Space Grotesk",monospace}}
+ .hd-srcs span{{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--mist);font-family:"Montserrat",monospace}}
  .hd-srcs a{{font-size:12px;color:var(--pacific);text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:3px 9px}}
  .hd-note{{font-size:11.5px;color:var(--mist);margin:0}}
  @media(max-width:640px){{.hpanel{{top:auto;height:92vh;width:100vw;border-left:0;border-radius:20px 20px 0 0}}
@@ -2354,27 +2353,27 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .ptab tbody th{{font-weight:600}}
  .pt-tot{{font-weight:700;white-space:nowrap}}
  .pt-tot small{{display:block;font-weight:400;font-size:12px;color:var(--mist);white-space:normal}}
- .pt-est{{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:600;color:var(--gold);
+ .pt-est{{display:inline-block;margin-left:6px;font-size:10.5px;font-weight:600;color:var(--gold-ink);
    border:1px solid rgba(255,210,63,.45);border-radius:999px;padding:1px 6px;vertical-align:middle}}
- .pt-src{{font-size:12px;color:var(--mist);text-decoration:none;background:rgba(155,246,236,.1);border-radius:999px;padding:3px 8px}}
+ .pt-src{{font-size:12px;color:var(--mist);text-decoration:none;background:rgba(15,42,71,0.08);border-radius:999px;padding:3px 8px}}
  .pt-note{{font-size:12px;color:var(--mist);margin:8px 0 0}}
- .btab{{max-width:460px;border:1px solid var(--line);border-radius:14px;padding:12px 14px;background:rgba(3,18,27,.45)}}
- .bt-h{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:14px;margin-bottom:4px}}
+ .btab{{max-width:460px;border:1px solid var(--line);border-radius:14px;padding:12px 14px;background:#fff}}
+ .bt-h{{font-family:"Montserrat",sans-serif;font-weight:700;font-size:14px;margin-bottom:4px}}
  .btab td{{text-align:right;font-variant-numeric:tabular-nums}}
- .bt-tot th,.bt-tot td{{font-weight:800;border-bottom:0;color:var(--lagoon)}}
+ .bt-tot th,.bt-tot td{{font-weight:800;border-bottom:0;color:var(--gold-ink)}}
  .hmap{{margin-top:14px}}
- .hm-h{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:15px;margin-bottom:8px}}
+ .hm-h{{font-family:"Montserrat",sans-serif;font-weight:700;font-size:15px;margin-bottom:8px}}
  .hmap img{{width:100%;border-radius:14px;display:block;border:1px solid var(--line)}}
  .hm-k{{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--mist);margin-top:6px}}
  .hd-map{{width:100%;height:220px;border:0;border-radius:14px}}
  @media(max-width:560px){{.ptab{{overflow-x:auto}}.ptab table{{min-width:480px}}}}
 
  .hc-badges{{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0}}
- .hc-badge{{font-size:11.5px;font-weight:600;color:var(--surf);background:rgba(155,246,236,.1);border-radius:999px;padding:3px 9px}}
+ .hc-badge{{font-size:11.5px;font-weight:600;color:var(--surf);background:rgba(15,42,71,0.08);border-radius:999px;padding:3px 9px}}
  .hc-pts{{margin:2px 0 0;padding-left:18px;font-size:13.5px;color:var(--foam);line-height:1.5}}
  .hc-more{{all:unset;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--foam);border:1px solid var(--line);border-radius:999px;padding:3px 10px}}
  .hc-more:hover{{border-color:var(--pacific)}}
- .hd-desc h4{{margin:12px 0 4px;font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--mist);font-family:"Space Grotesk",monospace}}
+ .hd-desc h4{{margin:12px 0 4px;font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--mist);font-family:"Montserrat",monospace}}
 
  .asteps{{margin:0 0 10px;font-size:13px;color:var(--mist);white-space:normal}}
  .asteps summary{{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:6px}}
@@ -2390,7 +2389,7 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .chat:not(.empty) .chips.starters{{display:none}}
  .chip.starter{{display:flex;flex-direction:column;align-items:flex-start;gap:3px;text-align:left;border-radius:16px;
    padding:13px 15px;white-space:normal;background:rgba(10,40,55,.7);border-color:var(--line)}}
- .chip.starter:hover{{border-color:var(--pacific);background:rgba(25,211,230,.08)}}
+ .chip.starter:hover{{border-color:var(--pacific);background:rgba(244,197,67,.08)}}
  .chip.starter .st-ic{{font-size:18px;line-height:1}}
  .chip.starter b{{font-size:14px;color:var(--foam)}}
  .chip.starter .st-q{{font-size:12.5px;line-height:1.45;color:var(--mist)}}
@@ -2399,7 +2398,7 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .aprog{{margin:2px 0 14px;max-width:420px;transition:opacity .5s}}
  .aprog.done{{opacity:0}}
  .ap-lbl{{font-size:13.5px;color:var(--surf);margin-bottom:7px}}
- .ap-bar{{height:6px;border-radius:999px;background:rgba(155,246,236,.12);overflow:hidden}}
+ .ap-bar{{height:6px;border-radius:999px;background:rgba(15,42,71,0.1);overflow:hidden}}
  .ap-bar span{{display:block;height:100%;width:0;border-radius:999px;
    background:linear-gradient(90deg,var(--pacific),var(--lagoon));transition:width .6s ease}}
  .msg.ai.typing:has(.aprog)::after{{content:none}}
@@ -2411,11 +2410,11 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .rtabs{{white-space:normal;margin-top:2px}}
  .rt-nav{{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding:2px 0 10px;margin-bottom:6px;
    border-bottom:1px solid var(--line);position:sticky;top:70px;z-index:3;
-   background:linear-gradient(180deg,rgba(3,18,27,.97),rgba(3,18,27,.9))}}
+   background:linear-gradient(180deg,rgba(15,42,71,0.12),rgba(15,42,71,0.11))}}
  .rt-nav::-webkit-scrollbar{{display:none}}
  .rt-btn{{flex:none;font:600 13.5px Inter,sans-serif;color:var(--mist);background:none;border:1px solid var(--line);
    border-radius:999px;padding:8px 14px;cursor:pointer}}
- .rt-btn:hover{{color:var(--foam);border-color:rgba(25,211,230,.5)}}
+ .rt-btn:hover{{color:var(--foam);border-color:rgba(244,197,67,.5)}}
  .rt-btn.on{{color:#03121b;background:linear-gradient(120deg,var(--pacific),var(--lagoon));border-color:transparent}}
  .rt-pane{{white-space:pre-wrap;padding-top:6px}}
  .rt-pane[hidden]{{display:none}}
@@ -2429,24 +2428,24 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  @media(max-width:760px){{.rt-nav{{top:118px}}}}
 
  .crit{{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0 0 12px}}
- .crit-h{{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--mist);font-family:"Space Grotesk",monospace;margin-right:4px}}
- .crit-c{{font-size:13px;color:var(--foam);background:rgba(155,246,236,.1);border:1px solid var(--line);border-radius:999px;padding:5px 11px}}
- .note.warn{{background:rgba(255,210,63,.1);border:1px solid rgba(255,210,63,.4);color:var(--gold)}}
+ .crit-h{{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--mist);font-family:"Montserrat",monospace;margin-right:4px}}
+ .crit-c{{font-size:13px;color:var(--foam);background:rgba(15,42,71,0.08);border:1px solid var(--line);border-radius:999px;padding:5px 11px}}
+ .note.warn{{background:rgba(255,210,63,.1);border:1px solid rgba(255,210,63,.4);color:var(--gold-ink)}}
 
  /* ---- Layout v3: recent-chats sidebar + wider, denser column ---- */
  .chatpage .wrap{{max-width:none;width:100%;padding:0;margin:0}}
  body.has-panel.chatpage .wrap{{margin:0}}
  .cwrap{{display:grid;grid-template-columns:248px minmax(0,1fr);flex:1;min-height:0}}
  .csb{{position:sticky;top:70px;align-self:start;height:calc(100vh - 70px);height:calc(100dvh - 70px);overflow-y:auto;
-   border-right:1px solid var(--line);padding:12px 10px;background:rgba(3,18,27,.55);white-space:normal}}
+   border-right:1px solid var(--line);padding:12px 10px;background:#fff;white-space:normal}}
  .csb-new{{display:block;text-align:center;font-size:13.5px;font-weight:600;color:#03121b;text-decoration:none;border-radius:12px;
    padding:9px 10px;background:linear-gradient(120deg,var(--pacific),var(--lagoon));margin-bottom:12px}}
- .csb-h{{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--mist);font-family:"Space Grotesk",monospace;margin:4px 6px 6px}}
+ .csb-h{{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--mist);font-family:"Montserrat",monospace;margin:4px 6px 6px}}
  .csb-g{{font-size:11.5px;color:var(--mist);margin:10px 6px 4px}}
  .csb-i{{display:flex;align-items:center;border-radius:9px}}
  .csb-i a{{flex:1;min-width:0;font-size:13.5px;color:var(--foam);text-decoration:none;padding:7px 8px;white-space:nowrap;
    overflow:hidden;text-overflow:ellipsis}}
- .csb-i:hover,.csb-i.on{{background:rgba(155,246,236,.1)}}
+ .csb-i:hover,.csb-i.on{{background:rgba(15,42,71,0.08)}}
  .csb-x{{visibility:hidden;background:none;border:0;color:var(--mist);cursor:pointer;font-size:12px;padding:6px 8px}}
  .csb-i:hover .csb-x{{visibility:visible}}
  .csb-empty{{font-size:12.5px;color:var(--mist);padding:6px}}
@@ -2463,20 +2462,20 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  @media(max-width:900px){{
    .cwrap{{grid-template-columns:minmax(0,1fr)}}
    .csb{{position:fixed;left:0;top:0;bottom:0;height:100%;width:280px;z-index:45;transform:translateX(-100%);
-     transition:transform .2s;background:#071e2a;box-shadow:20px 0 50px -20px rgba(0,0,0,.8)}}
+     transition:transform .2s;background:#071e2a;box-shadow:20px 0 50px -20px rgba(0,30,59,0.32)}}
    .csb.open{{transform:none}}
    .csb-tog{{display:inline-block}}
    .chatpage .chat{{padding:0 14px}}}}
  /* Brief form (progressive profiling) */
- .brief{{margin-top:10px;padding:14px 16px;border-radius:16px;border:1px solid rgba(25,211,230,.35);
-   background:rgba(25,211,230,.05);white-space:normal;display:flex;flex-direction:column;gap:12px}}
- .bf-h{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:15px}}
+ .brief{{margin-top:10px;padding:14px 16px;border-radius:16px;border:1px solid rgba(244,197,67,.35);
+   background:rgba(244,197,67,.05);white-space:normal;display:flex;flex-direction:column;gap:12px}}
+ .bf-h{{font-family:"Montserrat",sans-serif;font-weight:700;font-size:15px}}
  .bf-known{{display:flex;flex-wrap:wrap;gap:6px;align-items:center;white-space:normal}}
  .bf-l{{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--mist);margin-right:2px}}
- .bf-k{{font-size:12.5px;background:rgba(155,246,236,.1);border-radius:999px;padding:4px 10px}}
+ .bf-k{{font-size:12.5px;background:rgba(15,42,71,0.08);border-radius:999px;padding:4px 10px}}
  .bf-f label{{display:block;font-size:12.5px;color:var(--mist);margin-bottom:6px;font-weight:600}}
  .bf-opts{{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}}
- .bf-o{{background:rgba(3,18,27,.6);border:1px solid var(--line);color:var(--foam);border-radius:999px;padding:7px 12px;
+ .bf-o{{background:#fff;border:1px solid var(--line);color:var(--foam);border-radius:999px;padding:7px 12px;
    font:500 13px Inter,sans-serif;cursor:pointer}}
  .bf-o:hover{{border-color:var(--pacific)}}
  .bf-o.on{{background:var(--pacific);color:#03121b;border-color:var(--pacific)}}
@@ -2492,15 +2491,53 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .bf-go{{align-self:flex-start;min-height:42px;padding:10px 20px;font-size:14px}}
  .bf-skip{{align-self:flex-start;background:none;border:0;color:var(--mist);font-size:12.5px;cursor:pointer;text-decoration:underline;padding:0}}
  .dc-pic figcaption a{{color:#fff;text-decoration:none}}
+ /* ===== Brand v2 : surcharges ===== */
+ h1,h2,h3{{font-family:"Montserrat",sans-serif;color:var(--navy);letter-spacing:-.01em}}
+ .top{{background:var(--navy);border-bottom:3px solid var(--gold);backdrop-filter:none;-webkit-backdrop-filter:none;
+   --foam:#fff;--mist:rgba(255,255,255,.78);--line:rgba(255,255,255,.18)}}
+ .brand img{{width:46px;height:46px;box-shadow:0 0 0 2px var(--gold)}}
+ .brand b{{font-family:"Montserrat",sans-serif;font-weight:900;font-size:18px;color:#fff;text-transform:lowercase}}
+ .brand b i{{font-style:normal;color:var(--gold)}}
+ .brand span{{font-family:"Kaushan Script",cursive;text-transform:none;letter-spacing:0;font-size:14px;color:var(--gold);margin-top:1px}}
+ .pill{{color:rgba(255,255,255,.85);border-color:rgba(255,255,255,.22);background:transparent}}
+ .pill:hover{{color:#fff;border-color:rgba(255,255,255,.5)}}
+ .pill.on{{color:var(--navy);background:var(--gold);border-color:var(--gold)}}
+ .psite{{color:#fff;border-color:rgba(255,255,255,.4);background:transparent}}
+ .psite:hover,.psite:active{{color:var(--navy);background:#fff;border-color:#fff}}
+ .logout{{color:rgba(255,255,255,.75)}} .logout:hover{{color:#fff}}
+ .btn{{background:var(--gold);background-image:none;color:var(--navy);font-family:"Montserrat",sans-serif;font-weight:800;
+   text-transform:uppercase;letter-spacing:.02em;box-shadow:0 4px 0 #C99A17,0 12px 22px -12px rgba(15,42,71,.45)}}
+ .btn:hover{{background:#FFD45E;box-shadow:0 6px 0 #C99A17,0 16px 26px -12px rgba(15,42,71,.5)}}
+ .btn.ghost{{background:#fff;color:var(--navy);border:2px solid var(--navy);box-shadow:none;text-transform:none}}
+ .btn.ghost:hover{{background:var(--navy);color:#fff}}
+ .field label{{color:var(--navy);font-weight:600}}
+ .field input,.field select,.field textarea{{background:#fff;border:1.5px solid rgba(15,42,71,.2);color:var(--navy)}}
+ .field input::placeholder,.field textarea::placeholder{{color:#8a97a6}}
+ .field input:focus,.field select:focus,.field textarea:focus{{border-color:var(--navy);box-shadow:0 0 0 3px rgba(244,197,67,.45)}}
+ .note.ok{{background:#EAF6EF;border-color:#9CD3B2;color:#1E6B40}}
+ .note.err{{background:#FDECEC;border-color:#F1A7A7;color:#9B1C1C}}
+ .note.warn{{background:#FFF7DD;border-color:#F4C543;color:#6B4E00}}
+ .hello h2{{font-weight:900}}
+ .engine{{box-shadow:var(--shadow)}}
+ .crit-c{{background:#fff}}
+ .foot{{color:var(--mist);opacity:1}}
+ .msgr .sc-go{{color:var(--gold)}}
+ .soon{{background:#fff;border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow);text-align:center;
+   padding:clamp(28px,6vw,48px) clamp(18px,5vw,40px)}}
+ .soon-ic{{width:72px;height:72px;border-radius:50%;margin:0 auto 14px;display:grid;place-items:center;background:var(--navy);color:var(--gold)}}
+ .soon-ic svg{{width:34px;height:34px}}
+ .soon h3{{font-size:22px;font-weight:900;margin:0 0 8px}}
+ .soon p{{color:var(--mist);max-width:520px;margin:0 auto 20px}}
+ .soon .btn{{width:auto;padding-left:26px;padding-right:26px}}
 </style></head><body class="pg{page}">
  <div class="top">
-   <div class="brand"><img src="/static/logo.png" alt="Du Voyageur">
-     <div><b>Du Voyageur</b><span>Espace client</span></div></div>
+   <a class="brand" href="/portail" style="text-decoration:none"><img src="/static/logo-capitaine.png" alt="duvoyageur.ca">
+     <div><b>duvoyageur<i>.ca</i></b><span>Espace client</span></div></a>
    {nav}
    {logout}
  </div>
  <div class="wrap">{body}
-   <div class="foot">Du Voyageur · Permis d'agence 700495</div>
+   <div class="foot">duvoyageur.ca · Permis d'agence 700495</div>
  </div>
  <div class="pm-ov" id="pmOv"><div class="pm" id="pm">
    <button type="button" class="pm-x" id="pmX" aria-label="Fermer">&times;</button>
