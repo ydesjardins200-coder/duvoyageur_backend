@@ -111,6 +111,10 @@ class Settings:
         "travelzoo.com,kayak.com,kayak.ca,hotels.com,booking.com,priceline.com,trivago.ca,"
         "trivago.com,agoda.com,cheapflights.ca,voyagesarabais.com,clubvoyages.com,"
         "vacancesinterac.com,tripcentral.ca,travelocity.ca,travelocity.com,orbitz.com")
+    # Progressive profiling: a cheap model checks the trip request first; if
+    # essentials are missing, a short form is shown (no web search, no Google).
+    PORTAL_ASSISTANT_TRIAGE: bool = os.getenv("PORTAL_ASSISTANT_TRIAGE", "1") not in ("0", "false", "False", "")
+    PORTAL_ASSISTANT_TRIAGE_MODEL: str = os.getenv("PORTAL_ASSISTANT_TRIAGE_MODEL", "claude-haiku-5-5")
     # Claude extended thinking budget (tokens) before answering; 0 = off.
     PORTAL_ASSISTANT_THINKING: int = int(os.getenv("PORTAL_ASSISTANT_THINKING", "0"))
     # Google Places API (New): licensed hotel photos, rating, address, phone,

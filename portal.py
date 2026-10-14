@@ -510,13 +510,13 @@ def _identity_card(client) -> str:
             f"{body}</div>")
 
 
-def _accueil(client, cases, flash: str = "") -> str:
+def _accueil(client, cases, flash: str = "", chat: str = "") -> str:
     """Portal home = the AI travel agent, full screen (chatgpt.com layout).
     Trip/savings cards and the identity box were removed: bookings happen
     self-service in the Softvoyage engine and live in PC Voyages."""
     from portal_assistant import assistant_panel     # lazy: avoids import cycle
     note = f"<div class='note ok'>{flash}</div>" if flash else ""
-    return note + assistant_panel(client)
+    return note + assistant_panel(client, chat)
 
 
 _MONTHS_FR = ["", "janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.",
@@ -1010,7 +1010,7 @@ async def portal_login_consume(request: Request):
 
 
 @router.get("/portail", response_class=HTMLResponse)
-def portal_home(request: Request, new: int = 0, avis: int = 0):
+def portal_home(request: Request, new: int = 0, avis: int = 0, c: str = ""):
     cid = current_portal_client_id(request)
     if not cid:
         return RedirectResponse("/portail/connexion", status_code=303)
@@ -1024,7 +1024,7 @@ def portal_home(request: Request, new: int = 0, avis: int = 0):
         if not client:
             return _logged_out()
         cases = list(client.requests)
-        body = _kyc_banner(client) + _accueil(client, cases, flash=flash)
+        body = _kyc_banner(client) + _accueil(client, cases, flash=flash, chat=c)
         bell = _bell_panel(client)
     resp = HTMLResponse(_shell("Accueil", body, logged_in=True,
                                nav=_nav("accueil"), bell=bell, full=True))
@@ -2419,6 +2419,65 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .crit-h{{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--mist);font-family:"Space Grotesk",monospace;margin-right:4px}}
  .crit-c{{font-size:13px;color:var(--foam);background:rgba(155,246,236,.1);border:1px solid var(--line);border-radius:999px;padding:5px 11px}}
  .note.warn{{background:rgba(255,210,63,.1);border:1px solid rgba(255,210,63,.4);color:var(--gold)}}
+
+ /* ---- Layout v3: recent-chats sidebar + wider, denser column ---- */
+ .chatpage .wrap{{max-width:none;width:100%;padding:0;margin:0}}
+ body.has-panel.chatpage .wrap{{margin:0}}
+ .cwrap{{display:grid;grid-template-columns:248px minmax(0,1fr);flex:1;min-height:0}}
+ .csb{{position:sticky;top:70px;align-self:start;height:calc(100vh - 70px);height:calc(100dvh - 70px);overflow-y:auto;
+   border-right:1px solid var(--line);padding:12px 10px;background:rgba(3,18,27,.55);white-space:normal}}
+ .csb-new{{display:block;text-align:center;font-size:13.5px;font-weight:600;color:#03121b;text-decoration:none;border-radius:12px;
+   padding:9px 10px;background:linear-gradient(120deg,var(--pacific),var(--lagoon));margin-bottom:12px}}
+ .csb-h{{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--mist);font-family:"Space Grotesk",monospace;margin:4px 6px 6px}}
+ .csb-g{{font-size:11.5px;color:var(--mist);margin:10px 6px 4px}}
+ .csb-i{{display:flex;align-items:center;border-radius:9px}}
+ .csb-i a{{flex:1;min-width:0;font-size:13.5px;color:var(--foam);text-decoration:none;padding:7px 8px;white-space:nowrap;
+   overflow:hidden;text-overflow:ellipsis}}
+ .csb-i:hover,.csb-i.on{{background:rgba(155,246,236,.1)}}
+ .csb-x{{visibility:hidden;background:none;border:0;color:var(--mist);cursor:pointer;font-size:12px;padding:6px 8px}}
+ .csb-i:hover .csb-x{{visibility:visible}}
+ .csb-empty{{font-size:12.5px;color:var(--mist);padding:6px}}
+ .csb-tog{{display:none}}
+ .chatpage .chat{{width:100%;max-width:960px;margin:0 auto;padding:0 28px}}
+ .chat .c-bar{{margin:10px 0 2px}}
+ .chat .a-log{{gap:16px;padding:8px 0 16px}}
+ .chat .msg{{font-size:15px;line-height:1.58}}
+ .hcard{{padding:12px 0;gap:14px}}
+ .hc-pic{{width:150px;height:112px}}
+ .hc-desc{{font-size:14px}}
+ .rt-nav{{padding-bottom:8px;margin-bottom:4px}}
+ @media(min-width:1180px){{body.has-panel .cwrap{{margin-right:440px}}.hpanel{{width:440px}}}}
+ @media(max-width:900px){{
+   .cwrap{{grid-template-columns:minmax(0,1fr)}}
+   .csb{{position:fixed;left:0;top:0;bottom:0;height:100%;width:280px;z-index:45;transform:translateX(-100%);
+     transition:transform .2s;background:#071e2a;box-shadow:20px 0 50px -20px rgba(0,0,0,.8)}}
+   .csb.open{{transform:none}}
+   .csb-tog{{display:inline-block}}
+   .chatpage .chat{{padding:0 14px}}}}
+ /* Brief form (progressive profiling) */
+ .brief{{margin-top:10px;padding:14px 16px;border-radius:16px;border:1px solid rgba(25,211,230,.35);
+   background:rgba(25,211,230,.05);white-space:normal;display:flex;flex-direction:column;gap:12px}}
+ .bf-h{{font-family:"Bricolage Grotesque",sans-serif;font-weight:700;font-size:15px}}
+ .bf-known{{display:flex;flex-wrap:wrap;gap:6px;align-items:center;white-space:normal}}
+ .bf-l{{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--mist);margin-right:2px}}
+ .bf-k{{font-size:12.5px;background:rgba(155,246,236,.1);border-radius:999px;padding:4px 10px}}
+ .bf-f label{{display:block;font-size:12.5px;color:var(--mist);margin-bottom:6px;font-weight:600}}
+ .bf-opts{{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}}
+ .bf-o{{background:rgba(3,18,27,.6);border:1px solid var(--line);color:var(--foam);border-radius:999px;padding:7px 12px;
+   font:500 13px Inter,sans-serif;cursor:pointer}}
+ .bf-o:hover{{border-color:var(--pacific)}}
+ .bf-o.on{{background:var(--pacific);color:#03121b;border-color:var(--pacific)}}
+ .bf-in,.bf-age{{background:var(--field);border:1px solid var(--line);color:var(--foam);border-radius:10px;padding:8px 10px;
+   font:inherit;font-size:14px;max-width:260px;width:100%}}
+ .bf-in:focus,.bf-age:focus{{outline:none;border-color:var(--pacific)}}
+ .bf-pax{{display:flex;flex-wrap:wrap;gap:18px;font-size:14px}}
+ .bf-pax span{{display:inline-flex;align-items:center;gap:8px}}
+ .bf-pax b{{min-width:16px;text-align:center}}
+ .bf-m,.bf-p{{width:30px;height:30px;border-radius:50%;border:1px solid var(--line);background:none;color:var(--foam);cursor:pointer;font-size:16px}}
+ .bf-ages{{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}}
+ .bf-ages .bf-age{{max-width:150px}}
+ .bf-go{{align-self:flex-start;min-height:42px;padding:10px 20px;font-size:14px}}
+ .bf-skip{{align-self:flex-start;background:none;border:0;color:var(--mist);font-size:12.5px;cursor:pointer;text-decoration:underline;padding:0}}
 </style></head><body class="pg{page}">
  <div class="top">
    <div class="brand"><img src="/static/logo.png" alt="Du Voyageur">

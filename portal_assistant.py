@@ -45,9 +45,10 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 
 from config import settings
-from db import AssistantFeedback, Client, SessionLocal
+from db import AssistantChat, AssistantFeedback, Client, SessionLocal
 import places
 import site_knowledge as kb
+import trip_brief
 import hotel_catalog as hc
 from portal import (_bell_panel, _logged_out, _nav, _set_session_cookie, _shell,
                     current_portal_client_id)
@@ -1227,6 +1228,11 @@ def steps_html(steps, live: bool = False) -> str:
 def _bubble(m: dict, last: bool = False) -> str:
     if m.get("role") == "user":
         return f"<div class='msg me'>{escape(m.get('text', ''))}</div>"
+    if m.get("brief"):
+        b = m["brief"]
+        extra = (trip_brief.form_html(b.get("p") or {}, b.get("miss") or []) if last
+                 else f"<div class='bf-known'>{trip_brief.known_chips(b.get('p') or {})}</div>")
+        return f"<div class='msg ai'><div>{render_md(m.get('text', ''))}</div>{extra}</div>"
     content = compose_answer(
         render_md(m.get("marked") or m.get("text", ""), m.get("sources")),
         {"destinations": destinations_html(m.get("destinations")), "hotels": cards_html(m.get("cards")),
@@ -1236,10 +1242,92 @@ def _bubble(m: dict, last: bool = False) -> str:
             f"{questions_html(m.get('questions')) if last else ''}</div>")
 
 
-def assistant_panel(client) -> str:
+# --------------------------------------------------------------------------- #
+# Conversations (many per member, « recent chats » sidebar)
+# --------------------------------------------------------------------------- #
+def _migrate_thread(db, client) -> None:
+    """The single legacy thread (Client.assistant_chat) becomes a first chat."""
+    old = list(client.assistant_chat or [])
+    if not old:
+        return
+    if not db.query(AssistantChat).filter_by(client_id=client.id).first():
+        first_q = next((m.get("text", "") for m in old if m.get("role") == "user"), "")
+        db.add(AssistantChat(client_id=client.id, title=_chat_title(first_q), messages=old,
+                             updated_at=datetime.utcnow()))
+    client.assistant_chat = []
+    db.commit()
+
+
+def _chat_title(q: str) -> str:
+    q = re.sub(r"\s+", " ", q or "").strip()
+    return (q[:57] + "…") if len(q) > 60 else (q or "Nouvelle conversation")
+
+
+def recent_chats(db, cid: int, limit: int = 30) -> list:
+    return (db.query(AssistantChat).filter_by(client_id=cid)
+            .order_by(AssistantChat.updated_at.desc()).limit(limit).all())
+
+
+def get_chat(db, cid: int, chat_id):
+    try:
+        ch = db.get(AssistantChat, int(chat_id))
+    except (TypeError, ValueError):
+        return None
+    return ch if ch and ch.client_id == cid else None
+
+
+def _ago(dt) -> str:
+    if not dt:
+        return ""
+    days = (datetime.utcnow().date() - dt.date()).days
+    return "Aujourd'hui" if days <= 0 else "Hier" if days == 1 else \
+        f"Il y a {days} jours" if days < 7 else f"{dt.day} {_MONTHS[dt.month - 1][:4]}."
+
+
+def sidebar_html(chats: list, active) -> str:
+    items, last = [], None
+    for ch in chats:
+        grp = _ago(ch.updated_at)
+        if grp != last and grp in ("Aujourd'hui", "Hier"):
+            items.append(f"<div class='csb-g'>{grp}</div>")
+        elif grp != last and last in (None, "Aujourd'hui", "Hier"):
+            items.append("<div class='csb-g'>Plus ancien</div>")
+        last = grp if grp in ("Aujourd'hui", "Hier") else "old"
+        on = " on" if active and ch.id == active else ""
+        items.append(f"<div class='csb-i{on}' data-id='{ch.id}'><a href='/portail?c={ch.id}'>"
+                     f"{escape(ch.title or 'Conversation')}</a>"
+                     f"<button type='button' class='csb-x' aria-label='Supprimer'>✕</button></div>")
+    return ("<aside class='csb' id='aSide'><a class='csb-new' href='/portail?c=new'>＋ Nouvelle conversation</a>"
+            "<div class='csb-h'>Conversations récentes</div><div class='csb-l' id='aChats'>"
+            + ("".join(items) or "<div class='csb-empty'>Tes conversations apparaîtront ici.</div>")
+            + "</div></aside>")
+
+
+def assistant_panel(client, chat_param: str = "") -> str:
+    """Full-screen chat with the recent-chats sidebar."""
+    from db import SessionLocal  # noqa: F811 — explicit for readers
+    with SessionLocal() as db:
+        c = db.get(Client, client.id) if getattr(client, "id", None) else None
+        if c is not None:
+            _migrate_thread(db, c)
+            chats = recent_chats(db, c.id)
+            if chat_param == "new":
+                current = None
+            elif chat_param:
+                current = get_chat(db, c.id, chat_param)
+            else:
+                current = chats[0] if chats else None
+            thread = list(current.messages or []) if current else []
+            cur_id = current.id if current else None
+            side = sidebar_html(chats, cur_id)
+        else:                                   # unsaved client object (tests)
+            thread, cur_id, side = list(getattr(client, "assistant_chat", None) or []), None, ""
+    return ("<div class='cwrap'>" + side + _panel_main(client, thread, cur_id) + "</div>")
+
+
+def _panel_main(client, thread: list, cur_id) -> str:
     """The portal home: a full-screen chat (chatgpt.com layout) — centered
     empty state with suggestions, then the thread with a sticky composer."""
-    thread = list(client.assistant_chat or [])
     hi = escape(_first_name(client))
     msgs = "".join(_bubble(m, last=(i == len(thread) - 1)) for i, m in enumerate(thread))
     if not thread:
@@ -1252,14 +1340,14 @@ def assistant_panel(client) -> str:
         chips = ("<div class='chips' id='aChips'>" + "".join(
             f"<button type='button' class='chip'>{escape(s)}</button>" for s in chip_list)
             + "</div>") if chip_list else ""
-    reset = ("<button type='button' class='areset' id='aReset'>Nouvelle conversation</button>"
-             if thread else "")
+    reset = ("<button type='button' class='areset csb-tog' id='aSideTog' aria-label='Conversations'>"
+             "☰ Conversations</button>")
     human = "<button type='button' class='areset' id='aHuman'>💬 Conseiller</button>"
     if is_tester(client):
         human = "<a class='areset' href='/portail/assistant/comparer'>🧪 Test A/B</a>" + human
     messenger = json.dumps(settings.MESSENGER_URL)
     return f"""
-<div class='assist chat{'' if thread else ' empty'}' id='aBox'>
+<div class='assist chat{'' if thread else ' empty'}' id='aBox' data-chat='{cur_id or ""}'>
   <div class='c-bar'><span class='c-title'>Ton assistant voyage</span>{human}{reset}
     <a class='c-search' href='{SEARCH_URL}'>🔎 Rechercher un forfait</a></div>
   <div class='a-toast' id='aToast' hidden></div>
@@ -1316,6 +1404,7 @@ def assistant_panel(client) -> str:
    if(chips){{chips.remove();chips=null;}}
    box.classList.remove('empty');
    log.querySelectorAll('.refine,.qset').forEach(function(x){{x.remove();}});
+   log.querySelectorAll('.brief').forEach(function(x){{x.querySelectorAll('.bf-f,.bf-go,.bf-skip,.bf-h').forEach(function(y){{y.remove();}});}});
    var me=add('me',q); inp.value=''; grow();
    me.style.scrollMarginTop='96px';me.scrollIntoView({{block:'start',behavior:'smooth'}});
    send.disabled=true; inp.disabled=true;
@@ -1342,7 +1431,19 @@ def assistant_panel(client) -> str:
      else if(ev.t==='final'&&ev.v){{done=true;var w=document.createElement('div');w.innerHTML=ev.v.html;
        var nm=w.firstElementChild;if(ev.v.refine){{var r2=document.createElement('div');r2.innerHTML=ev.v.refine;
          if(r2.firstElementChild)nm.appendChild(r2.firstElementChild);}}
-       out.replaceWith(nm);out=nm;}}
+       out.replaceWith(nm);out=nm;initBrief(nm.parentNode);
+       if(ev.v.chat){{var known=box.getAttribute('data-chat');box.setAttribute('data-chat',ev.v.chat);
+         if(String(known)!==String(ev.v.chat)){{try{{history.replaceState(null,'','/portail?c='+ev.v.chat);}}catch(e){{}}}}
+         var L=document.getElementById('aChats');
+         if(L){{var ex=L.querySelector(".csb-i[data-id='"+ev.v.chat+"']");
+           if(!ex){{var e0=L.querySelector('.csb-empty');if(e0)e0.remove();
+             ex=document.createElement('div');ex.className='csb-i';ex.setAttribute('data-id',ev.v.chat);
+             ex.innerHTML='<a></a><button type="button" class="csb-x" aria-label="Supprimer">✕</button>';
+             ex.querySelector('a').href='/portail?c='+ev.v.chat;ex.querySelector('a').textContent=ev.v.title||q;}}
+           L.querySelectorAll('.csb-i.on').forEach(function(x){{x.classList.remove('on');}});
+           ex.classList.add('on');var g=L.querySelector('.csb-g');
+           if(g&&g.textContent==="Aujourd'hui")g.after(ex);else{{var gg=document.createElement('div');gg.className='csb-g';
+             gg.textContent="Aujourd'hui";L.prepend(ex);L.prepend(gg);}}}}}}}}
      else if(ev.t==='marked'){{}}
      else if(SLOTS[ev.t]&&ev.v&&false){{
        st.textContent='';var slot=body.querySelector(".slot[data-slot='"+SLOTS[ev.t]+"']");
@@ -1358,7 +1459,7 @@ def assistant_panel(client) -> str:
        out.appendChild(s);}}
    }}
    fetch('/portail/assistant',{{method:'POST',headers:{{'Content-Type':'application/json'}},
-     body:JSON.stringify({{message:q,fmt:'ndjson'}})}}).then(function(r){{
+     body:JSON.stringify({{message:q,fmt:'ndjson',chat:box.getAttribute('data-chat')||null}})}}).then(function(r){{
      if(!r.ok||!r.body){{return r.text().then(function(t){{throw new Error(t);}});}}
      var rd=r.body.getReader(),dec=new TextDecoder();
      function pump(){{return rd.read().then(function(x){{
@@ -1402,7 +1503,39 @@ def assistant_panel(client) -> str:
  document.getElementById('hpX').addEventListener('click',closeHotel);
  hov.addEventListener('click',closeHotel);
  document.addEventListener('keydown',function(e){{if(e.key==='Escape'&&!hp.hidden)closeHotel();}});
+ function initBrief(root){{(root||log).querySelectorAll('.brief').forEach(function(B){{
+   var ag=B.querySelector('.bf-ages');if(!ag)return;var pre=(ag.getAttribute('data-ages')||'').split(',').filter(Boolean);
+   ag.setAttribute('data-ages','');var n=+(B.querySelector("[data-n='enfants']")||{{textContent:0}}).textContent;
+   var cur=[].slice.call(ag.querySelectorAll('select')).map(function(s){{return s.value;}});ag.innerHTML='';
+   for(var i=0;i<n;i++){{var s=document.createElement('select');s.className='bf-age';
+     s.innerHTML='<option value="">Âge enfant '+(i+1)+'</option>'+Array.from({{length:18}},function(_,a){{return '<option value="'+a+'">'+(a<2?a+' an':a+' ans')+'</option>';}}).join('');
+     s.value=cur[i]||pre[i]||'';ag.appendChild(s);}}}});}}
+ initBrief();
+ function briefMsg(B){{var miss=(B.getAttribute('data-miss')||'').split(','),parts=[],bad=[];
+   function val(f){{var i=B.querySelector(".bf-in[data-f='"+f+"']");if(i&&i.value.trim())return i.value.trim();
+     var o=B.querySelector(".bf-o.on[data-f='"+f+"']");return o?o.getAttribute('data-v'):'';}}
+   if(miss.indexOf('destination')>=0){{var d=val('destination');if(d)parts.push('Destination : '+d);else bad.push('la destination');}}
+   if(miss.indexOf('depart')>=0){{var p=val('depart');if(p)parts.push('Départ : '+p);else bad.push('la ville de départ');}}
+   if(miss.indexOf('date')>=0){{var dt=val('date');if(/^\\d{{4}}-\\d\\d-\\d\\d$/.test(dt)){{var M=['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'],x=dt.split('-');
+       dt=(+x[2])+' '+M[+x[1]-1]+' '+x[0];}}if(dt)parts.push('Date de départ : '+dt);else bad.push('la date');}}
+   if(miss.indexOf('nuits')>=0){{var nn=val('nuits');if(nn)parts.push('Durée : '+nn);else bad.push('la durée');}}
+   if(miss.indexOf('voyageurs')>=0||miss.indexOf('ages')>=0){{var a=+B.querySelector("[data-n='adultes']").textContent,
+       k=+B.querySelector("[data-n='enfants']").textContent,ages=[].slice.call(B.querySelectorAll('.bf-age')).map(function(s){{return s.value;}});
+     if(ages.some(function(v){{return v==='';}}))bad.push("l'âge des enfants");
+     parts.push('Voyageurs : '+a+' adulte'+(a>1?'s':'')+(k?' et '+k+' enfant'+(k>1?'s':'')+' ('+ages.join(', ')+' ans)':''));}}
+   if(miss.indexOf('budget')>=0){{var bu=val('budget');if(bu)parts.push('Budget : '+bu);else bad.push('le budget');}}
+   if(bad.length){{say('Il manque encore : '+bad.join(', ')+'.');return '';}}
+   return parts.join('\\n');}}
  log.addEventListener('click',function(e){{
+   var bo=e.target.closest('.bf-o');
+   if(bo){{var BB=bo.closest('.brief');BB.querySelectorAll(".bf-o[data-f='"+bo.getAttribute('data-f')+"']").forEach(function(x){{x.classList.toggle('on',x===bo);}});
+     var ii=BB.querySelector(".bf-in[data-f='"+bo.getAttribute('data-f')+"']");if(ii&&ii.type!=='date')ii.value='';return;}}
+   var pm=e.target.closest('.bf-m,.bf-p');
+   if(pm){{var B2=pm.closest('.brief'),key=pm.getAttribute('data-k'),el=B2.querySelector("[data-n='"+key+"']"),
+       v=+el.textContent+(pm.classList.contains('bf-p')?1:-1);v=Math.max(key==='adultes'?1:0,Math.min(key==='adultes'?8:6,v));
+     el.textContent=v;if(key==='enfants')initBrief(B2.parentNode);return;}}
+   var bg=e.target.closest('.bf-go');if(bg){{var m=briefMsg(bg.closest('.brief'));if(m)ask(m);return;}}
+   var bs=e.target.closest('.bf-skip');if(bs){{ask('Suggère-moi des hôtels quand même avec ce que je t’ai donné.');return;}}
    var tb=e.target.closest('.rt-btn');
    if(tb){{var R=tb.closest('.rtabs'),k=tb.getAttribute('data-tab');
      R.querySelectorAll('.rt-btn').forEach(function(x){{x.classList.toggle('on',x===tb);}});
@@ -1457,8 +1590,15 @@ def assistant_panel(client) -> str:
      say('Résumé copié 📋 — colle-le dans Messenger pour que le conseiller parte de là.');}},function(){{}});
    if(!w)location.href=MSGR;
  }});
- if(rst)rst.addEventListener('click',function(){{
-   fetch('/portail/assistant/reset',{{method:'POST'}}).then(function(){{location.reload();}});}});
+ var side=document.getElementById('aSide'),stog=document.getElementById('aSideTog');
+ if(stog&&side)stog.addEventListener('click',function(e){{e.stopPropagation();side.classList.toggle('open');}});
+ document.addEventListener('click',function(e){{if(side&&side.classList.contains('open')&&!side.contains(e.target))side.classList.remove('open');}});
+ if(side)side.addEventListener('click',function(e){{
+   var x=e.target.closest('.csb-x');if(!x)return;e.preventDefault();
+   var it=x.closest('.csb-i'),id=it.getAttribute('data-id');
+   if(!confirm('Supprimer cette conversation?'))return;
+   fetch('/portail/assistant/chat/'+id+'/delete',{{method:'POST'}}).then(function(){{
+     if(String(box.getAttribute('data-chat'))===String(id))location.href='/portail?c=new';else it.remove();}});}});
 }})();
 </script>"""
 
@@ -1807,9 +1947,23 @@ def _history_msgs(history: list, q: str) -> list:
 
 def answer_events(provider: str, cid: int, q: str, history: list, name: str,
                   can_search: bool, persist, count_searches: bool = True,
-                  debug: bool = False):
+                  debug: bool = False, triage: bool = False):
     """The whole answer pipeline as NDJSON lines, for either provider.
     `persist(user_entry, assistant_entry)` stores the exchange at the end."""
+    last_ai = next((m for m in reversed(history) if m.get("role") == "assistant"), None)
+    if triage and trip_brief.enabled() and not (last_ai and last_ai.get("brief")):
+        prof = trip_brief.extract(history, q)
+        miss = trip_brief.missing(prof or {})
+        if miss:                            # ask first: no web search, no Google calls
+            now = datetime.utcnow().isoformat(timespec="seconds")
+            entry = {"role": "assistant", "id": secrets.token_hex(8),
+                     "text": trip_brief.intro_text(prof, miss), "brief": {"p": prof, "miss": miss},
+                     "provider": "triage", "model": settings.PORTAL_ASSISTANT_TRIAGE_MODEL, "at": now}
+            info = persist({"role": "user", "text": q, "at": now}, entry) or {}
+            log.info("assistant: brief asked (missing %s)", ",".join(miss))
+            yield _ev("text", entry["text"])
+            yield _ev("final", {"html": _bubble(entry, last=True), "refine": "", **info})
+            return
     convo_text = " ".join([m["text"] for m in history[-6:] if m.get("role") == "user"] + [q])
     excerpts = kb.context_for(convo_text)
     catalogue = kb.catalogue()
@@ -1957,8 +2111,8 @@ def answer_events(provider: str, cid: int, q: str, history: list, name: str,
              "destinations": dests, "questions": questions, "prix": prix, "budget": budget,
              "suivis": suivis, "sources": sources, "steps": steps[:12], "recherche": rech,
              "provider": provider, "model": model_name(provider), "at": now}
-    persist({"role": "user", "text": q, "at": now}, entry)
-    yield _ev("final", {"html": _bubble(entry, last=True), "refine": suivis_html(suivis)})
+    info = persist({"role": "user", "text": q, "at": now}, entry) or {}
+    yield _ev("final", {"html": _bubble(entry, last=True), "refine": suivis_html(suivis), **info})
 
 
 def _stream(lines, ndjson: bool = True):
@@ -2004,19 +2158,29 @@ async def assistant_chat(request: Request):
         client = db.get(Client, cid)
         if not client:
             return JSONResponse({"error": "auth"}, status_code=401)
-        history = list(client.assistant_chat or [])
+        _migrate_thread(db, client)
+        if "chat" in payload:              # current page: explicit chat id (null = new chat)
+            ch = get_chat(db, cid, payload.get("chat")) if payload.get("chat") else None
+        else:                              # pages opened before multi-chat: continue the latest
+            ch = next(iter(recent_chats(db, cid, 1)), None)
+        history = list(ch.messages or []) if ch else []
+        chat_id = ch.id if ch else None
         name = _first_name(client)
     _HITS.setdefault(cid, []).append(time.monotonic())
 
     def persist(user_entry, ai_entry):
         with SessionLocal() as db2:
-            c = db2.get(Client, cid)
-            if c:
-                c.assistant_chat = (list(c.assistant_chat or []) + [user_entry, ai_entry])[-_KEEP:]
-                db2.commit()
+            c = get_chat(db2, cid, chat_id) if chat_id else None
+            if c is None:
+                c = AssistantChat(client_id=cid, title=_chat_title(user_entry.get("text", "")), messages=[])
+                db2.add(c)
+            c.messages = (list(c.messages or []) + [user_entry, ai_entry])[-_KEEP:]
+            c.updated_at = datetime.utcnow()
+            db2.commit()
+            return {"chat": c.id, "title": c.title}
 
     return _stream(answer_events(provider, cid, q, history, name,
-                                 _searches_left(cid) > 0, persist), ndjson)
+                                 _searches_left(cid) > 0, persist, triage=True), ndjson)
 
 
 # --------------------------------------------------------------------------- #
@@ -2188,13 +2352,16 @@ async def assistant_feedback(request: Request):
     if not mid or not rating:
         return JSONResponse({"error": "bad request"}, status_code=400)
     with SessionLocal() as db:
-        c = db.get(Client, cid)
-        chat = list((c.assistant_chat if c else None) or [])
-        idx = next((i for i, m in enumerate(chat) if m.get("id") == mid), None)
+        idx, chat, conv = None, [], None
+        for conv in recent_chats(db, cid, 200):
+            chat = list(conv.messages or [])
+            idx = next((i for i, m in enumerate(chat) if m.get("id") == mid), None)
+            if idx is not None:
+                break
         pending = _PENDING.get(mid)
         if idx is not None:
             chat[idx] = {**chat[idx], "rating": rating}
-            c.assistant_chat = chat
+            conv.messages = chat
             entry = chat[idx]
             q = next((chat[j]["text"] for j in range(idx - 1, -1, -1)
                       if chat[j].get("role") == "user"), None)
@@ -2209,6 +2376,20 @@ async def assistant_feedback(request: Request):
         row.rating, row.question, row.answer = rating, q, entry.get("text")
         row.cards = entry.get("cards") or []
         row.model = f"{entry.get('provider', 'anthropic')}:{entry.get('model')}"
+        db.commit()
+    return JSONResponse({"ok": True})
+
+
+@router.post("/portail/assistant/chat/{chat_id}/delete")
+def assistant_chat_delete(request: Request, chat_id: int):
+    cid = current_portal_client_id(request)
+    if not cid:
+        return JSONResponse({"error": "auth"}, status_code=401)
+    with SessionLocal() as db:
+        ch = get_chat(db, cid, chat_id)
+        if not ch:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        db.delete(ch)
         db.commit()
     return JSONResponse({"ok": True})
 

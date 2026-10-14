@@ -182,6 +182,19 @@ TEMPLATE_CATEGORY_LABELS = {
 }
 
 
+class AssistantChat(Base):
+    """One conversation with the portal travel agent (a member can have many,
+    listed as « recent chats » in the portal sidebar)."""
+    __tablename__ = "assistant_chats"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(Integer, index=True)
+    title: Mapped[str] = mapped_column(String(120), default="")
+    messages: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 class ApiUsage(Base):
     """Paid-API calls counted per day (Google Places), so hard caps survive
     restarts and redeploys: beyond the cap the call is simply not made."""
