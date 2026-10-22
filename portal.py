@@ -54,9 +54,25 @@ log = logging.getLogger("duvoyageur.portal")
 PORTAL_COOKIE = "dv_portal"
 HINT_COOKIE = "dv_portal_hint"          # non-authoritative "session present" flag
 _COOKIE_PATH = "/portail"
+# Lets /results recognise the member when the Softvoyage engine posts a search
+# back to us (cross-site POST: the Lax portal cookie is not sent there).
+RESULTS_COOKIE = "dv_results"
+_RESULTS_PATH = "/results"
 
 _login_signer = URLSafeTimedSerializer(settings.SECRET_KEY, salt="dv-portal-login")
 _session_signer = URLSafeTimedSerializer(settings.SECRET_KEY, salt="dv-portal-session")
+_results_signer = URLSafeTimedSerializer(settings.SECRET_KEY, salt="dv-results-member")
+
+
+def results_client_id(request: Request):
+    """Member id from the /results cookie (signed), or None."""
+    raw = request.cookies.get(RESULTS_COOKIE)
+    if not raw:
+        return None
+    try:
+        return int(_results_signer.loads(raw, max_age=settings.PORTAL_SESSION_MAX_AGE)["cid"])
+    except Exception:  # noqa: BLE001
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -90,6 +106,12 @@ def _set_session_cookie(resp, client_id: int) -> None:
     resp.set_cookie(
         HINT_COOKIE, _session_signer.dumps({"cid": client_id}),
         max_age=settings.PORTAL_SESSION_MAX_AGE, path=_COOKIE_PATH,
+        httponly=True,
+        samesite="none" if settings.SECURE_COOKIES else "lax",
+        secure=settings.SECURE_COOKIES)
+    resp.set_cookie(
+        RESULTS_COOKIE, _results_signer.dumps({"cid": client_id}),
+        max_age=settings.PORTAL_SESSION_MAX_AGE, path=_RESULTS_PATH,
         httponly=True,
         samesite="none" if settings.SECURE_COOKIES else "lax",
         secure=settings.SECURE_COOKIES)
@@ -134,6 +156,7 @@ def _clear_session_cookies(resp):
     """Erase both portal cookies (auth + cross-site hint)."""
     resp.delete_cookie(PORTAL_COOKIE, path=_COOKIE_PATH)
     resp.delete_cookie(HINT_COOKIE, path=_COOKIE_PATH)
+    resp.delete_cookie(RESULTS_COOKIE, path=_RESULTS_PATH)
     return resp
 
 
@@ -913,6 +936,7 @@ def _nav(active: str, locked: bool = False) -> str:
               ("recherche", "/portail/recherche", "Rechercher")]
              if settings.PORTAL_ASSISTANT_ENABLED else
              [("accueil", "/portail", L("Rechercher un forfait", "Find a package"))]) + [
+             ("recherches", "/portail/recherches", L("Mes recherches", "My searches")),
              ("aide", "/portail/service", L("Aide", "Help")),
              ("profil", "/portail/profil", L("Mon profil", "My profile"))]
     links = "".join(
