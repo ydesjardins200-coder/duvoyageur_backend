@@ -689,6 +689,8 @@ def health():
 def _dmo_results_url(fields) -> str:
     from urllib.parse import urlencode, urlsplit
     base = (fields.get("revelex_page") or "").strip()
+    if base.startswith("//"):                  # TRAVELSAVERS ads send protocol-relative URLs
+        base = "https:" + base
     u = urlsplit(base)
     host = (u.hostname or "").lower()
     if u.scheme != "https" or not (host == "softvoyage.com" or host.endswith(".softvoyage.com")):
@@ -3436,7 +3438,7 @@ def admin_system():
 
 
 @app.get("/admin/config", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
-def admin_config():
+def admin_config(saved: int = 0):
     body = (
         page_header("System Config")
         + "<div class='card'><h3>Configurer l'accueil Messenger</h3>"
@@ -3444,8 +3446,44 @@ def admin_config():
         "d'accueil et le menu ☰ de ta page.</p>"
         "<form method='post' action='/admin/setup-greeting' style='margin-top:14px'>"
         "<button>Configurer l'accueil Messenger</button></form></div>"
+        + _portal_banner_form(saved)
     )
     return render_page(body, "config")
+
+
+def _portal_banner_form(saved: bool = False) -> str:
+    from db import get_setting
+    with SessionLocal() as db:
+        b = get_setting(db, "portal_banner")
+    v = lambda k: escape(str(b.get(k) or ""))  # noqa: E731
+    chk = " checked" if b.get("active") else ""
+    ok = "<p style='color:#4ade80'>✓ Bandeau enregistré.</p>" if saved else ""
+    return (
+        "<div class='card' style='margin-top:16px'><h3>Bandeau saisonnier de l'espace client</h3>"
+        "<p class='sub'>Bande jaune en haut de la page « Rechercher un forfait ». Pas de prix ni de "
+        "pourcentage : seulement un message de saison.</p>" + ok +
+        "<form method='post' action='/admin/portal-banner' style='display:grid;gap:10px;margin-top:12px;max-width:720px'>"
+        f"<label><input type='checkbox' name='active' value='1'{chk}> Afficher le bandeau</label>"
+        f"<label>Texte (français)<input name='text_fr' maxlength='160' value=\"{v('text_fr')}\" style='width:100%'></label>"
+        f"<label>Texte (anglais)<input name='text_en' maxlength='160' value=\"{v('text_en')}\" style='width:100%'></label>"
+        f"<label>Libellé du lien (français, optionnel)<input name='link_label_fr' maxlength='40' value=\"{v('link_label_fr')}\"></label>"
+        f"<label>Libellé du lien (anglais, optionnel)<input name='link_label_en' maxlength='40' value=\"{v('link_label_en')}\"></label>"
+        f"<label>Adresse du lien (https://… , optionnel)<input name='link_url' maxlength='300' value=\"{v('link_url')}\" style='width:100%'></label>"
+        f"<label>Afficher jusqu'au (optionnel)<input type='date' name='until' value=\"{v('until')}\"></label>"
+        "<div><button>Enregistrer le bandeau</button></div></form></div>")
+
+
+@app.post("/admin/portal-banner", dependencies=[Depends(require_admin)])
+async def admin_portal_banner(request: Request):
+    from db import set_setting
+    f = await request.form()
+    val = {k: (str(f.get(k) or "").strip())[:300] for k in
+           ("text_fr", "text_en", "link_label_fr", "link_label_en", "link_url", "until")}
+    val["active"] = f.get("active") == "1"
+    with SessionLocal() as db:
+        set_setting(db, "portal_banner", val)
+        db.commit()
+    return RedirectResponse("/admin/config?saved=1", status_code=303)
 
 
 @app.get("/admin/templates", response_class=HTMLResponse,

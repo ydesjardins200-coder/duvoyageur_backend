@@ -207,6 +207,29 @@ class DmoSearch(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
+class SiteSetting(Base):
+    """Small key/value settings edited from the admin (e.g. the portal banner)."""
+    __tablename__ = "site_settings"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+def get_setting(db, key: str) -> dict:
+    row = db.get(SiteSetting, key)
+    return dict(row.value or {}) if row else {}
+
+
+def set_setting(db, key: str, value: dict) -> None:
+    row = db.get(SiteSetting, key)
+    if row:
+        row.value = value
+        row.updated_at = datetime.utcnow()
+    else:
+        db.add(SiteSetting(key=key, value=value))
+
+
 class ApiUsage(Base):
     """Paid-API calls counted per day (Google Places), so hard caps survive
     restarts and redeploys: beyond the cap the call is simply not made."""
