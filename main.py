@@ -746,7 +746,8 @@ def _dmo_capture(method: str, fields) -> None:
     pairs = [(k, v) for k, v in fields.multi_items() if isinstance(v, str)]
     if not pairs:
         return
-    _DMO_CAPTURES.appendleft({"at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    from zoneinfo import ZoneInfo
+    _DMO_CAPTURES.appendleft({"at": datetime.now(ZoneInfo("America/Toronto")).strftime("%Y-%m-%d %H:%M:%S"),
                               "method": method, "fields": pairs})
     log.info("DMO /results %s fields: %s", method, [k for k, _ in pairs])
 

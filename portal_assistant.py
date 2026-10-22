@@ -2755,7 +2755,7 @@ def dmo_body(crit: dict) -> str:
                   + L("Écrire à un conseiller →", "Message a travel advisor →") + "</a></div>")
     return (head + _crit_chips(crit) + note
             + f"<div class='engine'><iframe src=\"{escape(_engine_url(crit))}\" "
-              "title='Moteur de recherche de forfaits' loading='eager'></iframe></div>" + back)
+              f"title=\"{L('Moteur de recherche de forfaits', 'Package search engine')}\" loading='eager'></iframe></div>" + back)
 
 
 def _assistant_off():
