@@ -545,8 +545,8 @@ def _accueil(client, cases, flash: str = "", chat: str = "") -> str:
     self-service in the Softvoyage engine and live in PC Voyages."""
     note = f"<div class='note ok'>{flash}</div>" if flash else ""
     if not settings.PORTAL_ASSISTANT_ENABLED:      # AI agent cancelled: home = DMO engine
-        from portal_assistant import dmo_body          # lazy: avoids import cycle
-        return note + dmo_body({})
+        from portal_home import search_page            # lazy: avoids import cycle
+        return note + search_page(client)
     from portal_assistant import assistant_panel     # lazy: avoids import cycle
     return note + assistant_panel(client, chat)
 
