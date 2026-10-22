@@ -54,6 +54,7 @@ from portal import router as portal_router, build_portal_login_url
 from portal_oauth import router as portal_oauth_router
 from portal_assistant import router as portal_assistant_router
 from portal_compare import router as portal_compare_router
+from portal_searches import router as portal_searches_router, record_search
 from places import router as places_router
 import storage
 from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLocal, engine,
@@ -128,6 +129,7 @@ app.include_router(portal_router)
 app.include_router(portal_oauth_router)
 app.include_router(portal_assistant_router)
 app.include_router(portal_compare_router)
+app.include_router(portal_searches_router)
 app.include_router(places_router)
 
 
@@ -756,6 +758,10 @@ def _dmo_capture(method: str, fields) -> None:
 async def dmo_results_post(request: Request):
     form = await request.form()
     _dmo_capture("POST", form)
+    try:
+        record_search(request, form, _dmo_lang(form))
+    except Exception:  # noqa: BLE001 — history is best-effort, never block results
+        log.exception("DMO search history: record failed")
     return HTMLResponse(_dmo_results_page(_dmo_results_url(form), _dmo_lang(form)))
 
 

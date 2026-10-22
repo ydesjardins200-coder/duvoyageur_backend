@@ -195,6 +195,18 @@ class AssistantChat(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
+class DmoSearch(Base):
+    """One package search a logged-in member made in the Softvoyage engine,
+    captured when the engine POSTs to /results (fields kept as name/value pairs)."""
+    __tablename__ = "dmo_searches"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(Integer, index=True)
+    fields: Mapped[list] = mapped_column(JSON, default=list)
+    lang: Mapped[str] = mapped_column(String(2), default="fr")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 class ApiUsage(Base):
     """Paid-API calls counted per day (Google Places), so hard caps survive
     restarts and redeploys: beyond the cap the call is simply not made."""
