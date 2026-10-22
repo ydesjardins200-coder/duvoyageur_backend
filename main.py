@@ -680,6 +680,20 @@ def health():
     return {"ok": True, "service": "duvoyageur-backend"}
 
 
+# Softvoyage DMO results page: intentionally blank, public, not indexed.
+_RESULTS_PAGE = (
+    "<!doctype html><html lang='fr-CA'><head><meta charset='utf-8'>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<meta name='robots' content='noindex,nofollow'><title>Résultats — duvoyageur.ca</title>"
+    "<style>html,body{margin:0;padding:0;background:#fff}</style></head>"
+    "<body><div id='results'></div></body></html>")
+
+
+@app.get("/results", response_class=HTMLResponse, include_in_schema=False)
+def dmo_results():
+    return HTMLResponse(_RESULTS_PAGE)
+
+
 # --------------------------------------------------------------------------- #
 # Messenger welcome screen
 # --------------------------------------------------------------------------- #

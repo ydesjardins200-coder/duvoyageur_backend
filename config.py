@@ -154,7 +154,7 @@ class Settings:
     # --- Softvoyage DMO package search engine (iframe in the portal) ---
     # Shown at /portail/recherche once the agency alias is set; until then the
     # page says "bientôt disponible".
-    SIRRVA_ALIAS: str = os.getenv("SIRRVA_ALIAS", "")
+    SIRRVA_ALIAS: str = os.getenv("SIRRVA_ALIAS", "big")
     SIRRVA_HOST: str = os.getenv("SIRRVA_HOST", "https://trs.sax.softvoyage.com")
     SIRRVA_CODE_AG: str = os.getenv("SIRRVA_CODE_AG", "trs")
     # Our search criteria -> the DMO engine's URL parameter names ("ours=theirs",
