@@ -680,18 +680,73 @@ def health():
     return {"ok": True, "service": "duvoyageur-backend"}
 
 
-# Softvoyage DMO results page: intentionally blank, public, not indexed.
-_RESULTS_PAGE = (
-    "<!doctype html><html lang='fr-CA'><head><meta charset='utf-8'>"
-    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<meta name='robots' content='noindex,nofollow'><title>Résultats — duvoyageur.ca</title>"
-    "<style>html,body{margin:0;padding:0;background:#fff}</style></head>"
-    "<body><div id='results'></div></body></html>")
+# Softvoyage DMO results page (port of Softvoyage's php.php example).
+# The engine form POSTs here with `revelex_page` (the results URL) plus every
+# search field; we rebuild that URL with all fields as the query string and
+# frame it. Only Softvoyage https URLs are framed (no open iframe/redirect).
+def _dmo_results_url(fields) -> str:
+    from urllib.parse import urlencode, urlsplit
+    base = (fields.get("revelex_page") or "").strip()
+    u = urlsplit(base)
+    host = (u.hostname or "").lower()
+    if u.scheme != "https" or not (host == "softvoyage.com" or host.endswith(".softvoyage.com")):
+        return ""
+    pairs = [(k, v) for k, v in fields.multi_items() if isinstance(v, str)]
+    return base + ("&" if "?" in base else "?") + urlencode(pairs)
+
+
+def _dmo_results_page(src: str, lang: str) -> str:
+    en = lang == "en"
+    t = (lambda fr, e: e if en else fr)
+    back = "/portail?lang=en" if en else "/portail"
+    body = (f'<iframe id="ifResults" src="{escape(src)}" title="{t("Résultats de recherche", "Search results")}"></iframe>'
+            if src else
+            f'<div class="empty"><h1>{t("Aucune recherche en cours", "No search in progress")}</h1>'
+            f'<p>{t("Lance une recherche dans le moteur pour voir les forfaits avec ton Rabais Récompense.", "Start a search in the engine to see packages with your Reward Discount.")}</p>'
+            f'<a class="btn" href="{back}">{t("Rechercher un forfait", "Find a package")}</a></div>')
+    title = t("Résultats", "Results")
+    slogan = t("L'agence qui récompense", "The agency that rewards you")
+    newsearch = t("Nouvelle recherche", "New search")
+    html_lang = "en-CA" if en else "fr-CA"
+    return f"""<!doctype html><html lang="{html_lang}"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">
+<title>{title} — duvoyageur.ca</title><link rel="icon" href="/static/favicon-64.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800&family=Kaushan+Script&display=swap" rel="stylesheet">
+<style>
+*{{box-sizing:border-box}}html,body{{margin:0;background:#fff;color:#0F2A47;font-family:Montserrat,system-ui,sans-serif}}
+.bar{{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.7rem clamp(1rem,3vw,2rem);background:#0F2A47;border-bottom:3px solid #F4C543}}
+.brand{{display:flex;align-items:center;gap:.6rem;color:#fff;text-decoration:none;font-weight:800;font-size:1.15rem}}
+.brand img{{width:40px;height:40px}}.brand span{{color:#F4C543}}
+.brand small{{display:block;font:400 .95rem/1 "Kaushan Script",cursive;color:#F4C543;margin-top:.15rem}}
+.back{{color:#fff;text-decoration:none;font-weight:700;font-size:.9rem;border:1.5px solid rgba(255,255,255,.5);border-radius:99px;padding:.5rem .95rem;white-space:nowrap}}
+.back:hover{{border-color:#F4C543;color:#F4C543}}
+#ifResults{{display:block;width:100%;height:calc(100vh - 66px);min-height:1100px;border:0}}
+.empty{{max-width:560px;margin:4rem auto;padding:0 1rem;text-align:center}}.empty h1{{font-size:1.5rem}}
+.empty p{{color:#5B6B7D;font-family:system-ui,sans-serif;line-height:1.5}}
+@media(max-width:480px){{.brand small{{display:none}}}}
+.btn{{display:inline-block;margin-top:.6rem;background:#F4C543;color:#0F2A47;font-weight:800;text-decoration:none;padding:.8rem 1.4rem;border-radius:99px}}
+</style></head><body>
+<header class="bar"><a class="brand" href="{back}"><img src="/static/logo-capitaine.png" alt=""><div>duvoyageur<span>.ca</span><small>{slogan}</small></div></a>
+<a class="back" href="{back}">← {newsearch}</a></header>
+{body}
+</body></html>"""
+
+
+def _dmo_lang(fields) -> str:
+    v = (fields.get("language") or fields.get("lang") or "").lower()[:2]
+    return v if v in ("fr", "en") else i18n_portal.LANG.get()
+
+
+@app.post("/results", response_class=HTMLResponse, include_in_schema=False)
+async def dmo_results_post(request: Request):
+    form = await request.form()
+    return HTMLResponse(_dmo_results_page(_dmo_results_url(form), _dmo_lang(form)))
 
 
 @app.get("/results", response_class=HTMLResponse, include_in_schema=False)
-def dmo_results():
-    return HTMLResponse(_RESULTS_PAGE)
+def dmo_results_get(request: Request):
+    qp = request.query_params
+    return HTMLResponse(_dmo_results_page(_dmo_results_url(qp), _dmo_lang(qp)))
 
 
 # --------------------------------------------------------------------------- #
