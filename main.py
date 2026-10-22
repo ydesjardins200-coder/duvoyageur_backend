@@ -737,16 +737,100 @@ def _dmo_lang(fields) -> str:
     return v if v in ("fr", "en") else i18n_portal.LANG.get()
 
 
+# Last search payloads the engine sent to /results (memory only, for the DMO lab).
+import collections as _collections  # noqa: E402
+_DMO_CAPTURES: "_collections.deque" = _collections.deque(maxlen=25)
+
+
+def _dmo_capture(method: str, fields) -> None:
+    pairs = [(k, v) for k, v in fields.multi_items() if isinstance(v, str)]
+    if not pairs:
+        return
+    _DMO_CAPTURES.appendleft({"at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                              "method": method, "fields": pairs})
+    log.info("DMO /results %s fields: %s", method, [k for k, _ in pairs])
+
+
 @app.post("/results", response_class=HTMLResponse, include_in_schema=False)
 async def dmo_results_post(request: Request):
     form = await request.form()
+    _dmo_capture("POST", form)
     return HTMLResponse(_dmo_results_page(_dmo_results_url(form), _dmo_lang(form)))
 
 
 @app.get("/results", response_class=HTMLResponse, include_in_schema=False)
 def dmo_results_get(request: Request):
     qp = request.query_params
+    _dmo_capture("GET", qp)
     return HTMLResponse(_dmo_results_page(_dmo_results_url(qp), _dmo_lang(qp)))
+
+
+@app.get("/admin/dmo-lab", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+def admin_dmo_lab():
+    base = f"{settings.SIRRVA_HOST.rstrip('/')}/cgi-bin/querypackage.cgi"
+    caps = "".join(
+        f"<div class='card'><h3>{escape(c['method'])} · {escape(c['at'])}</h3>"
+        "<table class='lab-t'><tr><th>Champ</th><th>Valeur</th></tr>"
+        + "".join(f"<tr><td><code>{escape(k)}</code></td><td>{escape(v)}</td></tr>" for k, v in c["fields"])
+        + "</table></div>" for c in _DMO_CAPTURES) or (
+        "<div class='card'><p>Aucun envoi reçu sur <code>/results</code> depuis le dernier redémarrage. "
+        "Dès que Softvoyage pointe les résultats de l'alias vers /results, chaque recherche apparaîtra ici "
+        "avec les noms exacts des champs.</p></div>")
+    body = page_header("Labo moteur DMO", "/admin/dmo-lab") + f"""
+<style>
+.lab{{display:grid;grid-template-columns:minmax(260px,340px) 1fr;gap:1rem;align-items:start}}
+@media(max-width:900px){{.lab{{grid-template-columns:1fr}}}}
+.lab label{{display:block;font-weight:600;margin:.7rem 0 .3rem}}
+.lab input,.lab select,.lab textarea{{width:100%;padding:.5rem;border:1px solid #ccd;border-radius:8px;font:inherit}}
+.lab textarea{{min-height:150px;font-family:monospace;font-size:.85rem}}
+.lab button{{margin-top:.8rem;padding:.6rem 1rem;border:0;border-radius:8px;background:#0F2A47;color:#fff;font-weight:700;cursor:pointer}}
+#labUrl{{word-break:break-all;font-family:monospace;font-size:.8rem;background:#f5f5f2;color:#0F2A47;padding:.5rem;border-radius:6px}}
+#labFrame{{width:100%;height:900px;border:1px solid #ccd;border-radius:12px;background:#fff}}
+#labLog{{font-family:monospace;font-size:.78rem;max-height:220px;overflow:auto;background:#0F2A47;color:#e8edf3;padding:.6rem;border-radius:8px;white-space:pre-wrap}}
+.lab-t{{width:100%;border-collapse:collapse;font-size:.85rem}}.lab-t td,.lab-t th{{border-bottom:1px solid #eee;padding:.3rem .4rem;text-align:left;vertical-align:top}}
+</style>
+<div class='lab'>
+ <div class='card'>
+  <h3>Paramètres</h3>
+  <label>Langue</label><select id='labLang'><option>fr</option><option>en</option></select>
+  <label>Alias</label><input id='labAlias' value='{escape(settings.SIRRVA_ALIAS)}'>
+  <label>Paramètres à tester (un par ligne, nom=valeur)</label>
+  <textarea id='labExtra' placeholder='gateway=YUL&#10;dest=PUJ&#10;duration=7'></textarea>
+  <label>Hauteur de l'iframe : <span id='labHv'>900</span> px</label>
+  <input id='labH' type='range' min='500' max='3000' step='50' value='900'>
+  <button id='labGo'>Charger le moteur</button>
+  <p style='margin-top:.8rem'>URL chargée :</p><div id='labUrl'></div>
+  <h3 style='margin-top:1rem'>Messages reçus du moteur</h3>
+  <div id='labLog'>(en attente… si rien n'apparaît après le chargement et une recherche, le moteur n'envoie pas sa hauteur)</div>
+ </div>
+ <div><iframe id='labFrame' title='Moteur DMO (test)'></iframe></div>
+</div>
+<h2 style='margin-top:1.5rem'>Derniers envois reçus sur /results</h2>
+{caps}
+<script>
+(function(){{
+  var BASE={base!r}, CODE={settings.SIRRVA_CODE_AG!r};
+  var $=function(i){{return document.getElementById(i)}};
+  function url(){{
+    var q=new URLSearchParams({{code_ag:CODE,alias:$('labAlias').value.trim(),language:$('labLang').value}});
+    $('labExtra').value.split(/\\n/).forEach(function(l){{var i=l.indexOf('=');if(i>0)q.append(l.slice(0,i).trim(),l.slice(i+1).trim())}});
+    return BASE+'?'+q.toString();
+  }}
+  function go(){{var u=url();$('labUrl').textContent=u;$('labFrame').src=u;
+    try{{localStorage.setItem('dmoLab',JSON.stringify({{l:$('labLang').value,a:$('labAlias').value,x:$('labExtra').value,h:$('labH').value}}))}}catch(e){{}}}}
+  $('labGo').onclick=go;
+  $('labH').oninput=function(){{$('labHv').textContent=this.value;$('labFrame').style.height=this.value+'px'}};
+  var first=true;
+  window.addEventListener('message',function(e){{
+    if(first){{$('labLog').textContent='';first=false}}
+    var d;try{{d=typeof e.data==='string'?e.data:JSON.stringify(e.data)}}catch(x){{d=String(e.data)}}
+    $('labLog').textContent+=new Date().toLocaleTimeString()+'  '+e.origin+'\\n  '+d+'\\n';
+  }});
+  try{{var s=JSON.parse(localStorage.getItem('dmoLab')||'null');if(s){{$('labLang').value=s.l;$('labAlias').value=s.a;$('labExtra').value=s.x;$('labH').value=s.h;$('labH').oninput()}}}}catch(e){{}}
+  go();
+}})();
+</script>"""
+    return render_page(body, "")
 
 
 # --------------------------------------------------------------------------- #
@@ -1953,6 +2037,7 @@ def _gear_html() -> str:
         "<a class='bell-item' href='/admin/templates'>💬 Modèles de réponse</a>"
         "<a class='bell-item' href='/admin/system'>🩺 System Health</a>"
         "<a class='bell-item' href='/admin/config'>🛠️ System Config</a>"
+        "<a class='bell-item' href='/admin/dmo-lab'>🧪 Labo moteur DMO</a>"
         "</div></div>"
     )
 
