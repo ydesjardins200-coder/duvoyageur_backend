@@ -268,6 +268,12 @@ def _faq_section() -> str:
 # --------------------------------------------------------------------------- #
 _CSS = """<style>
 .wrap:has(.sx){max-width:1300px}
+.gt-tabs{display:flex;gap:.3rem;margin:0 0 1rem;border-bottom:2px solid rgba(15,42,71,.1);overflow-x:auto;scrollbar-width:none}
+.gt-tab{padding:.75rem 1.1rem;font:800 .95rem Montserrat,sans-serif;color:var(--mist);text-decoration:none;border-bottom:3px solid transparent;margin-bottom:-2px;display:flex;align-items:center;gap:.45rem;white-space:nowrap}
+.gt-tab:hover{text-decoration:none;color:var(--navy)}
+.gt-tab.on{color:var(--navy);border-bottom-color:var(--gold)}
+.gt-tab small{font:700 .68rem Inter,sans-serif;background:var(--navy);color:#fff;border-radius:99px;padding:.15rem .45rem}
+@media(max-width:700px){.gt-tabs{margin-bottom:.6rem;order:-1}.gt-tab{padding:.55rem .7rem;font-size:.86rem}}
 .sx .sm{display:none}
 .sx{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:1.4rem;align-items:start}
 .sx-head h2{margin:0}
@@ -376,8 +382,22 @@ _CSS = """<style>
 </style>"""
 
 
-def search_page(client) -> str:
-    """The full « Rechercher un forfait » home for a logged-in member."""
+def _tabs(active: str) -> str:
+    return ("<nav class='gt-tabs'>"
+            f"<a class='gt-tab{' on' if active != 'groupe' else ''}' href='/portail'>✈️ {L('Voyage', 'Trip')}</a>"
+            f"<a class='gt-tab{' on' if active == 'groupe' else ''}' href='/portail?tab=groupe'>👥 {L('Voyage de groupe', 'Group trip')} <small>10+</small></a>"
+            "</nav>")
+
+
+def search_page(client, tab: str = "voyage", group_values: dict | None = None,
+                group_errors: list | None = None, group_sent: int | None = None) -> str:
+    """The full « Rechercher un forfait » home for a logged-in member, with the
+    « Voyage » (engine) and « Voyage de groupe » (manual quote form) tabs."""
+    if tab == "groupe":
+        from portal_groups import group_done, group_form, group_sidebar, group_summary_card
+        main = _tabs("groupe") + (group_done(group_sent) if group_sent else group_form(client, group_values, group_errors))
+        side = group_sidebar() + ("" if group_sent else group_summary_card()) + _help_card()
+        return _CSS + f"<div class='sx'><div>{main}</div><aside class='sx-side'>{side}</aside></div>"
     from portal_assistant import _engine_url   # lazy: avoids an import cycle
     today = datetime.now(TZ).date()
     with SessionLocal() as db:
@@ -392,7 +412,7 @@ def search_page(client) -> str:
             f"<p>{L('Les prix affichés dans le moteur incluent déjà ton rabais. Aucun code, rien à demander.', 'Prices shown in the engine already include your discount. No code, nothing to ask for.')}</p></div>")
     engine = (f"<div class='engine'><iframe src=\"{escape(_engine_url({}))}\" "
               f"title=\"{L('Moteur de recherche de forfaits', 'Package search engine')}\" loading='eager'></iframe></div>")
-    main = _season_banner() + _resume_banner(client, resume) + head + engine
+    main = _tabs('voyage') + _season_banner() + _resume_banner(client, resume) + head + engine
     side = _steps_card() + _recent_card(rows[:3]) + _help_card() + _trust_card()
     bottom = "<div class='sx-bottom'>" + _deals_section() + _guides_section() + _faq_section() + "</div>"
     return _CSS + f"<div class='sx'><div>{main}</div><aside class='sx-side'>{side}</aside></div>" + bottom

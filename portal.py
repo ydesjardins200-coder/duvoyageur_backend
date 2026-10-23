@@ -560,14 +560,15 @@ def _identity_card(client) -> str:
             f"{body}</div>")
 
 
-def _accueil(client, cases, flash: str = "", chat: str = "") -> str:
+def _accueil(client, cases, flash: str = "", chat: str = "", tab: str = "voyage",
+             group_sent: int | None = None) -> str:
     """Portal home = the AI travel agent, full screen (chatgpt.com layout).
     Trip/savings cards and the identity box were removed: bookings happen
     self-service in the Softvoyage engine and live in PC Voyages."""
     note = f"<div class='note ok'>{flash}</div>" if flash else ""
     if not settings.PORTAL_ASSISTANT_ENABLED:      # AI agent cancelled: home = DMO engine
         from portal_home import search_page            # lazy: avoids import cycle
-        return note + search_page(client)
+        return note + search_page(client, tab=tab, group_sent=group_sent)
     from portal_assistant import assistant_panel     # lazy: avoids import cycle
     return note + assistant_panel(client, chat)
 
@@ -1083,7 +1084,7 @@ async def portal_login_consume(request: Request):
 
 
 @router.get("/portail", response_class=HTMLResponse)
-def portal_home(request: Request, new: int = 0, avis: int = 0, c: str = ""):
+def portal_home(request: Request, new: int = 0, avis: int = 0, c: str = "", tab: str = "", envoye: int = 0):
     cid = current_portal_client_id(request)
     if not cid:
         return RedirectResponse("/portail/connexion", status_code=303)
@@ -1097,7 +1098,13 @@ def portal_home(request: Request, new: int = 0, avis: int = 0, c: str = ""):
         if not client:
             return _logged_out()
         cases = list(client.requests)
-        body = _kyc_banner(client) + _accueil(client, cases, flash=flash, chat=c)
+        tab = "groupe" if tab == "groupe" else "voyage"
+        sent = None
+        if envoye:
+            from db import GroupRequest
+            gr = db.get(GroupRequest, envoye)
+            sent = envoye if (gr and gr.client_id == cid) else None
+        body = _kyc_banner(client) + _accueil(client, cases, flash=flash, chat=c, tab=tab, group_sent=sent)
         bell = _bell_panel(client)
     resp = HTMLResponse(_shell(L("Accueil", "Home"), body, logged_in=True, nav=_nav("accueil"), bell=bell,
                                full=settings.PORTAL_ASSISTANT_ENABLED))

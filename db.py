@@ -208,6 +208,21 @@ class DmoSearch(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
+class GroupRequest(Base):
+    """A group-trip quote request (10+ travellers) sent from the portal's
+    « Voyage de groupe » tab; handled manually by an advisor."""
+    __tablename__ = "group_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(Integer, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="nouvelle", index=True)
+    data: Mapped[dict] = mapped_column(JSON, default=dict)
+    lang: Mapped[str] = mapped_column(String(2), default="fr")
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class SiteSetting(Base):
     """Small key/value settings edited from the admin (e.g. the portal banner)."""
     __tablename__ = "site_settings"
