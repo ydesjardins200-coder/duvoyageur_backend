@@ -2616,6 +2616,17 @@ _PORTAL_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8">
  .soon h3{{font-size:22px;font-weight:900;margin:0 0 8px}}
  .soon p{{color:var(--mist);max-width:520px;margin:0 auto 20px}}
  .soon .btn{{width:auto;padding-left:26px;padding-right:26px}}
+ /* ===== Mobile compact : le moteur doit apparaître tout de suite ===== */
+ @media(max-width:640px){{
+   .top{{position:relative;padding:8px 12px;padding-top:max(8px,env(safe-area-inset-top));row-gap:6px;gap:8px}}
+   .brand{{gap:8px}} .brand img{{width:34px;height:34px}} .brand b{{font-size:15px}} .brand span{{display:none}}
+   .logout{{font-size:12px;padding:6px 6px}}
+   .pnav{{gap:6px}} .pill{{font-size:13px;padding:6px 12px}} .psite{{display:none}}
+   .wrap{{padding:10px 12px 36px;padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env(safe-area-inset-right))}}
+   .banner{{padding:8px 12px;margin:0 0 10px;border-radius:12px}}
+   .banner-txt b{{font-size:13px;margin:0}} .banner-txt span{{display:none}} .banner-cta{{font-size:13px}}
+   .foot{{font-size:11px}}
+ }}
 </style></head><body class="pg{page}">
  <div class="top">
    <a class="brand" href="/portail" style="text-decoration:none"><img src="/static/logo-capitaine.png" alt="duvoyageur.ca">

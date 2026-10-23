@@ -765,6 +765,7 @@ def _dmo_results_page(src: str, lang: str) -> str:
     title = t("Résultats", "Results")
     slogan = t("L'agence qui récompense", "The agency that rewards you")
     newsearch = t("Nouvelle recherche", "New search")
+    newsearch_sm = t("Recherche", "Search")
     secure = t("Connexion sécurisée", "Secure connection")
     helpq = t("Une question ?", "A question?")
     html_lang = "en-CA" if en else "fr-CA"
@@ -784,6 +785,7 @@ def _dmo_results_page(src: str, lang: str) -> str:
 .back,.helpb{{color:#fff;text-decoration:none;font-weight:700;font-size:.88rem;border:1.5px solid rgba(255,255,255,.5);border-radius:99px;padding:.5rem .95rem;white-space:nowrap}}
 .helpb{{background:#F4C543;color:#0F2A47;border-color:#F4C543}}
 .back:hover{{border-color:#F4C543;color:#F4C543}}
+.back .sm{{display:none}}
 .trust{{display:flex;justify-content:center;flex-wrap:wrap;gap:.4rem 1.6rem;padding:.65rem 1rem;background:#fff;border-bottom:1px solid rgba(15,42,71,.1);font:600 .82rem Inter,sans-serif}}
 .trust div{{display:flex;align-items:center;gap:.4rem}}.trust i{{font-style:normal}}
 .page{{max-width:1320px;margin:0 auto;padding:1rem clamp(.6rem,2vw,1.4rem) 2rem}}
@@ -822,11 +824,23 @@ def _dmo_results_page(src: str, lang: str) -> str:
 .empty p{{color:#5B6B7D;font-family:Inter,system-ui,sans-serif;line-height:1.5}}
 .btn{{display:inline-block;margin-top:.6rem;background:#F4C543;color:#0F2A47;font-weight:800;text-decoration:none;padding:.8rem 1.4rem;border-radius:99px}}
 @media(max-width:900px){{.whyin{{grid-template-columns:1fr}}.sec{{display:none}}}}
-@media(max-width:560px){{.brand small,.helpb{{display:none}}.trust{{justify-content:flex-start}}.steps b{{width:100%}}}}
+@media(max-width:640px){{
+.bar{{padding:.45rem .8rem}}.brand{{font-size:1rem;gap:.45rem}}.brand img{{width:32px;height:32px}}.brand small{{display:none}}
+.back{{font-size:.78rem;padding:.4rem .75rem}}.back .lg{{display:none}}.back .sm{{display:inline}}
+.trust{{flex-wrap:nowrap;justify-content:flex-start;overflow-x:auto;gap:1rem;padding:.4rem .8rem;font-size:.72rem;white-space:nowrap;scrollbar-width:none}}
+.trust::-webkit-scrollbar{{display:none}}
+.steps{{display:none}}
+.page{{padding:0 0 1rem}}
+.frame{{border-radius:0;border-left:0;border-right:0;box-shadow:none}}
+#ifResults{{height:calc(100vh - 82px);min-height:900px}}
+.ld{{padding-top:2.5rem}}
+.why{{padding:0 .6rem 1.6rem}}.whyin{{gap:1rem;padding:1.1rem}}
+.fab{{right:12px;bottom:12px;padding:.65rem .95rem;font-size:.82rem}}
+}}
 </style></head><body>
 <header class="bar"><a class="brand" href="{back}"><img src="/static/logo-capitaine.png" alt=""><div>duvoyageur<span>.ca</span><small>{slogan}</small></div></a>
 <div class="sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>{secure}</div>
-<div class="acts"><a class="back" href="{back}">← {newsearch}</a></div></header>
+<div class="acts"><a class="back" href="{back}">← <span class="lg">{newsearch}</span><span class="sm">{newsearch_sm}</span></a></div></header>
 <div class="trust">{trust_html}</div>
 <main class="page">{body}</main>
 <section class="why"><div class="whyin">{why_html}<div class="tm"><div>{team}</div><a href="{msgr}" target="_blank" rel="noopener">{t("Écrire à un conseiller →", "Message an advisor →")}</a></div></div></section>

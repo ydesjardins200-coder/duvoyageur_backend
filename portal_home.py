@@ -79,8 +79,8 @@ def _resume_banner(client, last: DmoSearch | None) -> str:
     name = _first_name(client)
     hello = L(f"Bon retour, {name}", f"Welcome back, {name}") if name else L("Bon retour", "Welcome back")
     return (f"<div class='sx-banner' style=\"background-image:url('{_asset('pexels-12567844.webp')}')\"><div><div>"
-            f"<small>{escape(hello)}</small>"
-            f"<b>{L('Reprendre ta recherche', 'Resume your search')} : {escape(origin)} → {escape(_dest(f.get('dest_dep', '')))}</b>"
+            f"<small><span class='lg'>{escape(hello)}</span><span class='sm'>{L('Reprendre ta recherche', 'Resume your search')}</span></small>"
+            f"<b><span class='lg'>{L('Reprendre ta recherche', 'Resume your search')} : </span>{escape(origin)} → {escape(_dest(f.get('dest_dep', '')))}</b>"
             f"<span>{escape(chips)}</span></div>"
             f"<a class='sx-btn' href=\"{escape(_relaunch_url(last))}\">{L('Voir les résultats →', 'See the results →')}</a>"
             f"</div></div>")
@@ -106,10 +106,11 @@ def _steps_card() -> str:
     ]
     items = "".join(f"<li><span class='sx-n'>{i}</span><div><b>{escape(t)}</b><small>{escape(d)}</small></div></li>"
                     for i, (t, d) in enumerate(steps, 1))
-    return (f"<div class='sx-card sx-navy'><h3>{L('Comment fonctionne ton', 'How your')} "
-            f"<span>{L('Rabais Récompense', 'Reward Discount works')}</span></h3>"
+    return (f"<details class='sx-card sx-navy' id='sxSteps' open><summary><h3>{L('Comment fonctionne ton', 'How your')} "
+            f"<span>{L('Rabais Récompense', 'Reward Discount works')}</span></h3></summary>"
             f"<ol class='sx-steps'>{items}</ol>"
-            f"<p class='sx-fine'>{L('Le rabais varie selon le forfait et le voyagiste. Prix et disponibilités fournis par le voyagiste au moment de la recherche.', 'The discount varies by package and tour operator. Prices and availability are provided by the tour operator at the time of the search.')}</p></div>")
+            f"<p class='sx-fine'>{L('Le rabais varie selon le forfait et le voyagiste. Prix et disponibilités fournis par le voyagiste au moment de la recherche.', 'The discount varies by package and tour operator. Prices and availability are provided by the tour operator at the time of the search.')}</p></details>"
+            "<script>if(window.matchMedia('(max-width:700px)').matches){var d=document.getElementById('sxSteps');d&&d.removeAttribute('open')}</script>")
 
 
 def _recent_card(recent: list[DmoSearch]) -> str:
@@ -267,6 +268,7 @@ def _faq_section() -> str:
 # --------------------------------------------------------------------------- #
 _CSS = """<style>
 .wrap:has(.sx){max-width:1300px}
+.sx .sm{display:none}
 .sx{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:1.4rem;align-items:start}
 .sx-head h2{margin:0}
 .sx .engine iframe{height:800px}
@@ -301,11 +303,13 @@ _CSS = """<style>
 .sx-banner>div{position:relative;display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1.15rem 1.4rem;flex-wrap:wrap}
 .sx-banner small{display:block;font:700 .72rem Montserrat,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--gold)}
 .sx-banner b{display:block;font:800 1.2rem/1.25 Montserrat,sans-serif;margin:.2rem 0}
-.sx-banner span{font:400 .88rem Inter,sans-serif;color:rgba(255,255,255,.85)}
+.sx-banner>div>div>span{font:400 .88rem Inter,sans-serif;color:rgba(255,255,255,.85)}
+.sx-navy>summary{list-style:none;cursor:pointer}.sx-navy>summary::-webkit-details-marker{display:none}
 .sx-banner .sx-btn{min-width:220px}
 .sx-season{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;background:var(--gold);color:var(--navy);border-radius:12px;padding:.55rem .9rem;margin-bottom:1rem;font:600 .86rem Inter,sans-serif}
 .sx-season a{margin-left:auto;color:var(--navy);font-weight:700}
-.sx-bottom{margin-top:2.2rem;display:grid;gap:2rem}
+.sx-bottom{margin-top:2.2rem;display:grid;grid-template-columns:minmax(0,1fr);gap:2rem}
+.sx-bottom>*,.sx>*{min-width:0}
 .sx-sec h2{margin:0 0 .25rem;font:800 1.35rem Montserrat,sans-serif;color:var(--navy)}
 .sx-sec>p{margin:0 0 1rem;color:var(--mist)}
 .sx-deals{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem}
@@ -334,6 +338,39 @@ _CSS = """<style>
 .sx-faq summary::after{content:"+";color:#C9A227;font-size:1.2rem}
 .sx-faq details[open] summary::after{content:"–"}
 .sx-faq p{margin:.6rem 0 0;color:var(--mist);font:400 .9rem/1.55 Inter,sans-serif}
+@media(max-width:700px){
+.sx>div:first-child{display:flex;flex-direction:column}
+.sx-season{order:9;margin:.8rem 0 0;font-size:.78rem;padding:.45rem .7rem}
+.sx-season a{display:none}
+.sx-banner{margin-bottom:.6rem;border-radius:14px}
+.sx-banner>div{padding:.6rem .8rem;flex-wrap:nowrap;gap:.6rem}
+.sx-banner small{font-size:.62rem;letter-spacing:.08em}
+.sx-banner b{font-size:.9rem;margin:.1rem 0 0}
+.sx-banner>div>div>span{display:none}
+.sx-banner>div>div{flex:1;min-width:0}
+.sx-banner .sx-btn{min-width:0!important;width:auto!important;flex:none;padding:.5rem .8rem;font-size:.78rem;box-shadow:0 3px 0 #C9A227}
+.sx .lg{display:none}.sx .sm{display:inline}
+.sx-banner b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sx-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem;flex-wrap:nowrap;margin-bottom:.45rem}
+.sx-head h2{font-size:1.2rem}
+.sx-head p{display:none}
+.sx-badge{order:2;margin:0;padding:.2rem .55rem;font-size:.68rem}
+.sx-side{gap:.7rem;margin-top:.9rem}
+.sx-card{padding:.85rem .9rem;border-radius:14px}
+.sx-steps{gap:.55rem}.sx-steps small{font-size:.78rem}.sx-fine{display:none}
+.sx-navy>summary{list-style:none;cursor:pointer}
+.sx-navy>summary::-webkit-details-marker{display:none}
+.sx-navy:not([open]) h3{margin:0}
+.sx-navy:not([open])>summary h3::after{content:" ▾";color:var(--gold)}
+.sx-help p{display:none}.sx-team img{width:36px;height:36px}
+.sx-trust{font-size:.74rem}
+.sx-bottom{margin-top:1.4rem;gap:1.4rem}
+.sx-sec h2{font-size:1.1rem}.sx-sec>p{font-size:.85rem;margin-bottom:.7rem}
+.sx-deals,.sx-guides{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;gap:.7rem;margin:0;padding:0 0 6px;scrollbar-width:none}
+.sx-deals::-webkit-scrollbar,.sx-guides::-webkit-scrollbar{display:none}
+.sx-deal{flex:0 0 76%;scroll-snap-align:start}.sx-deal .ph{height:120px}
+.sx-guide{flex:0 0 58%;scroll-snap-align:start}
+}
 @media(max-width:1000px){.sx{grid-template-columns:1fr}.sx-side{position:static}.sx-deals{grid-template-columns:repeat(2,1fr)}.sx-guides{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:560px){.sx-deals{grid-template-columns:1fr}.sx-banner .sx-btn{min-width:0;width:100%}}
 </style>"""
@@ -350,7 +387,7 @@ def search_page(client) -> str:
         db.expunge_all()
     upcoming = [s for s in rows if (d := _date(_fields(s).get("date_dep", ""))) and d >= today]
     resume = upcoming[0] if upcoming else None
-    head = (f"<div class='sx-head'><span class='sx-badge'>✓ {L('Rabais Récompense activé sur ton compte', 'Reward Discount active on your account')}</span>"
+    head = (f"<div class='sx-head'><span class='sx-badge'>✓ <span class='lg'>{L('Rabais Récompense activé sur ton compte', 'Reward Discount active on your account')}</span><span class='sm'>{L('Rabais inclus', 'Discount included')}</span></span>"
             f"<h2>{L('Rechercher un forfait', 'Find a package')}</h2>"
             f"<p>{L('Les prix affichés dans le moteur incluent déjà ton rabais. Aucun code, rien à demander.', 'Prices shown in the engine already include your discount. No code, nothing to ask for.')}</p></div>")
     engine = (f"<div class='engine'><iframe src=\"{escape(_engine_url({}))}\" "
