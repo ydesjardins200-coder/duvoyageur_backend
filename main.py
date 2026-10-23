@@ -56,6 +56,7 @@ from portal_assistant import router as portal_assistant_router
 from portal_compare import router as portal_compare_router
 from portal_searches import router as portal_searches_router, record_search
 from admin_engine import router as admin_engine_router, member_searches_card
+from portal_groups import router as portal_groups_router, member_groups_card, new_groups_count
 from places import router as places_router
 import storage
 from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLocal, engine,
@@ -132,6 +133,7 @@ app.include_router(portal_assistant_router)
 app.include_router(portal_compare_router)
 app.include_router(portal_searches_router)
 app.include_router(admin_engine_router)
+app.include_router(portal_groups_router)
 app.include_router(places_router)
 
 
@@ -2426,6 +2428,7 @@ def _nav_html(active: str = "") -> str:
         ("dashboard", "Tableau de bord", "/admin/dashboard"),
         ("clients", "Membres", "/admin/clients"),
         ("recherches", "Recherches", "/admin/recherches"),
+        ("groupes", "Groupes", "/admin/groupes"),
         ("moteur", "Moteur", "/admin/moteur"),
     ]
     legacy = [
@@ -2436,9 +2439,11 @@ def _nav_html(active: str = "") -> str:
         ("cases", "Demandes", "/admin/cases", None),
     ]
     out = []
+    n_groups = new_groups_count()
     for key, label, href in main_items:
         cls = "navtab active" if key == active else "navtab"
-        out.append(f"<a class='{cls}' href='{href}'>{label}</a>")
+        badge = f"<span class='n'>{n_groups}</span>" if key == "groupes" and n_groups else ""
+        out.append(f"<a class='{cls}' href='{href}'>{label}{badge}</a>")
     legacy_on = active in {k for k, *_ in legacy}
     total = (n_svc or 0) + (n_unclaimed or 0)
     links = "".join(
@@ -3311,7 +3316,7 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
             content = (
                 "<div class='idtab'>"
                 f"<div class='col'>{identity_card}{merge_card}</div>"
-                f"<div class='col'>{member_searches_card(cl)}{activity_card}</div>"
+                f"<div class='col'>{member_groups_card(cl.id)}{member_searches_card(cl)}{activity_card}</div>"
                 "</div>"
             )
         elif tab == "voyage":

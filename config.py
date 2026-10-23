@@ -155,6 +155,8 @@ class Settings:
     # Shown at /portail/recherche once the agency alias is set; until then the
     # page says "bientôt disponible".
     SIRRVA_ALIAS: str = os.getenv("SIRRVA_ALIAS", "big")
+    # Where new group-trip requests are e-mailed (empty = admin only, no e-mail yet).
+    GROUP_NOTIFY_EMAIL: str = os.getenv("GROUP_NOTIFY_EMAIL", "")
     SIRRVA_HOST: str = os.getenv("SIRRVA_HOST", "https://trs.sax.softvoyage.com")
     SIRRVA_CODE_AG: str = os.getenv("SIRRVA_CODE_AG", "trs")
     # Our search criteria -> engine URL parameter names ("ours=theirs", comma-separated).
