@@ -55,6 +55,7 @@ from portal_oauth import router as portal_oauth_router
 from portal_assistant import router as portal_assistant_router
 from portal_compare import router as portal_compare_router
 from portal_searches import router as portal_searches_router, record_search
+from admin_engine import router as admin_engine_router, member_searches_card
 from places import router as places_router
 import storage
 from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLocal, engine,
@@ -130,6 +131,7 @@ app.include_router(portal_oauth_router)
 app.include_router(portal_assistant_router)
 app.include_router(portal_compare_router)
 app.include_router(portal_searches_router)
+app.include_router(admin_engine_router)
 app.include_router(places_router)
 
 
@@ -2406,20 +2408,39 @@ def _nav_html(active: str = "") -> str:
         n_svc = db.query(Case).filter(Case.kind == "support", Case.awaiting_reply.is_(True),
                                       Case.status.notin_(("closed", "resolved"))).count()
         n_unclaimed = count_unclaimed(db) + count_unclaimed_support(db)
-    items = [
+    main_items = [
+        ("dashboard", "Tableau de bord", "/admin/dashboard"),
+        ("clients", "Membres", "/admin/clients"),
+        ("recherches", "Recherches", "/admin/recherches"),
+        ("moteur", "Moteur", "/admin/moteur"),
+    ]
+    legacy = [
         ("reports", "Pipeline - voyage", "/admin/reports", None),
-        ("queue_service", "Pipeline - service client",
-         "/admin/cases?status=service", n_svc),
+        ("queue_service", "Pipeline - service client", "/admin/cases?status=service", n_svc),
         ("unclaimed", "Dossier à réclamer", "/admin/cases?status=unclaimed", n_unclaimed),
         ("mine", "Mes dossiers", "/admin/cases?status=mine", None),
         ("cases", "Demandes", "/admin/cases", None),
-        ("clients", "Clients", "/admin/clients", None),
     ]
     out = []
-    for key, label, href, badge in items:
+    for key, label, href in main_items:
         cls = "navtab active" if key == active else "navtab"
-        b = f"<span class='n'>{badge}</span>" if badge is not None else ""
-        out.append(f"<a class='{cls}' href='{href}'>{label}{b}</a>")
+        out.append(f"<a class='{cls}' href='{href}'>{label}</a>")
+    legacy_on = active in {k for k, *_ in legacy}
+    total = (n_svc or 0) + (n_unclaimed or 0)
+    links = "".join(
+        f"<a class='navdd-i{' on' if k == active else ''}' href='{href}'>{label}"
+        + (f"<span class='n'>{badge}</span>" if badge else "") + "</a>"
+        for k, label, href, badge in legacy)
+    out.append(
+        "<style>.navdd{position:relative;display:block}.navdd>summary.navtab{list-style:none;cursor:pointer;display:flex;"
+        "margin:0;height:100%;color:var(--mist)}.navdd>summary.navtab.active{color:var(--foam)}"
+        ".navdd>summary::-webkit-details-marker{display:none}"
+        ".navdd-m{position:absolute;top:100%;left:0;z-index:40;min-width:240px;background:#0d2433;"
+        "border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:6px;box-shadow:0 14px 30px rgba(0,0,0,.4)}"
+        ".navdd-i{display:flex;justify-content:space-between;gap:10px;padding:8px 10px;border-radius:8px;"
+        "color:#cfe0ee;text-decoration:none;font-size:.9rem}.navdd-i:hover,.navdd-i.on{background:rgba(255,255,255,.07)}</style>"
+        f"<details class='navdd'><summary class='navtab{' active' if legacy_on else ''}'>Messenger ▾"
+        + (f"<span class='n'>{total}</span>" if total else "") + f"</summary><div class='navdd-m'>{links}</div></details>")
     return "".join(out)
 
 
@@ -2500,7 +2521,7 @@ _LOGIN_ERR = "<div class='err'>Identifiant ou mot de passe invalide.</div>"
 @app.get("/admin")
 def admin_root(request: Request):
     if request.session.get("admin"):
-        return RedirectResponse("/admin/reports", status_code=303)
+        return RedirectResponse("/admin/dashboard", status_code=303)
     return RedirectResponse("/admin/login", status_code=303)
 
 
@@ -2971,33 +2992,63 @@ def admin_cases(request: Request, status: str = "all", view: str = "voyage",
 
 
 @app.get("/admin/clients", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
-def admin_clients():
+def admin_clients(f: str = "tous", q: str = ""):
+    """Members list for the self-service model: signup, last portal visit,
+    engine searches, profile completeness. Filters: active, hot prospects."""
+    from collections import defaultdict
+    from datetime import timedelta as _td
+    from urllib.parse import urlencode as _ue
+    from db import DmoSearch
+    from portal import kyc_status
+    from portal_searches import TZ as _TZ, _date as _sdate, _fields as _sfields
+    f = f if f in ("tous", "actifs", "chauds", "incomplets") else "tous"
+    now = datetime.utcnow()
+    today = datetime.now(_TZ).date()
     with SessionLocal() as db:
-        clients = (
-            db.query(Client)
-            .order_by(func.coalesce(Client.last_contact_at, Client.created_at).desc())
-            .limit(300).all()
-        )
+        clients = (db.query(Client)
+                   .order_by(func.coalesce(Client.last_seen_at, Client.last_contact_at, Client.created_at).desc())
+                   .limit(500).all())
+        ids = [c.id for c in clients]
+        searches = defaultdict(list)
+        if ids:
+            for s in (db.query(DmoSearch).filter(DmoSearch.client_id.in_(ids),
+                                                 DmoSearch.created_at >= now - _td(days=365))
+                      .order_by(DmoSearch.created_at.desc()).all()):
+                searches[s.client_id].append(s)
         rows = []
         for cl in clients:
-            reqs = cl.requests  # ordered most-recent-first by the relationship
-            last = reqs[0] if reqs else None
-            n_booked = sum(1 for r in reqs if r.status == "booked")
-            name = escape(cl.display_name or "Client sans nom")
-            contact = escape(cl.primary_email or cl.primary_phone or "—")
-            last_status = (f"<span class='tag {last.status}'>{last.status}</span>"
-                           if last else "<span class='muted'>—</span>")
-            lastc = cl.last_contact_at.strftime("%Y-%m-%d %H:%M") if cl.last_contact_at else "—"
+            ss = searches.get(cl.id, [])
+            nxt = sorted(d for d in (_sdate(_sfields(s).get("date_dep", "")) for s in ss) if d and d >= today)
+            hot = bool(nxt and nxt[0] <= today + _td(days=60))
+            active = bool(cl.last_seen_at and cl.last_seen_at >= now - _td(days=7))
+            _done, _total, missing = kyc_status(cl)
+            if f == "actifs" and not active:
+                continue
+            if f == "chauds" and not hot:
+                continue
+            if f == "incomplets" and not missing:
+                continue
+            name = cl.display_name or "Membre sans nom"
+            if q and q.lower() not in f"{name} {cl.primary_email or ''}".lower():
+                continue
+            last = ""
+            if ss:
+                lf = _sfields(ss[0])
+                dest = (lf.get("dest_dep", "").split(" xxx")[0] or "—")
+                d0 = _sdate(lf.get("date_dep", ""))
+                last = (f"{escape(lf.get('gateway_dep', ''))} → {escape(dest)}"
+                        + (f"<br><span class='muted'>départ {d0:%Y-%m-%d}</span>" if d0 else ""))
+            seen = cl.last_seen_at.strftime("%Y-%m-%d %H:%M") if cl.last_seen_at else "—"
+            prof = ("<span style='color:#4ade80'>✓ complet</span>" if not missing
+                    else f"<span class='muted'>{len(missing)} champ(s) manquant(s)</span>")
             rows.append(
                 f"<tr data-href='/admin/clients/{cl.id}'>"
-                f"<td><a href='/admin/clients/{cl.id}'><b>{name}</b></a></td>"
-                f"<td>{contact}</td>"
-                f"<td>{len(reqs)}</td>"
-                f"<td>{n_booked}</td>"
-                f"<td>{last_status}</td>"
-                f"<td class='muted'>{lastc}</td></tr>"
-            )
-
+                f"<td><a href='/admin/clients/{cl.id}'><b>{escape(name)}</b></a>"
+                + (" <span style='color:#ff9f6b;font-size:.78rem;font-weight:600'>● chaud</span>" if hot else "")
+                + f"</td><td>{escape(cl.primary_email or cl.primary_phone or '—')}</td>"
+                f"<td class='muted'>{cl.created_at:%Y-%m-%d}</td>"
+                f"<td class='muted'>{seen}</td>"
+                f"<td>{len(ss)}</td><td>{last or '<span class=muted>—</span>'}</td><td>{prof}</td></tr>")
         # Suggested duplicates (clients sharing a name): offer a quick merge.
         dup_html = ""
         groups = find_duplicate_groups(db)
@@ -3031,12 +3082,23 @@ def admin_clients():
                 "<p class='sub'>Mêmes noms détectés. Vérifie puis fusionne si c'est la même personne.</p>"
                 + "".join(cards) + "</div>"
             )
-    empty = "<tr><td colspan='6' class='muted'>Aucun client pour l'instant.</td></tr>"
+    def tab(v, label):
+        on = " class='on'" if f == v else ""
+        return f"<a{on} href='/admin/clients?{_ue({'f': v, 'q': q})}'>{label}</a>"
+
+    filters = ("<div class='ae-filters'>" + tab("tous", "Tous") + tab("actifs", "Actifs cette semaine")
+               + tab("chauds", "🔥 Prospects chauds") + tab("incomplets", "Profil incomplet")
+               + f"<form method='get' action='/admin/clients'><input type='hidden' name='f' value='{escape(f)}'>"
+               f"<input name='q' value=\"{escape(q)}\" placeholder='Nom ou courriel…'><button>Chercher</button></form></div>")
+    hint = ("<p class='sub'>Prospects chauds : une recherche avec un départ dans les 60 prochains jours — "
+            "à relancer sur Messenger.</p>" if f == "chauds" else "")
+    empty = "<tr><td colspan='7' class='muted'>Aucun membre pour ce filtre.</td></tr>"
+    from admin_engine import _CSS as _AE_CSS
     body = (
-        "<h2>Clients</h2>"
+        _AE_CSS + "<h2>Membres</h2>" + filters + hint
         + dup_html
-        + "<table><tr><th>Client</th><th>Contact</th><th>Demandes</th><th>Réservées</th>"
-        "<th>Dernier statut</th><th>Dernier contact</th></tr>"
+        + "<table><tr><th>Membre</th><th>Contact</th><th>Inscrit</th><th>Dernière visite</th>"
+        "<th>Recherches</th><th>Dernière recherche</th><th>Profil</th></tr>"
         + ("".join(rows) or empty)
         + "</table>"
     )
@@ -3235,7 +3297,7 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
             content = (
                 "<div class='idtab'>"
                 f"<div class='col'>{identity_card}{merge_card}</div>"
-                f"{activity_card}"
+                f"<div class='col'>{member_searches_card(cl)}{activity_card}</div>"
                 "</div>"
             )
         elif tab == "voyage":
@@ -3317,7 +3379,7 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
                 content = "<div class='card full'><div class='muted'>Aucune demande de service.</div></div>"
 
         body = (
-            "<p><a href='/admin/clients'>&larr; Tous les clients</a></p>"
+            "<p><a href='/admin/clients'>&larr; Tous les membres</a></p>"
             "<div class='pagehdr'>"
             f"<h2 style='margin:0'>{name}</h2>"
             "<div style='display:flex;gap:8px;flex-wrap:wrap'>"
@@ -3543,12 +3605,13 @@ def admin_config(saved: int = 0):
         "d'accueil et le menu ☰ de ta page.</p>"
         "<form method='post' action='/admin/setup-greeting' style='margin-top:14px'>"
         "<button>Configurer l'accueil Messenger</button></form></div>"
-        + _portal_banner_form(saved)
+        + "<div class='card' style='margin-top:16px'><h3>Bandeau saisonnier de l'espace client</h3>"
+        "<p class='sub'>Il se règle maintenant dans <a href='/admin/moteur'>Moteur</a>.</p></div>"
     )
     return render_page(body, "config")
 
 
-def _portal_banner_form(saved: bool = False) -> str:
+def _portal_banner_form(saved: bool = False, back: str = "/admin/moteur") -> str:
     from db import get_setting
     with SessionLocal() as db:
         b = get_setting(db, "portal_banner")
@@ -3560,7 +3623,8 @@ def _portal_banner_form(saved: bool = False) -> str:
         "<p class='sub'>Bande jaune en haut de la page « Rechercher un forfait ». Pas de prix ni de "
         "pourcentage : seulement un message de saison.</p>" + ok +
         "<form method='post' action='/admin/portal-banner' style='display:grid;gap:10px;margin-top:12px;max-width:720px'>"
-        f"<label><input type='checkbox' name='active' value='1'{chk}> Afficher le bandeau</label>"
+        f"<input type='hidden' name='next' value='{escape(back)}'>"
+        f"<label style='display:flex;gap:8px;align-items:center'><input type='checkbox' name='active' value='1'{chk} style='width:auto;margin:0'> Afficher le bandeau</label>"
         f"<label>Texte (français)<input name='text_fr' maxlength='160' value=\"{v('text_fr')}\" style='width:100%'></label>"
         f"<label>Texte (anglais)<input name='text_en' maxlength='160' value=\"{v('text_en')}\" style='width:100%'></label>"
         f"<label>Libellé du lien (français, optionnel)<input name='link_label_fr' maxlength='40' value=\"{v('link_label_fr')}\"></label>"
@@ -3580,7 +3644,8 @@ async def admin_portal_banner(request: Request):
     with SessionLocal() as db:
         set_setting(db, "portal_banner", val)
         db.commit()
-    return RedirectResponse("/admin/config?saved=1", status_code=303)
+    nxt = f.get("next") if f.get("next") in ("/admin/moteur", "/admin/config") else "/admin/moteur"
+    return RedirectResponse(f"{nxt}?saved=1", status_code=303)
 
 
 @app.get("/admin/templates", response_class=HTMLResponse,
