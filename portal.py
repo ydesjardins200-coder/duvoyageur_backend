@@ -94,11 +94,32 @@ def _make_session_value(client_id: int) -> str:
     return _session_signer.dumps({"cid": client_id})
 
 
+_SEEN_THROTTLE: dict = {}
+
+
+def _touch_seen(client_id: int) -> None:
+    """Record the member's last portal visit (at most one write per 10 minutes)."""
+    now = datetime.utcnow()
+    last = _SEEN_THROTTLE.get(client_id)
+    if last and (now - last).total_seconds() < 600:
+        return
+    _SEEN_THROTTLE[client_id] = now
+    try:
+        with SessionLocal() as db:
+            c = db.get(Client, client_id)
+            if c:
+                c.last_seen_at = now
+                db.commit()
+    except Exception:  # noqa: BLE001 — never break a page for a visit timestamp
+        pass
+
+
 def _set_session_cookie(resp, client_id: int) -> None:
     """Set/refresh the signed portal cookie (sliding expiry: each visit renews
     it, so an active client effectively stays logged in). Also sets a small
     non-authoritative 'hint' cookie (SameSite=None in prod) so the Netlify site,
     on another origin, can ask /portail/whoami whether to show 'Mon compte'."""
+    _touch_seen(client_id)
     resp.set_cookie(
         PORTAL_COOKIE, _make_session_value(client_id),
         max_age=settings.PORTAL_SESSION_MAX_AGE, path=_COOKIE_PATH,

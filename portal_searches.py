@@ -65,18 +65,17 @@ def _t(pair):
 # --------------------------------------------------------------------------- #
 def record_search(request: Request, form, lang: str) -> None:
     """Store the search for the member recognised by the /results cookie.
-    Anonymous visitors are not stored. Same search within 15 min = one entry."""
-    cid = results_client_id(request)
-    if not cid:
-        return
+    Anonymous visitors are stored with client_id 0, for statistics only (no
+    identity). Same search within 15 min = one entry."""
+    cid = results_client_id(request) or 0          # 0 = anonymous visitor (stats only)
     pairs = [[k, v] for k, v in form.multi_items()
              if isinstance(v, str) and k not in _SKIP and len(v) <= 4000][:120]
     if not any(k == "gateway_dep" for k, _ in pairs):
         return                                   # not a search (e.g. a stray post)
     now = datetime.utcnow()
     with SessionLocal() as db:
-        if db.get(Client, cid) is None:
-            return
+        if cid and db.get(Client, cid) is None:
+            cid = 0
         last = (db.query(DmoSearch).filter(DmoSearch.client_id == cid)
                 .order_by(DmoSearch.created_at.desc()).first())
         if last and last.fields == pairs and now - last.created_at < timedelta(minutes=DEDUPE_MINUTES):

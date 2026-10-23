@@ -83,6 +83,7 @@ class Client(Base):
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tags: Mapped[list] = mapped_column(JSON, default=list)
     last_contact_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # last portal visit
     # Single-use nonce for the current passwordless portal magic link (cleared
     # on first use). A fresh link overwrites it, so only the latest link works.
     portal_nonce: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -380,6 +381,7 @@ def _ensure_columns() -> None:
             conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS owner_id INTEGER"))
             conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS next_follow_up_at TIMESTAMP"))
             conn.execute(text("ALTER TABLE cases ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMP"))
+            conn.execute(text("ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP"))
             # Support cases use open/resolved; remap any legacy trip-statuses.
             conn.execute(text(
                 "UPDATE cases SET status='resolved' "
@@ -420,6 +422,8 @@ def _ensure_columns() -> None:
                     "WHERE needs_clarification::text ILIKE '%support humain%'"))
         elif engine.dialect.name == "sqlite":
             ccols = [r[1] for r in conn.execute(text("PRAGMA table_info(clients)"))]
+            if ccols and "last_seen_at" not in ccols:
+                conn.execute(text("ALTER TABLE clients ADD COLUMN last_seen_at DATETIME"))
             if ccols and "assistant_chat" not in ccols:
                 conn.execute(text("ALTER TABLE clients ADD COLUMN assistant_chat JSON"))
             cols = [r[1] for r in conn.execute(text("PRAGMA table_info(cases)"))]
