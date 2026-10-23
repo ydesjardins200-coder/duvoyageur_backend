@@ -699,40 +699,137 @@ def _dmo_results_url(fields) -> str:
     return base + ("&" if "?" in base else "?") + urlencode(pairs)
 
 
+def _loader_js(t) -> str:
+    """Hide our loader when the results iframe has loaded (the load event fires on
+    the frame element even cross-origin); rotate reassuring messages meanwhile;
+    never stay stuck: hide after 30 s regardless."""
+    msgs = [t("On interroge les voyagistes en temps réel.", "Checking tour operators in real time."),
+            t("On compare les vols et les hôtels.", "Comparing flights and hotels."),
+            t("On vérifie les disponibilités.", "Checking availability."),
+            t("Presque prêt…", "Almost ready…")]
+    import json as _json
+    return ("<script>(function(){var f=document.getElementById('ifResults'),l=document.getElementById('ld'),"
+            "p=document.getElementById('ldmsg'),m=" + _json.dumps(msgs, ensure_ascii=False) + ",i=0,"
+            "r=setInterval(function(){i=(i+1)%m.length;p.textContent=m[i]},2200);"
+            "function done(){l.classList.add('off');clearInterval(r);setTimeout(function(){l.style.display='none'},400)}"
+            "f.addEventListener('load',done);setTimeout(done,30000);})();</script>")
+
+
 def _dmo_results_page(src: str, lang: str) -> str:
     en = lang == "en"
     t = (lambda fr, e: e if en else fr)
     back = "/portail?lang=en" if en else "/portail"
-    body = (f'<iframe id="ifResults" src="{escape(src)}" title="{t("Résultats de recherche", "Search results")}"></iframe>'
-            if src else
-            f'<div class="empty"><h1>{t("Aucune recherche en cours", "No search in progress")}</h1>'
-            f'<p>{t("Lance une recherche dans le moteur pour voir les forfaits avec ton Rabais Récompense.", "Start a search in the engine to see packages with your Reward Discount.")}</p>'
-            f'<a class="btn" href="{back}">{t("Rechercher un forfait", "Find a package")}</a></div>')
+    site = settings.SITE_BASE_URL.rstrip("/")
+    legal_terms = f"{site}/en/terms.html" if en else f"{site}/conditions.html"
+    legal_priv = f"{site}/en/privacy.html" if en else f"{site}/confidentialite.html"
+    msgr = escape(settings.MESSENGER_URL)
+    team = "".join(f'<img src="{site}/assets/equipe-{n}.webp" alt="" loading="lazy">' for n in ("paola", "serge", "eva"))
+    trust = [
+        ("✓", t("Rabais Récompense déjà appliqué", "Reward Discount already applied")),
+        ("🔒", t("Paiement sécurisé chez le voyagiste", "Secure payment through the tour operator")),
+        ("🏛️", t("Agence québécoise · permis 700495", "Québec agency · licence 700495")),
+        ("💬", t("Conseillers certifiés sur Messenger", "Certified advisors on Messenger")),
+    ]
+    trust_html = "".join(f'<div><i>{ic}</i>{escape(x)}</div>' for ic, x in trust)
+    steps = [t("Choisis ton forfait", "Pick your package"), t("Choisis ta chambre", "Pick your room"),
+             t("Paiement sécurisé", "Secure payment"), t("Confirmation", "Confirmation")]
+    steps_html = "".join(f'<li><span>{i}</span>{escape(s)}</li>' for i, s in enumerate(steps, 1))
+    if src:
+        body = (f'<section class="steps"><b>{t("Comment réserver", "How to book")}</b><ol>{steps_html}</ol></section>'
+                f'<div class="frame"><div class="ld" id="ld" role="status" aria-live="polite"><div class="ldin">'
+                f'<div class="ldlogo"><img src="/static/logo-capitaine.png" alt=""></div>'
+                f'<b>{t("On cherche tes forfaits…", "Finding your packages…")}</b>'
+                f'<p id="ldmsg">{t("On interroge les voyagistes en temps réel.", "Checking tour operators in real time.")}</p>'
+                f'<div class="ldbar"><span></span></div>'
+                f'<small>{t("Ton Rabais Récompense est déjà inclus dans les prix affichés.", "Your Reward Discount is already included in the prices shown.")}</small></div></div>'
+                f'<iframe id="ifResults" src="{escape(src)}" title="{t("Résultats de recherche", "Search results")}"></iframe></div>'
+                + _loader_js(t))
+    else:
+        body = (f'<div class="empty"><h1>{t("Aucune recherche en cours", "No search in progress")}</h1>'
+                f'<p>{t("Lance une recherche dans le moteur pour voir les forfaits avec ton Rabais Récompense.", "Start a search in the engine to see packages with your Reward Discount.")}</p>'
+                f'<a class="btn" href="{back}">{t("Rechercher un forfait", "Find a package")}</a></div>')
+    why = [
+        (t("Même forfait, meilleur prix", "Same package, better price"),
+         t("Les mêmes vols et hôtels que chez les grands voyagistes, avec une partie de notre commission remise directement dans le prix.",
+           "The same flights and hotels as the big tour operators, with part of our commission given back right in the price.")),
+        (t("Paiement protégé", "Protected payment"),
+         t("Le paiement se fait dans le système de réservation du voyagiste, en connexion chiffrée. duvoyageur.ca n'a jamais accès à tes données de carte.",
+           "Payment happens in the tour operator's booking system over an encrypted connection. duvoyageur.ca never has access to your card details.")),
+        (t("De vrais humains", "Real people"),
+         t("Une question avant ou après ta réservation ? Paola, Serge et Eva te répondent sur Messenger.",
+           "A question before or after booking? Paola, Serge and Eva answer you on Messenger.")),
+    ]
+    why_html = "".join(f'<div class="w"><b>{escape(h)}</b><p>{escape(p)}</p></div>' for h, p in why)
     title = t("Résultats", "Results")
     slogan = t("L'agence qui récompense", "The agency that rewards you")
     newsearch = t("Nouvelle recherche", "New search")
+    secure = t("Connexion sécurisée", "Secure connection")
+    helpq = t("Une question ?", "A question?")
     html_lang = "en-CA" if en else "fr-CA"
     return f"""<!doctype html><html lang="{html_lang}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">
 <title>{title} — duvoyageur.ca</title><link rel="icon" href="/static/favicon-64.png">
-<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800&family=Kaushan+Script&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Inter:wght@400;500;600&family=Kaushan+Script&display=swap" rel="stylesheet">
 <style>
-*{{box-sizing:border-box}}html,body{{margin:0;background:#fff;color:#0F2A47;font-family:Montserrat,system-ui,sans-serif}}
+*{{box-sizing:border-box}}html,body{{margin:0;background:#F7F6F2;color:#0F2A47;font-family:Montserrat,system-ui,sans-serif}}
 .bar{{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.7rem clamp(1rem,3vw,2rem);background:#0F2A47;border-bottom:3px solid #F4C543}}
 .brand{{display:flex;align-items:center;gap:.6rem;color:#fff;text-decoration:none;font-weight:800;font-size:1.15rem}}
 .brand img{{width:40px;height:40px}}.brand span{{color:#F4C543}}
 .brand small{{display:block;font:400 .95rem/1 "Kaushan Script",cursive;color:#F4C543;margin-top:.15rem}}
-.back{{color:#fff;text-decoration:none;font-weight:700;font-size:.9rem;border:1.5px solid rgba(255,255,255,.5);border-radius:99px;padding:.5rem .95rem;white-space:nowrap}}
+.sec{{display:flex;align-items:center;gap:.45rem;color:rgba(255,255,255,.85);font:600 .82rem Inter,sans-serif}}
+.sec svg{{width:15px;height:15px;color:#7ee2a8}}
+.acts{{display:flex;gap:.6rem;align-items:center}}
+.back,.helpb{{color:#fff;text-decoration:none;font-weight:700;font-size:.88rem;border:1.5px solid rgba(255,255,255,.5);border-radius:99px;padding:.5rem .95rem;white-space:nowrap}}
+.helpb{{background:#F4C543;color:#0F2A47;border-color:#F4C543}}
 .back:hover{{border-color:#F4C543;color:#F4C543}}
-#ifResults{{display:block;width:100%;height:calc(100vh - 66px);min-height:1100px;border:0}}
+.trust{{display:flex;justify-content:center;flex-wrap:wrap;gap:.4rem 1.6rem;padding:.65rem 1rem;background:#fff;border-bottom:1px solid rgba(15,42,71,.1);font:600 .82rem Inter,sans-serif}}
+.trust div{{display:flex;align-items:center;gap:.4rem}}.trust i{{font-style:normal}}
+.page{{max-width:1320px;margin:0 auto;padding:1rem clamp(.6rem,2vw,1.4rem) 2rem}}
+.steps{{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin:.2rem 0 .9rem}}
+.steps b{{font-size:.85rem;text-transform:uppercase;letter-spacing:.08em;color:#8A6400}}
+.steps ol{{display:flex;flex-wrap:wrap;gap:.5rem;list-style:none;margin:0;padding:0}}
+.steps li{{display:flex;align-items:center;gap:.45rem;background:#fff;border:1px solid rgba(15,42,71,.12);border-radius:99px;padding:.35rem .8rem .35rem .4rem;font:600 .82rem Inter,sans-serif}}
+.steps li span{{width:22px;height:22px;border-radius:50%;background:#0F2A47;color:#fff;display:grid;place-items:center;font:800 .72rem Montserrat,sans-serif}}
+.frame{{position:relative;background:#fff;border:1px solid rgba(15,42,71,.12);border-radius:18px;overflow:hidden;box-shadow:0 10px 30px -14px rgba(15,42,71,.28)}}
+
+.ld{{position:absolute;inset:0;z-index:2;background:#fff;display:flex;justify-content:center;padding-top:clamp(3rem,12vh,7rem);transition:opacity .35s}}
+.ld.off{{opacity:0;pointer-events:none}}
+.ldin{{text-align:center;max-width:420px;padding:0 1rem}}
+.ldlogo{{width:92px;height:92px;margin:0 auto 1.1rem;border-radius:50%;background:#0F2A47;display:grid;place-items:center;box-shadow:0 0 0 0 rgba(244,197,67,.6);animation:pulse 1.6s infinite}}
+.ldlogo img{{width:70px;height:70px}}
+@keyframes pulse{{0%{{box-shadow:0 0 0 0 rgba(244,197,67,.55)}}70%{{box-shadow:0 0 0 18px rgba(244,197,67,0)}}100%{{box-shadow:0 0 0 0 rgba(244,197,67,0)}}}}
+.ldin b{{display:block;font-size:1.25rem}}
+.ldin p{{margin:.45rem 0 1rem;font:500 .92rem Inter,sans-serif;color:#5B6B7D;min-height:1.4em}}
+.ldbar{{height:6px;border-radius:99px;background:#F1EFE8;overflow:hidden}}
+.ldbar span{{display:block;height:100%;width:40%;border-radius:99px;background:#F4C543;animation:slide 1.3s ease-in-out infinite}}
+@keyframes slide{{0%{{transform:translateX(-100%)}}100%{{transform:translateX(250%)}}}}
+.ldin small{{display:block;margin-top:1rem;font:500 .8rem Inter,sans-serif;color:#8A6400}}
+@media(prefers-reduced-motion:reduce){{.ldlogo,.ldbar span{{animation:none}}}}
+#ifResults{{display:block;width:100%;height:calc(100vh - 150px);min-height:1100px;border:0}}
+.why{{max-width:1320px;margin:0 auto;padding:0 clamp(.6rem,2vw,1.4rem) 2.4rem}}
+.whyin{{background:#0F2A47;color:#fff;border-radius:20px;padding:1.6rem clamp(1rem,3vw,2rem);display:grid;grid-template-columns:repeat(3,1fr) auto;gap:1.4rem;align-items:center}}
+.w b{{display:block;color:#F4C543;font-size:1rem;margin-bottom:.35rem}}
+.w p{{margin:0;font:400 .88rem/1.5 Inter,sans-serif;color:rgba(255,255,255,.82)}}
+.tm{{text-align:center}}.tm div{{display:flex;justify-content:center;margin-bottom:.6rem}}
+.tm img{{width:52px;height:52px;border-radius:50%;border:3px solid #0F2A47;margin-left:-10px;background:#F4C543}}
+.tm a{{display:inline-block;background:#F4C543;color:#0F2A47;text-decoration:none;font-weight:800;font-size:.86rem;padding:.65rem 1.1rem;border-radius:99px}}
+.foot{{text-align:center;font:500 .78rem Inter,sans-serif;color:#5B6B7D;padding:0 1rem 2rem}}
+.foot a{{color:#23466E;margin:0 .5rem}}
+.fab{{position:fixed;right:18px;bottom:18px;z-index:5;background:#F4C543;color:#0F2A47;text-decoration:none;font-weight:800;font-size:.9rem;padding:.8rem 1.1rem;border-radius:99px;box-shadow:0 10px 24px -8px rgba(15,42,71,.5)}}
 .empty{{max-width:560px;margin:4rem auto;padding:0 1rem;text-align:center}}.empty h1{{font-size:1.5rem}}
-.empty p{{color:#5B6B7D;font-family:system-ui,sans-serif;line-height:1.5}}
-@media(max-width:480px){{.brand small{{display:none}}}}
+.empty p{{color:#5B6B7D;font-family:Inter,system-ui,sans-serif;line-height:1.5}}
 .btn{{display:inline-block;margin-top:.6rem;background:#F4C543;color:#0F2A47;font-weight:800;text-decoration:none;padding:.8rem 1.4rem;border-radius:99px}}
+@media(max-width:900px){{.whyin{{grid-template-columns:1fr}}.sec{{display:none}}}}
+@media(max-width:560px){{.brand small,.helpb{{display:none}}.trust{{justify-content:flex-start}}.steps b{{width:100%}}}}
 </style></head><body>
 <header class="bar"><a class="brand" href="{back}"><img src="/static/logo-capitaine.png" alt=""><div>duvoyageur<span>.ca</span><small>{slogan}</small></div></a>
-<a class="back" href="{back}">← {newsearch}</a></header>
-{body}
+<div class="sec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>{secure}</div>
+<div class="acts"><a class="back" href="{back}">← {newsearch}</a></div></header>
+<div class="trust">{trust_html}</div>
+<main class="page">{body}</main>
+<section class="why"><div class="whyin">{why_html}<div class="tm"><div>{team}</div><a href="{msgr}" target="_blank" rel="noopener">{t("Écrire à un conseiller →", "Message an advisor →")}</a></div></div></section>
+<p class="foot">duvoyageur.ca · {t("Titulaire d'un permis du Québec n° 700495", "Québec travel agency licence no. 700495")}<br><a href="{legal_terms}" target="_blank" rel="noopener">{t("Conditions générales", "Terms")}</a><a href="{legal_priv}" target="_blank" rel="noopener">{t("Politique de confidentialité", "Privacy policy")}</a></p>
+<a class="fab" href="{msgr}" target="_blank" rel="noopener">💬 {helpq}</a>
 </body></html>"""
 
 
