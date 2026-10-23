@@ -763,7 +763,7 @@ def _dmo_results_page(src: str, lang: str) -> str:
     ]
     why_html = "".join(f'<div class="w"><b>{escape(h)}</b><p>{escape(p)}</p></div>' for h, p in why)
     title = t("Résultats", "Results")
-    slogan = t("L'agence qui récompense", "The agency that rewards you")
+    slogan = t("L'agence qui récompen$e", "The agency that rewards you")
     newsearch = t("Nouvelle recherche", "New search")
     newsearch_sm = t("Recherche", "Search")
     secure = t("Connexion sécurisée", "Secure connection")
