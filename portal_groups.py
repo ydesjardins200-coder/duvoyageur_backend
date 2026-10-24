@@ -436,8 +436,18 @@ async def admin_group_update(gid: int, request: Request):
     with SessionLocal() as db:
         r = db.get(GroupRequest, gid)
         if r:
-            if f.get("status") in _STATUS_LBL:
-                r.status = f.get("status")
+            new_status = f.get("status")
+            if new_status in _STATUS_LBL:
+                if new_status == "soumission" and r.status != "soumission":
+                    try:
+                        import push
+                        push.notify_client(r.client_id, "Ta soumission de groupe est prête",
+                                           f"G-{gid} · {r.data.get('group_name', '')} : vérifie tes courriels.",
+                                           "/portail?tab=groupe", "Your group quote is ready",
+                                           f"G-{gid} · {r.data.get('group_name', '')}: check your email.")
+                    except Exception:  # noqa: BLE001 — a push failure never blocks the update
+                        pass
+                r.status = new_status
             r.note = (f.get("note") or "")[:5000]
             r.updated_at = datetime.utcnow()
             db.commit()

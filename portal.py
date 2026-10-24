@@ -690,6 +690,11 @@ def _kyc_banner(client) -> str:
         + f"<span class='banner-cta'>{L('Compléter →', 'Complete →')}</span></a>")
 
 
+def _notif_card() -> str:
+    from portal_push import notif_card   # lazy: portal_push imports portal
+    return notif_card()
+
+
 def _passkey_card(cid: int, flag: str = "") -> str:
     from portal_passkeys import profile_card   # lazy: portal_passkeys imports portal
     flash = {"ok": L("Connexion rapide activée sur cet appareil ✓", "Quick login enabled on this device ✓"),
@@ -1158,7 +1163,7 @@ def portal_profile(request: Request, saved: int = 0, passkey: str = ""):
         lede = L("Ces infos nous servent à réserver tes voyages au bon nom.",
                  "We use this information to book your trips under the right name.")
         body = (f"<div class='hello'><h2>{L('Mon profil', 'My profile')}</h2><p class='lede'>{lede}</p></div>"
-                + _passkey_card(cid, passkey) + _profile_form(client, saved=bool(saved)))
+                + _notif_card() + _passkey_card(cid, passkey) + _profile_form(client, saved=bool(saved)))
         bell = _bell_panel(client)
     resp = HTMLResponse(_shell(L("Mon profil", "My profile"), body, logged_in=True,
                                nav=_nav("profil"), bell=bell))

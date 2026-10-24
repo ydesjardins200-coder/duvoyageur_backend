@@ -239,6 +239,21 @@ class PasskeyCredential(Base):
     last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
+class PushSubscription(Base):
+    """A device subscribed to Web Push notifications (installed portal app)."""
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(Integer, index=True)
+    endpoint: Mapped[str] = mapped_column(String(1000), unique=True, index=True)
+    p256dh: Mapped[str] = mapped_column(String(200))
+    auth: Mapped[str] = mapped_column(String(100))
+    lang: Mapped[str] = mapped_column(String(2), default="fr")
+    label: Mapped[str] = mapped_column(String(80), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_ok_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 class SiteSetting(Base):
     """Small key/value settings edited from the admin (e.g. the portal banner)."""
     __tablename__ = "site_settings"

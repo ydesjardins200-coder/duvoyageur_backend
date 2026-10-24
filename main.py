@@ -59,6 +59,7 @@ from admin_engine import router as admin_engine_router, member_searches_card
 from portal_groups import router as portal_groups_router, member_groups_card, new_groups_count
 from pwa import router as pwa_router, HEAD_TAGS as PWA_HEAD, REGISTER_JS as PWA_JS
 from portal_passkeys import router as passkeys_router
+from portal_push import router as push_router, member_push_card
 from places import router as places_router
 import storage
 from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLocal, engine,
@@ -138,6 +139,7 @@ app.include_router(admin_engine_router)
 app.include_router(portal_groups_router)
 app.include_router(pwa_router)
 app.include_router(passkeys_router)
+app.include_router(push_router)
 app.include_router(places_router)
 
 
@@ -3128,9 +3130,17 @@ def admin_clients(f: str = "tous", q: str = ""):
     return render_page(body, "clients")
 
 
+def _push_msg(v: str) -> str:
+    try:
+        sent, failed = (int(x) for x in v.split("-", 1))
+    except ValueError:
+        return ""
+    return f"✓ Notification envoyée à {sent} appareil(s)" + (f" · {failed} échec(s)" if failed else "") + "."
+
+
 @app.get("/admin/clients/{client_id}", response_class=HTMLResponse,
          dependencies=[Depends(require_admin)])
-def admin_client_detail(client_id: int, tab: str = "identite"):
+def admin_client_detail(client_id: int, tab: str = "identite", push: str = ""):
     KIND_FR = {"messenger_psid": "Messenger (PSID)", "email": "Courriel", "phone": "Téléphone"}
     tab = tab if tab in ("identite", "voyage", "service") else "identite"
 
@@ -3320,7 +3330,7 @@ def admin_client_detail(client_id: int, tab: str = "identite"):
             content = (
                 "<div class='idtab'>"
                 f"<div class='col'>{identity_card}{merge_card}</div>"
-                f"<div class='col'>{member_groups_card(cl.id)}{member_searches_card(cl)}{activity_card}</div>"
+                f"<div class='col'>{member_push_card(cl.id, _push_msg(push))}{member_groups_card(cl.id)}{member_searches_card(cl)}{activity_card}</div>"
                 "</div>"
             )
         elif tab == "voyage":

@@ -17,7 +17,7 @@ from i18n_portal import L, pick
 
 router = APIRouter()
 
-SW_VERSION = "dv-pwa-v1"
+SW_VERSION = "dv-pwa-v2"
 NAVY = "#0F2A47"
 
 HEAD_TAGS = (
@@ -77,6 +77,22 @@ self.addEventListener('install', e => {
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== V).map(k => caches.delete(k))))
     .then(() => self.clients.claim()));
+});
+self.addEventListener('push', e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (x) { d = {body: e.data ? e.data.text() : ''}; }
+  e.waitUntil(self.registration.showNotification(d.title || 'duvoyageur.ca', {
+    body: d.body || '', icon: '/static/pwa/icon-192.png', badge: '/static/pwa/icon-192.png',
+    tag: d.tag || 'dv', data: {url: d.url || '/portail'}
+  }));
+});
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const url = new URL((e.notification.data && e.notification.data.url) || '/portail', self.location.origin).href;
+  e.waitUntil(self.clients.matchAll({type: 'window', includeUncontrolled: true}).then(list => {
+    for (const c of list) { if (c.url.startsWith(self.location.origin) && 'focus' in c) { c.navigate(url); return c.focus(); } }
+    return self.clients.openWindow(url);
+  }));
 });
 self.addEventListener('fetch', e => {
   const r = e.request;
