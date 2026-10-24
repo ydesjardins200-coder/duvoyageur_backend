@@ -690,6 +690,13 @@ def _kyc_banner(client) -> str:
         + f"<span class='banner-cta'>{L('Compléter →', 'Complete →')}</span></a>")
 
 
+def _passkey_card(cid: int, flag: str = "") -> str:
+    from portal_passkeys import profile_card   # lazy: portal_passkeys imports portal
+    flash = {"ok": L("Connexion rapide activée sur cet appareil ✓", "Quick login enabled on this device ✓"),
+             "retire": L("Appareil retiré.", "Device removed.")}.get(flag, "")
+    return profile_card(cid, flash)
+
+
 def _profile_form(client, saved: bool = False) -> str:
     ok = f"<div class='note ok'>{L('Profil enregistré ✓', 'Profile saved ✓')}</div>" if saved else ""
 
@@ -1140,7 +1147,7 @@ def _legacy_portal_notifications(request: Request):
 
 
 @router.get("/portail/profil", response_class=HTMLResponse)
-def portal_profile(request: Request, saved: int = 0):
+def portal_profile(request: Request, saved: int = 0, passkey: str = ""):
     cid = current_portal_client_id(request)
     if not cid:
         return RedirectResponse("/portail/connexion", status_code=303)
@@ -1151,7 +1158,7 @@ def portal_profile(request: Request, saved: int = 0):
         lede = L("Ces infos nous servent à réserver tes voyages au bon nom.",
                  "We use this information to book your trips under the right name.")
         body = (f"<div class='hello'><h2>{L('Mon profil', 'My profile')}</h2><p class='lede'>{lede}</p></div>"
-                + _profile_form(client, saved=bool(saved)))
+                + _passkey_card(cid, passkey) + _profile_form(client, saved=bool(saved)))
         bell = _bell_panel(client)
     resp = HTMLResponse(_shell(L("Mon profil", "My profile"), body, logged_in=True,
                                nav=_nav("profil"), bell=bell))
@@ -1639,12 +1646,18 @@ def _rate_hit(ip: str) -> None:
     _LOGIN_HITS.setdefault(ip, []).append(time.monotonic())
 
 
+def _passkey_login() -> str:
+    from portal_passkeys import login_block   # lazy: portal_passkeys imports portal
+    return login_block()
+
+
 def _login_form(error: str = "") -> str:
     err = f"<div class='note err'>{escape(error)}</div>" if error else ""
     return (
         err
         + f"<div class='hello'><h2>{L('Connexion', 'Log in')}</h2>"
         f"<p class='lede'>{L('Accède à ton espace en un clic.', 'Access your member area in one click.')}</p></div>"
+        + _passkey_login()
         + _social_buttons()
         + "<form class='form' method='post' action='/portail/connexion'>"
         "<div class='fset'><div class='formgrid'>"
