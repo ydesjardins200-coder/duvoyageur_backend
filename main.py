@@ -57,6 +57,7 @@ from portal_compare import router as portal_compare_router
 from portal_searches import router as portal_searches_router, record_search
 from admin_engine import router as admin_engine_router, member_searches_card
 from portal_groups import router as portal_groups_router, member_groups_card, new_groups_count
+from pwa import router as pwa_router, HEAD_TAGS as PWA_HEAD, REGISTER_JS as PWA_JS
 from places import router as places_router
 import storage
 from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLocal, engine,
@@ -134,6 +135,7 @@ app.include_router(portal_compare_router)
 app.include_router(portal_searches_router)
 app.include_router(admin_engine_router)
 app.include_router(portal_groups_router)
+app.include_router(pwa_router)
 app.include_router(places_router)
 
 
@@ -772,12 +774,12 @@ def _dmo_results_page(src: str, lang: str) -> str:
     helpq = t("Une question ?", "A question?")
     html_lang = "en-CA" if en else "fr-CA"
     return f"""<!doctype html><html lang="{html_lang}"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">
-<title>{title} — duvoyageur.ca</title><link rel="icon" href="/static/favicon-64.png">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex,nofollow">
+<title>{title} — duvoyageur.ca</title><link rel="icon" href="/static/favicon-64.png">{PWA_HEAD}
 <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Inter:wght@400;500;600&family=Kaushan+Script&display=swap" rel="stylesheet">
 <style>
 *{{box-sizing:border-box}}html,body{{margin:0;background:#F7F6F2;color:#0F2A47;font-family:Montserrat,system-ui,sans-serif}}
-.bar{{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.7rem clamp(1rem,3vw,2rem);background:#0F2A47;border-bottom:3px solid #F4C543}}
+.bar{{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.7rem clamp(1rem,3vw,2rem);padding-top:max(.7rem,env(safe-area-inset-top));background:#0F2A47;border-bottom:3px solid #F4C543}}
 .brand{{display:flex;align-items:center;gap:.6rem;color:#fff;text-decoration:none;font-weight:800;font-size:1.15rem}}
 .brand img{{width:40px;height:40px}}.brand span{{color:#F4C543}}
 .brand small{{display:block;font:400 .95rem/1 "Kaushan Script",cursive;color:#F4C543;margin-top:.15rem}}
@@ -827,7 +829,7 @@ def _dmo_results_page(src: str, lang: str) -> str:
 .btn{{display:inline-block;margin-top:.6rem;background:#F4C543;color:#0F2A47;font-weight:800;text-decoration:none;padding:.8rem 1.4rem;border-radius:99px}}
 @media(max-width:900px){{.whyin{{grid-template-columns:1fr}}.sec{{display:none}}}}
 @media(max-width:640px){{
-.bar{{padding:.45rem .8rem}}.brand{{font-size:1rem;gap:.45rem}}.brand img{{width:32px;height:32px}}.brand small{{display:none}}
+.bar{{padding:.45rem .8rem;padding-top:max(.45rem,env(safe-area-inset-top))}}.brand{{font-size:1rem;gap:.45rem}}.brand img{{width:32px;height:32px}}.brand small{{display:none}}
 .back{{font-size:.78rem;padding:.4rem .75rem}}.back .lg{{display:none}}.back .sm{{display:inline}}
 .trust{{flex-wrap:nowrap;justify-content:flex-start;overflow-x:auto;gap:1rem;padding:.4rem .8rem;font-size:.72rem;white-space:nowrap;scrollbar-width:none}}
 .trust::-webkit-scrollbar{{display:none}}
@@ -848,7 +850,7 @@ def _dmo_results_page(src: str, lang: str) -> str:
 <section class="why"><div class="whyin">{why_html}<div class="tm"><div>{team}</div><a href="{msgr}" target="_blank" rel="noopener">{t("Écrire à un conseiller →", "Message an advisor →")}</a></div></div></section>
 <p class="foot">duvoyageur.ca · {t("Titulaire d'un permis du Québec n° 700495", "Québec travel agency licence no. 700495")}<br><a href="{legal_terms}" target="_blank" rel="noopener">{t("Conditions générales", "Terms")}</a><a href="{legal_priv}" target="_blank" rel="noopener">{t("Politique de confidentialité", "Privacy policy")}</a></p>
 <a class="fab" href="{msgr}" target="_blank" rel="noopener">💬 {helpq}</a>
-</body></html>"""
+{PWA_JS}</body></html>"""
 
 
 def _dmo_lang(fields) -> str:

@@ -413,6 +413,7 @@ def search_page(client, tab: str = "voyage", group_values: dict | None = None,
     engine = (f"<div class='engine'><iframe src=\"{escape(_engine_url({}))}\" "
               f"title=\"{L('Moteur de recherche de forfaits', 'Package search engine')}\" loading='eager'></iframe></div>")
     main = _tabs('voyage') + _season_banner() + _resume_banner(client, resume) + head + engine
-    side = _steps_card() + _recent_card(rows[:3]) + _help_card() + _trust_card()
+    from pwa import install_card
+    side = _steps_card() + install_card() + _recent_card(rows[:3]) + _help_card() + _trust_card()
     bottom = "<div class='sx-bottom'>" + _deals_section() + _guides_section() + _faq_section() + "</div>"
     return _CSS + f"<div class='sx'><div>{main}</div><aside class='sx-side'>{side}</aside></div>" + bottom
