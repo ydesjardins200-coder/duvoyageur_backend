@@ -982,6 +982,8 @@ def _shell(title: str, body: str, logged_in: bool = False, nav: str = "",
     actions = f"<div class='topact'>{logout}</div>"
     page = _PORTAL_PAGE.format(title=escape(title), body=body, logout=actions, nav=nav,
                                page=" chatpage" if full else "")
+    from pwa import HEAD_TAGS, REGISTER_JS
+    page = page.replace("</head>", HEAD_TAGS + "</head>", 1).replace("</body>", REGISTER_JS + "</body>", 1)
     if is_en():
         page = (page.replace('<html lang="fr">', '<html lang="en">')
                     .replace("<span>Espace client</span>", "<span>Member area</span>")
