@@ -274,7 +274,7 @@ def admin_searches(qui: str = "tous", q: str = "", jours: int = 30):
 # Engine & content
 # --------------------------------------------------------------------------- #
 @router.get("/admin/moteur", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
-def admin_engine(saved: int = 0):
+def admin_engine(saved: int = 0, push: str = ""):
     from main import _portal_banner_form          # the banner form lives with its POST handler
     from portal_home import _fetch_ads
     ads = _fetch_ads("fr")
@@ -295,6 +295,7 @@ def admin_engine(saved: int = 0):
         "(vérification toutes les 10 minutes).</p></div>"
         "</div>"
         + _portal_banner_form(bool(saved), "/admin/moteur")
+        + _push_broadcast(push)
     )
     return _shell(body, "moteur")
 
@@ -302,6 +303,12 @@ def admin_engine(saved: int = 0):
 # --------------------------------------------------------------------------- #
 # Member file card
 # --------------------------------------------------------------------------- #
+def _push_broadcast(v: str) -> str:
+    from main import _push_msg
+    from portal_push import broadcast_card
+    return broadcast_card(_push_msg(v))
+
+
 def member_searches_card(client) -> str:
     with SessionLocal() as db:
         rows = _rows(db, 365, client_id=client.id, limit=50)
