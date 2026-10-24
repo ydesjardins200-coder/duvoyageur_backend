@@ -223,6 +223,22 @@ class GroupRequest(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class PasskeyCredential(Base):
+    """A member's passkey (Face ID / Touch ID / fingerprint) for portal login.
+    Only the public key is stored; biometrics never leave the device."""
+    __tablename__ = "passkey_credentials"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(Integer, index=True)
+    credential_id: Mapped[str] = mapped_column(String(512), unique=True, index=True)   # base64url
+    public_key: Mapped[str] = mapped_column(Text)                                      # base64url
+    sign_count: Mapped[int] = mapped_column(Integer, default=0)
+    transports: Mapped[list] = mapped_column(JSON, default=list)
+    label: Mapped[str] = mapped_column(String(80), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 class SiteSetting(Base):
     """Small key/value settings edited from the admin (e.g. the portal banner)."""
     __tablename__ = "site_settings"

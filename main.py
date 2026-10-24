@@ -58,6 +58,7 @@ from portal_searches import router as portal_searches_router, record_search
 from admin_engine import router as admin_engine_router, member_searches_card
 from portal_groups import router as portal_groups_router, member_groups_card, new_groups_count
 from pwa import router as pwa_router, HEAD_TAGS as PWA_HEAD, REGISTER_JS as PWA_JS
+from portal_passkeys import router as passkeys_router
 from places import router as places_router
 import storage
 from db import (STATUSES, Case, Client, ClientIdentity, Interaction, SessionLocal, engine,
@@ -136,6 +137,7 @@ app.include_router(portal_searches_router)
 app.include_router(admin_engine_router)
 app.include_router(portal_groups_router)
 app.include_router(pwa_router)
+app.include_router(passkeys_router)
 app.include_router(places_router)
 
 
